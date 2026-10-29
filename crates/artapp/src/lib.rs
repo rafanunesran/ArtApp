@@ -6,6 +6,7 @@ mod app;
 mod canvas;
 mod panels;
 pub mod platform;
+mod theme;
 
 pub use app::ArtApp;
 

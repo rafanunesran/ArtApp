@@ -3,7 +3,9 @@
 use artapp_core::brushes::{self, BrushEntry};
 use artapp_core::vector::VectorStyle;
 use artapp_core::{Anchor, BrushSettings, Document, NodeId, Rect};
-use eframe::egui::{self, Color32};
+use std::collections::HashMap;
+
+use eframe::egui::{self, Color32, TextureHandle};
 
 use crate::canvas::CanvasView;
 use crate::{panels, platform};
@@ -58,6 +60,23 @@ impl Tool {
             Tool::Line => "Linha",
             Tool::Rectangle => "Retângulo",
             Tool::Ellipse => "Elipse",
+        }
+    }
+
+    pub fn icon(self) -> char {
+        use crate::theme::icon;
+        match self {
+            Tool::Brush => icon::BRUSH,
+            Tool::Eraser => icon::ERASER,
+            Tool::Fill => icon::BUCKET,
+            Tool::Eyedropper => icon::PIPETTE,
+            Tool::Hand => icon::HAND,
+            Tool::Select => icon::POINTER,
+            Tool::VectorPen => icon::PEN_LINE,
+            Tool::Bezier => icon::PEN_TOOL,
+            Tool::Line => icon::MINUS,
+            Tool::Rectangle => icon::SQUARE,
+            Tool::Ellipse => icon::CIRCLE,
         }
     }
 
@@ -122,13 +141,24 @@ pub struct ArtApp {
     pub selected: Option<NodeId>,
     /// Pontos do caminho Bézier em construção.
     pub bezier: Vec<Anchor>,
+    /// Seletor de cor aberto.
+    pub show_color: bool,
+    /// Quando `status` mudou (o aviso some depois de alguns segundos).
+    pub status_since: f64,
+    last_status: String,
+    /// Área da tela de desenho (os painéis flutuam por cima dela).
+    pub canvas_rect: egui::Rect,
+    brush_previews: Vec<TextureHandle>,
+    thumbs: HashMap<u64, TextureHandle>,
+    thumbs_stale: bool,
+    thumbs_at: f64,
     /// Retângulo da tela que precisa ser recomposto no próximo quadro.
     pending: Rect,
 }
 
 impl ArtApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        setup_style(&cc.egui_ctx);
+        crate::theme::install(&cc.egui_ctx, platform::TOUCH_FIRST);
         let brushes = brushes::all();
         let brush = brushes
             .first()
@@ -170,17 +200,81 @@ impl ArtApp {
             vector_fill_color: Color32::from_rgb(250, 200, 40),
             selected: None,
             bezier: Vec::new(),
+            show_color: false,
+            status_since: 0.0,
+            last_status: String::new(),
+            canvas_rect: egui::Rect::NOTHING,
+            brush_previews: Vec::new(),
+            thumbs: HashMap::new(),
+            thumbs_stale: true,
+            thumbs_at: 0.0,
             pending: Rect::EMPTY,
         }
     }
 
     /// Marca uma área para recompor.
     pub fn invalidate(&mut self, r: Rect) {
+        if !r.is_empty() {
+            self.thumbs_stale = true;
+        }
         self.pending = self.pending.union(&r);
     }
 
     pub fn invalidate_all(&mut self) {
+        self.thumbs_stale = true;
         self.pending = self.doc.bounds();
+    }
+
+    /// Amostras dos pincéis da lista (feitas uma vez, na primeira vez que o painel abre).
+    pub fn brush_previews(&mut self, ctx: &egui::Context) -> Vec<TextureHandle> {
+        if self.brush_previews.len() != self.brushes.len() {
+            let (w, h) = (240u32, 44u32);
+            self.brush_previews = self
+                .brushes
+                .iter()
+                .enumerate()
+                .map(|(i, b)| {
+                    let px = artapp_core::brushes::preview(&b.settings, w, h);
+                    let img = egui::ColorImage::from_rgba_unmultiplied(
+                        [w as usize, h as usize],
+                        px.as_flattened(),
+                    );
+                    ctx.load_texture(format!("brush-{i}"), img, egui::TextureOptions::LINEAR)
+                })
+                .collect();
+        }
+        self.brush_previews.clone()
+    }
+
+    /// Miniaturas das camadas, refeitas no máximo duas vezes por segundo enquanto algo muda.
+    pub fn layer_thumbnails(&mut self, ctx: &egui::Context) -> HashMap<u64, TextureHandle> {
+        let now = ctx.input(|i| i.time);
+        let ids: Vec<u64> = self.doc.layers.iter().map(|l| l.id).collect();
+        let missing = ids.iter().any(|id| !self.thumbs.contains_key(id));
+        if missing || (self.thumbs_stale && now - self.thumbs_at > 0.5) {
+            self.thumbs.retain(|id, _| ids.contains(id));
+            let (tw, th) = thumb_size(self.doc.width, self.doc.height);
+            for layer in &self.doc.layers {
+                let px = thumbnail(layer, self.doc.width, self.doc.height, tw, th);
+                let img = egui::ColorImage::from_rgba_unmultiplied([tw, th], px.as_flattened());
+                match self.thumbs.get_mut(&layer.id) {
+                    Some(t) => t.set(img, egui::TextureOptions::LINEAR),
+                    None => {
+                        let t = ctx.load_texture(
+                            format!("thumb-{}", layer.id),
+                            img,
+                            egui::TextureOptions::LINEAR,
+                        );
+                        self.thumbs.insert(layer.id, t);
+                    }
+                }
+            }
+            self.thumbs_stale = false;
+            self.thumbs_at = now;
+        } else if self.thumbs_stale {
+            ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        }
+        self.thumbs.clone()
     }
 
     pub fn take_pending(&mut self) -> Rect {
@@ -349,6 +443,30 @@ impl ArtApp {
     }
 }
 
+/// Tamanho da miniatura (cabe em 80×80 mantendo a proporção da tela).
+fn thumb_size(w: u32, h: u32) -> (usize, usize) {
+    let s = 80.0 / w.max(h).max(1) as f32;
+    (
+        ((w as f32 * s) as usize).max(1),
+        ((h as f32 * s) as usize).max(1),
+    )
+}
+
+/// Miniatura de uma camada, amostrando um pixel por ponto da miniatura.
+fn thumbnail(layer: &artapp_core::Layer, w: u32, h: u32, tw: usize, th: usize) -> Vec<[u8; 4]> {
+    let mut out = Vec::with_capacity(tw * th);
+    for y in 0..th {
+        for x in 0..tw {
+            let sx = ((x as f32 + 0.5) * w as f32 / tw as f32) as i32;
+            let sy = ((y as f32 + 0.5) * h as f32 / th as f32) as i32;
+            let p = layer.surface.rgba(sx, sy);
+            let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+            out.push([q(p[0]), q(p[1]), q(p[2]), q(p[3])]);
+        }
+    }
+    out
+}
+
 pub fn photocraft_max_size() -> f32 {
     artapp_core::brushes::MAX_SIZE
 }
@@ -368,39 +486,47 @@ pub fn color_from_f32(c: [f32; 4]) -> Color32 {
     Color32::from_rgba_unmultiplied(q(c[0]), q(c[1]), q(c[2]), q(c[3]))
 }
 
-/// Controles maiores no Android, para o dedo.
-fn setup_style(ctx: &egui::Context) {
-    ctx.set_theme(egui::Theme::Dark);
-    if platform::TOUCH_FIRST {
-        ctx.all_styles_mut(|style| {
-            style.spacing.interact_size = egui::vec2(44.0, 40.0);
-            style.spacing.button_padding = egui::vec2(12.0, 8.0);
-            style.spacing.item_spacing = egui::vec2(8.0, 8.0);
-            style.spacing.slider_width = 180.0;
-            for font in style.text_styles.values_mut() {
-                font.size *= 1.15;
-            }
-        });
-    }
-}
-
 impl eframe::App for ArtApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.shortcuts(&ctx);
-        egui::Panel::top("toolbar").show(ui, |ui| panels::toolbar(self, ui));
-        egui::Panel::bottom("status").show(ui, |ui| panels::status_bar(self, ui));
-        if self.show_tools_panel {
-            egui::Panel::left("tools")
-                .default_size(260.0)
-                .show(ui, |ui| panels::tools_panel(self, ui));
+        if self.status != self.last_status {
+            self.last_status.clone_from(&self.status);
+            self.status_since = ctx.input(|i| i.time);
         }
-        if self.show_layers_panel {
-            egui::Panel::right("layers")
-                .default_size(250.0)
-                .show(ui, |ui| panels::layers_panel(self, ui));
+        let portrait = panels::is_portrait(&ctx);
+        if portrait && self.show_tools_panel && self.show_layers_panel {
+            // No celular em pé só cabe uma folha de cada vez.
+            self.show_tools_panel = false;
+        }
+        let bar = egui::Frame::new()
+            .fill(crate::theme::color::SURFACE)
+            .inner_margin(egui::Margin::symmetric(6, 2));
+        egui::Panel::top("top_bar")
+            .frame(bar)
+            .show(ui, |ui| panels::top_bar(self, ui));
+        if portrait {
+            egui::Panel::bottom("bottom_tools")
+                .frame(bar)
+                .show(ui, |ui| panels::bottom_tools(self, ui));
         }
         egui::CentralPanel::no_frame().show(ui, |ui| crate::canvas::show(self, ui));
+
+        let canvas = self.canvas_rect;
+        if !portrait {
+            panels::tool_rail(self, &ctx, canvas);
+        }
+        panels::side_sliders(self, &ctx, canvas, portrait);
+        if self.show_tools_panel {
+            panels::brush_panel(self, &ctx, canvas, portrait);
+        }
+        if self.show_layers_panel {
+            panels::layers_panel(self, &ctx, canvas, portrait);
+        }
+        if self.show_color {
+            panels::color_popup(self, &ctx, canvas, portrait);
+        }
+        panels::toast(self, &ctx, canvas, 0.0);
         if self.show_new_dialog {
             panels::new_canvas_dialog(self, &ctx);
         }

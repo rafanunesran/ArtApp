@@ -21,5 +21,8 @@ egui / epaint (https://github.com/emilk/egui) — third_party/epaint is a copy o
 one fix (see third_party/epaint/ARTAPP-PATCH.md). Copyright (c) 2018-2021 Emil Ernerfeldt. MIT OR
 Apache-2.0 (third_party/epaint/LICENSE-MIT, LICENSE-APACHE).
 
+Lucide icons (assets/fonts/lucide-artapp.ttf, a subset of the lucide-static icon font) — ISC;
+icons derived from Feather also MIT. See assets/fonts/LICENSE-lucide.txt.
+
 The ArtCraft, PhotoCraft and VectorCraft names and logos are trademarks of the ArtCraft Team and are
 not used by ArtApp. ArtApp is an independent project, not affiliated with or endorsed by them.

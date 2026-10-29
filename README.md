@@ -3,7 +3,18 @@
 App de desenho e pintura digital, raster e vetorial, no estilo Clip Studio Paint / Adobe, feito
 para rodar no **Android** (e também no desktop, para desenvolver e testar).
 
-![ArtApp no desktop: tela com uma curva a nanquim, preenchimento vermelho com o balde e um traço de marcador azul numa segunda camada](docs/screenshot-desktop.png)
+![ArtApp no tablet/desktop: trilho de ferramentas à esquerda, sliders de tamanho e opacidade, painel da ferramenta, seletor de cor e painel de camadas com miniaturas](docs/screenshot-ui.png)
+
+## Interface
+
+A tela de desenho ocupa a janela inteira e os controles flutuam por cima, no estilo Procreate /
+Clip Studio (o desenho da interface partiu de um protótipo feito no Lovable): trilho de ferramentas
+com ícones à esquerda, sliders verticais de tamanho e opacidade, painel da ferramenta (pincéis com
+amostra do traço), painel de camadas com miniaturas, seletor de cor com cores recentes e avisos que
+somem sozinhos. No celular em pé, as ferramentas vão para uma barra embaixo e os painéis viram folhas
+que sobem de baixo.
+
+<img src="docs/screenshot-celular.png" alt="ArtApp no celular em pé: barra de ferramentas embaixo e o painel de camadas como folha inferior" width="260">
 
 ## O que já faz
 
@@ -31,8 +42,6 @@ para rodar no **Android** (e também no desktop, para desenvolver e testar).
 2. Salvar/abrir projeto com camadas (e salvamento automático no Android).
 3. Seleção (laço, retângulo), transformar, réguas e simetria.
 4. Compartilhar a imagem pelo menu do Android e importar fotos.
-
-![Camada vetorial: retângulo preenchido de vermelho com o balde e uma elipse selecionada](docs/screenshot-vetor.png)
 
 ## Arquitetura
 

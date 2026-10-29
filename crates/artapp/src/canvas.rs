@@ -50,6 +50,8 @@ pub struct CanvasView {
     /// Pontos de tela por pixel do documento.
     pub zoom: f32,
     fitted: bool,
+    /// Tamanho do painel no último encaixe.
+    fitted_for: Vec2,
     texture: Option<(TextureHandle, [usize; 2])>,
     stroke: Option<ActiveStroke>,
     touches: HashMap<u64, Pos2>,
@@ -70,6 +72,7 @@ impl CanvasView {
         }
         self.offset = (panel.size() - egui::vec2(w, h) * self.zoom) / 2.0;
         self.fitted = true;
+        self.fitted_for = panel.size();
     }
 
     pub fn request_fit(&mut self) {
@@ -94,7 +97,12 @@ impl CanvasView {
 
 pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
     let panel = ui.available_rect_before_wrap();
+    app.canvas_rect = panel;
     let response = ui.allocate_rect(panel, Sense::click_and_drag());
+    // Girar o aparelho (ou redimensionar a janela) reencaixa a tela.
+    if (panel.size() - app.view.fitted_for).length() > 1.0 {
+        app.view.fitted = false;
+    }
     if !app.view.fitted {
         app.view.fit(panel, app.doc.width, app.doc.height);
     }
@@ -102,7 +110,7 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
     update_texture(app, ui.ctx());
 
     let painter = ui.painter_at(panel);
-    painter.rect_filled(panel, 0.0, Color32::from_gray(48));
+    painter.rect_filled(panel, 0.0, crate::theme::color::BACKDROP);
     let size = egui::vec2(app.doc.width as f32, app.doc.height as f32) * app.view.zoom;
     let canvas = egui::Rect::from_min_size(panel.min + app.view.offset, size);
     painter.rect_filled(
