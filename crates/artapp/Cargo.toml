@@ -1,0 +1,30 @@
+[package]
+name = "artapp"
+description = "ArtApp: app de desenho raster e vetorial para Android e desktop."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "artapp"
+path = "src/main.rs"
+
+[dependencies]
+artapp-core = { workspace = true }
+log = { workspace = true }
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "android-native-activity"] }
+winit = { version = "0.30", default-features = false, features = ["android-native-activity"] }
+android_logger = "0.15"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
+env_logger = { version = "0.11", default-features = false }
+
+[lints]
+workspace = true

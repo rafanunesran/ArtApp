@@ -1,0 +1,38 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+default-members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+repository = "https://github.com/rafanunesran/ArtApp"
+
+[workspace.dependencies]
+# Motores reaproveitados do PhotoCraft (pincéis, superfícies em tiles), fixados por revisão.
+photocraft-geom = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
+photocraft-color = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
+photocraft-raster = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
+photocraft-paint = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
+artapp-core = { path = "crates/artapp-core" }
+png = "0.18"
+log = "0.4"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
