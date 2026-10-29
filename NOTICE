@@ -1,0 +1,18 @@
+ArtApp
+Copyright (c) 2026 Rafael Nunes Figueiredo and the ArtApp contributors.
+Licensed under the MIT License or the Apache License, Version 2.0, at your option
+(LICENSE-MIT, LICENSE-APACHE).
+
+Third-party code
+
+ArtApp builds on crates from these projects, used as Cargo dependencies pinned by git revision:
+
+PhotoCraft (https://github.com/storytold/photocraft) — photocraft-geom, photocraft-color,
+photocraft-raster, photocraft-paint (brush engine, tiled surfaces, blend modes).
+Copyright (c) 2026 ArtCraft Team and the PhotoCraft contributors. MIT OR Apache-2.0.
+
+VectorCraft (https://github.com/storytold/vectorcraft) — planned for the vector tools.
+Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors. MIT OR Apache-2.0.
+
+The ArtCraft, PhotoCraft and VectorCraft names and logos are trademarks of the ArtCraft Team and are
+not used by ArtApp. ArtApp is an independent project, not affiliated with or endorsed by them.

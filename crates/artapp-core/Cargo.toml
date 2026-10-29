@@ -1,0 +1,16 @@
+[package]
+name = "artapp-core"
+description = "Modelo de documento do ArtApp: camadas raster, pincéis, histórico e composição (sem UI)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+photocraft-geom = { workspace = true }
+photocraft-color = { workspace = true }
+photocraft-raster = { workspace = true }
+photocraft-paint = { workspace = true }
+png = { workspace = true }
+
+[lints]
+workspace = true
