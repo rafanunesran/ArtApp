@@ -15,9 +15,13 @@ pub mod export;
 pub mod fill;
 pub mod history;
 pub mod stroke;
+pub mod vector;
 
 pub use document::{Document, Layer};
 pub use photocraft_color::BlendMode;
 pub use photocraft_geom::Rect;
 pub use photocraft_paint::{BrushSettings, StrokePoint};
 pub use stroke::PaintSession;
+pub use vectorcraft_doc::NodeId;
+pub use vectorcraft_geom::path::{Anchor, SubPath};
+pub use vectorcraft_geom::{BezPath, Point as VPoint};

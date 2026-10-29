@@ -10,7 +10,7 @@ use crate::history::History;
 pub const MAX_CANVAS_SIDE: u32 = 8192;
 
 /// Camada raster. A superfície é RGBA de 8 bits, alfa não pré-multiplicado.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Layer {
     pub id: u64,
     pub name: String,
@@ -20,6 +20,8 @@ pub struct Layer {
     pub blend: BlendMode,
     /// Pinta só onde já há tinta (o "bloquear pixels transparentes").
     pub lock_alpha: bool,
+    /// Camadas vetoriais: a arte editável. `surface` guarda a cópia rasterizada dela.
+    pub vector: Option<crate::vector::VectorArt>,
     pub surface: Surface,
 }
 
@@ -32,6 +34,7 @@ impl Layer {
             opacity: 1.0,
             blend: BlendMode::Normal,
             lock_alpha: false,
+            vector: None,
             surface: Surface::new(PixelFormat::RGBA8),
         }
     }
@@ -104,6 +107,7 @@ impl Document {
         copy.surface = src.surface;
         copy.opacity = src.opacity;
         copy.blend = src.blend;
+        copy.vector = src.vector;
         let at = self.active + 1;
         self.layers.insert(at, copy);
         self.active = at;
@@ -149,6 +153,8 @@ impl Document {
         let top = self.layers.remove(self.active);
         let below = self.active - 1;
         if let Some(dst) = self.layers.get_mut(below) {
+            // Mesclar numa camada vetorial a transforma em raster.
+            dst.vector = None;
             crate::composite::merge_into(&mut dst.surface, &top, self.width, self.height);
         }
         self.active = below;

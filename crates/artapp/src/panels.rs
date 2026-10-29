@@ -35,11 +35,24 @@ pub fn toolbar(app: &mut ArtApp, ui: &mut egui::Ui) {
             app.redo();
         }
         ui.separator();
-        for t in Tool::ALL {
+        for t in Tool::RASTER {
             if ui.selectable_label(app.tool == t, t.label()).clicked() {
                 app.set_tool(t);
             }
         }
+        let vector_label = if app.tool.is_vector() {
+            format!("Vetor: {}", app.tool.label())
+        } else {
+            "Vetor".to_string()
+        };
+        ui.menu_button(vector_label, |ui| {
+            for t in Tool::VECTOR {
+                if ui.selectable_label(app.tool == t, t.label()).clicked() {
+                    app.set_tool(t);
+                    ui.close();
+                }
+            }
+        });
         ui.separator();
         let mut c = app.color;
         if egui::color_picker::color_edit_button_srgba(
@@ -85,6 +98,10 @@ pub fn status_bar(app: &mut ArtApp, ui: &mut egui::Ui) {
 
 pub fn tools_panel(app: &mut ArtApp, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical().show(ui, |ui| {
+        if app.tool.is_vector() {
+            vector_panel(app, ui);
+            return;
+        }
         ui.heading(if app.tool == Tool::Eraser {
             "Borracha"
         } else {
@@ -165,11 +182,93 @@ pub fn tools_panel(app: &mut ArtApp, ui: &mut egui::Ui) {
     });
 }
 
+fn vector_panel(app: &mut ArtApp, ui: &mut egui::Ui) {
+    ui.heading(app.tool.label());
+    ui.checkbox(&mut app.vector_stroke, "Traço (cor principal)");
+    ui.add(
+        egui::Slider::new(&mut app.vector_width, 0.5..=200.0)
+            .logarithmic(true)
+            .text("Espessura"),
+    );
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut app.vector_fill, "Preenchimento");
+        egui::color_picker::color_edit_button_srgba(
+            ui,
+            &mut app.vector_fill_color,
+            egui::color_picker::Alpha::Opaque,
+        );
+    });
+    ui.separator();
+    match app.tool {
+        Tool::Bezier => {
+            ui.label(
+                "Toque para pôr pontos; arraste para curvar. Toque no primeiro ponto para fechar.",
+            );
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(app.bezier.len() >= 2, egui::Button::new("Concluir"))
+                    .clicked()
+                {
+                    app.finish_bezier(false);
+                }
+                if ui
+                    .add_enabled(!app.bezier.is_empty(), egui::Button::new("Cancelar"))
+                    .clicked()
+                {
+                    app.bezier.clear();
+                }
+            });
+        }
+        Tool::Select => {
+            ui.label("Toque num objeto para selecionar; arraste para mover.");
+            let has = app.selected.is_some();
+            ui.horizontal_wrapped(|ui| {
+                let restyle = ui
+                    .add_enabled(has, egui::Button::new("Aplicar estilo atual"))
+                    .clicked();
+                let delete = ui
+                    .add_enabled(has, egui::Button::new("Apagar objeto"))
+                    .clicked();
+                if let Some(id) = app.selected.filter(|_| restyle) {
+                    let style = app.vector_style();
+                    let r = app.doc.vector_restyle(id, &style);
+                    app.invalidate(r);
+                }
+                if let Some(id) = app.selected.filter(|_| delete) {
+                    app.selected = None;
+                    let r = app.doc.vector_delete(id);
+                    app.invalidate(r);
+                }
+            });
+        }
+        Tool::VectorPen => {
+            ui.label("Desenhe à mão livre: o traço vira curvas editáveis.");
+        }
+        _ => {
+            ui.label("Arraste na tela para desenhar a forma.");
+        }
+    }
+    ui.separator();
+    ui.heading("Cor");
+    let mut c = app.color;
+    egui::color_picker::color_picker_color32(ui, &mut c, egui::color_picker::Alpha::Opaque);
+    app.color = c;
+}
+
 pub fn layers_panel(app: &mut ArtApp, ui: &mut egui::Ui) {
     ui.heading("Camadas");
     ui.horizontal_wrapped(|ui| {
         if ui.button("+ Nova").clicked() {
             app.doc.add_layer();
+        }
+        if ui.button("+ Vetor").clicked() {
+            app.doc.add_vector_layer();
+        }
+        if ui
+            .add_enabled(app.doc.active_is_vector(), egui::Button::new("Rasterizar"))
+            .clicked()
+        {
+            app.doc.rasterize_layer();
         }
         if ui.button("Duplicar").clicked() {
             app.doc.duplicate_layer();
@@ -218,7 +317,12 @@ pub fn layers_panel(app: &mut ArtApp, ui: &mut egui::Ui) {
             {
                 toggle = Some(i);
             }
-            if ui.selectable_label(i == active, &layer.name).clicked() {
+            let name = if layer.is_vector() {
+                format!("{} (vetor)", layer.name)
+            } else {
+                layer.name.clone()
+            };
+            if ui.selectable_label(i == active, name).clicked() {
                 select = Some(i);
             }
         });

@@ -10,7 +10,11 @@ use crate::document::Document;
 /// Devolve o retângulo alterado, vazio se nada mudou.
 pub fn flood_fill(doc: &mut Document, x: i32, y: i32, color: [f32; 4], tolerance: f32) -> Rect {
     let bounds = doc.bounds();
-    if !bounds.contains(x, y) || doc.active_layer().is_none_or(|l| !l.visible) {
+    if !bounds.contains(x, y)
+        || doc
+            .active_layer()
+            .is_none_or(|l| !l.visible || l.is_vector())
+    {
         return Rect::EMPTY;
     }
     let (w, h) = (doc.width as usize, doc.height as usize);

@@ -1,0 +1,479 @@
+//! Camadas vetoriais, sobre o modelo de documento e o renderizador do VectorCraft.
+//!
+//! Cada camada vetorial guarda um `vectorcraft_doc::Document` (uma árvore persistente: clonar é
+//! barato, então o histórico funciona igual ao das camadas raster) e uma cópia rasterizada na
+//! superfície da camada, que é o que a composição e a exportação usam. A cópia é refeita a cada
+//! edição.
+
+use std::cell::RefCell;
+
+use photocraft_color::PixelFormat;
+use photocraft_geom::Rect;
+use photocraft_raster::Surface;
+use vectorcraft_color::{Color, Paint};
+use vectorcraft_doc::appearance::{FillLayer, LineCap, LineJoin, StrokeLayer};
+use vectorcraft_doc::hit::{HitOptions, hit_test};
+use vectorcraft_doc::{Appearance, AppearanceItem, Node, NodeId, Shared};
+use vectorcraft_geom::path::{PathData, SubPath};
+use vectorcraft_geom::{Affine, Point, Vec2, shapes};
+use vectorcraft_pathops::SimplifyOptions;
+use vectorcraft_render::{RenderOptions, Renderer};
+
+use crate::document::{Document, Layer};
+
+/// A arte de uma camada vetorial.
+#[derive(Clone)]
+pub struct VectorArt {
+    pub doc: vectorcraft_doc::Document,
+}
+
+/// Traço e preenchimento de um objeto novo. Cores em sRGB 0..1; `None` = sem traço / sem
+/// preenchimento.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VectorStyle {
+    pub stroke: Option<[f32; 3]>,
+    pub width: f64,
+    pub fill: Option<[f32; 3]>,
+}
+
+impl Default for VectorStyle {
+    fn default() -> Self {
+        Self {
+            stroke: Some([0.0, 0.0, 0.0]),
+            width: 4.0,
+            fill: None,
+        }
+    }
+}
+
+fn paint(c: [f32; 3]) -> Paint {
+    Paint::solid(Color::rgb(c[0], c[1], c[2]))
+}
+
+impl VectorStyle {
+    pub fn appearance(&self) -> Appearance {
+        let mut items = Vec::new();
+        if let Some(f) = self.fill {
+            items.push(AppearanceItem::Fill(FillLayer::new(paint(f))));
+        }
+        if let Some(s) = self.stroke {
+            let mut st = StrokeLayer::new(paint(s), self.width.clamp(0.1, 2000.0));
+            st.cap = LineCap::Round;
+            st.join = LineJoin::Round;
+            items.push(AppearanceItem::Stroke(st));
+        }
+        Appearance {
+            items,
+            ..Appearance::default()
+        }
+    }
+}
+
+/// Formas que as ferramentas vetoriais criam.
+#[derive(Clone, Debug)]
+pub enum Shape {
+    Line(Point, Point),
+    Rectangle(Point, Point),
+    Ellipse(Point, Point),
+    /// Traço à mão livre: os pontos viram curvas Bézier ajustadas ([`fit_freehand`]).
+    Freehand {
+        points: Vec<Point>,
+        closed: bool,
+    },
+    /// Caminho da caneta Bézier.
+    Bezier(SubPath),
+}
+
+impl Shape {
+    pub fn to_path(&self) -> Option<PathData> {
+        let rect = |a: Point, b: Point| vectorcraft_geom::Rect::from_points(a, b);
+        let path = match self {
+            Shape::Line(a, b) => shapes::line(*a, *b),
+            Shape::Rectangle(a, b) => shapes::rectangle(rect(*a, *b)),
+            Shape::Ellipse(a, b) => shapes::ellipse(rect(*a, *b)),
+            Shape::Freehand { points, closed } => {
+                PathData::single(fit_freehand(points, 1.5, *closed))
+            }
+            Shape::Bezier(sp) => PathData::single(sp.clone()),
+        };
+        let ok = path.subpaths.iter().any(|s| s.anchors.len() >= 2)
+            && path
+                .subpaths
+                .iter()
+                .all(|s| s.anchors.iter().all(|a| a.p.is_finite()));
+        ok.then_some(path)
+    }
+}
+
+/// Ajusta curvas a um traço à mão livre: tira o tremor, passa uma spline pelos pontos (curvas
+/// fechadas viram cantos) e simplifica até `tol`. Adaptado do Lápis do VectorCraft
+/// (`engine/src/cmd/draw2/freehand.rs`, MIT OR Apache-2.0).
+pub fn fit_freehand(pts: &[Point], tol: f64, closed: bool) -> SubPath {
+    let min = (tol * 0.3).max(0.3);
+    let (Some(&p0), Some(&pn)) = (pts.first(), pts.last()) else {
+        return SubPath::new(vec![], closed);
+    };
+    let mut kept: Vec<Point> = vec![p0];
+    for &p in pts.iter().skip(1) {
+        if kept.last().is_none_or(|k| k.distance(p) >= min) {
+            kept.push(p);
+        }
+    }
+    if kept.len() > 1 {
+        if let Some(k) = kept.last_mut() {
+            *k = pn;
+        }
+    } else if pts.len() > 1 {
+        kept.push(pn);
+    }
+    let n = kept.len();
+    let marked: Vec<(Point, bool)> = (0..n)
+        .map(|i| {
+            let corner = match (
+                i.checked_sub(1).and_then(|j| kept.get(j)),
+                kept.get(i),
+                kept.get(i + 1),
+            ) {
+                (Some(a), Some(b), Some(c)) => {
+                    let (u, v) = (*b - *a, *c - *b);
+                    u.dot(v) / (u.hypot() * v.hypot()).max(1e-12) < -0.2
+                }
+                _ => false,
+            };
+            (kept.get(i).copied().unwrap_or(p0), corner)
+        })
+        .collect();
+    let sp = vectorcraft_tools::draw2::catmull_rom(&marked, closed);
+    if sp.anchors.len() < 3 {
+        return sp;
+    }
+    let opts = SimplifyOptions {
+        tolerance: tol,
+        corner_angle_deg: 60.0,
+        straight_lines: false,
+    };
+    let fitted = vectorcraft_pathops::simplify_with(&PathData::single(sp.clone()), &opts);
+    fitted
+        .subpaths
+        .into_iter()
+        .next()
+        .filter(|s| s.anchors.len() >= 2)
+        .unwrap_or(sp)
+}
+
+thread_local! {
+    static RENDERER: RefCell<Renderer> = RefCell::new(Renderer::new());
+}
+
+/// Rasteriza a arte de `art` para uma superfície `width × height`.
+pub fn rasterize(art: &VectorArt, width: u32, height: u32) -> Surface {
+    let opts = RenderOptions {
+        artboards: false,
+        background: None,
+        ..RenderOptions::default()
+    };
+    let rendered = RENDERER.with(|r| {
+        r.borrow_mut()
+            .render(&art.doc, width, height, Affine::IDENTITY, &opts)
+    });
+    let bounds = Rect::new(0, 0, rendered.width as i32, rendered.height as i32);
+    let bytes = rendered.to_straight();
+    if bytes.len() != bounds.width() as usize * bounds.height() as usize * 4 {
+        return Surface::new(PixelFormat::RGBA8);
+    }
+    let mut s = Surface::from_interleaved(PixelFormat::RGBA8, bounds, &bytes);
+    s.prune();
+    s
+}
+
+impl VectorArt {
+    pub fn new(width: u32, height: u32) -> Self {
+        Self {
+            doc: vectorcraft_doc::Document::new(width as f64, height as f64),
+        }
+    }
+
+    /// A camada (do VectorCraft) onde os objetos novos entram.
+    fn target(&self) -> Option<NodeId> {
+        self.doc.layers.last().map(|l| l.id)
+    }
+}
+
+impl Document {
+    /// A arte vetorial da camada ativa, se ela for vetorial.
+    pub fn active_vector(&self) -> Option<&VectorArt> {
+        self.active_layer().and_then(|l| l.vector.as_ref())
+    }
+
+    pub fn active_is_vector(&self) -> bool {
+        self.active_vector().is_some()
+    }
+
+    /// Nova camada vetorial acima da ativa.
+    pub fn add_vector_layer(&mut self) {
+        self.add_layer();
+        let (w, h) = (self.width, self.height);
+        if let Some(l) = self.active_layer_mut() {
+            l.name = l.name.replace("Camada", "Vetor");
+            l.vector = Some(VectorArt::new(w, h));
+        }
+    }
+
+    /// Edita a arte vetorial da camada ativa e refaz a cópia rasterizada. Devolve a área a recompor.
+    fn edit_vector(&mut self, checkpoint: bool, f: impl FnOnce(&mut VectorArt) -> bool) -> Rect {
+        if !self.active_is_vector() {
+            return Rect::EMPTY;
+        }
+        if checkpoint {
+            self.checkpoint();
+        }
+        let (w, h) = (self.width, self.height);
+        let bounds = self.bounds();
+        let Some(layer) = self.active_layer_mut() else {
+            return Rect::EMPTY;
+        };
+        let Some(art) = layer.vector.as_mut() else {
+            return Rect::EMPTY;
+        };
+        if !f(art) {
+            return Rect::EMPTY;
+        }
+        layer.surface = rasterize(art, w, h);
+        bounds
+    }
+
+    /// Acrescenta uma forma à camada vetorial ativa.
+    pub fn vector_add(&mut self, shape: &Shape, style: &VectorStyle) -> Rect {
+        let Some(path) = shape.to_path() else {
+            return Rect::EMPTY;
+        };
+        let appearance = style.appearance();
+        self.edit_vector(true, |art| {
+            let Some(parent) = art.target() else {
+                return false;
+            };
+            let id = art.doc.alloc_id();
+            art.doc
+                .insert(Some(parent), usize::MAX, Node::path(id, path, appearance))
+                .is_ok()
+        })
+    }
+
+    /// O objeto vetorial da camada ativa sob `(x, y)`, com tolerância `tol` em pixels da tela.
+    pub fn vector_hit(&self, x: f64, y: f64, tol: f64) -> Option<NodeId> {
+        let art = self.active_vector()?;
+        let p = Point::new(x, y);
+        let opt = HitOptions {
+            tol: tol.max(0.5),
+            ..HitOptions::default()
+        };
+        if let Some(h) = hit_test(&art.doc, p, opt) {
+            return Some(h.leaf);
+        }
+        // Dentro de uma forma fechada sem preenchimento também conta (o toque não precisa achar o
+        // contorno fino), como no balde e na seleção do Clip Studio.
+        let layer = art.doc.node(art.target()?)?;
+        layer
+            .children()?
+            .iter()
+            .rev()
+            .find(|n| n.visible && !n.locked && encloses(n, p))
+            .map(|n| n.id)
+    }
+
+    /// Contorno (caminho) do objeto `id`, para desenhar a seleção.
+    pub fn vector_outline(&self, id: NodeId) -> Option<vectorcraft_geom::BezPath> {
+        self.active_vector()?
+            .doc
+            .node(id)?
+            .path_data()
+            .map(|p| p.to_bezpath())
+    }
+
+    /// Guarda o estado antes de arrastar objetos (o arraste em si não grava passos).
+    pub fn vector_begin_drag(&mut self) {
+        self.checkpoint();
+    }
+
+    /// Move o objeto `id` por `(dx, dy)`.
+    pub fn vector_move(&mut self, id: NodeId, dx: f64, dy: f64) -> Rect {
+        self.edit_vector(false, |art| {
+            match art.doc.node_mut(id).and_then(|n| n.path_data_mut()) {
+                Some(p) => {
+                    p.transform(Affine::translate(Vec2::new(dx, dy)));
+                    true
+                }
+                None => false,
+            }
+        })
+    }
+
+    pub fn vector_delete(&mut self, id: NodeId) -> Rect {
+        self.edit_vector(true, |art| art.doc.remove(id).is_ok())
+    }
+
+    /// Troca o traço e o preenchimento do objeto `id`.
+    pub fn vector_restyle(&mut self, id: NodeId, style: &VectorStyle) -> Rect {
+        let appearance = style.appearance();
+        self.edit_vector(true, |art| match art.doc.node_mut(id) {
+            Some(n) => {
+                n.appearance = Shared::new(appearance);
+                true
+            }
+            None => false,
+        })
+    }
+
+    /// Pinta o preenchimento do objeto sob `(x, y)` (o balde numa camada vetorial).
+    pub fn vector_fill_at(&mut self, x: f64, y: f64, color: [f32; 3]) -> Rect {
+        let Some(id) = self.vector_hit(x, y, 2.0) else {
+            return Rect::EMPTY;
+        };
+        self.edit_vector(true, |art| {
+            let Some(n) = art.doc.node_mut(id) else {
+                return false;
+            };
+            let mut app = (*n.appearance).clone();
+            match app.fill_mut() {
+                Some(f) => f.paint = paint(color),
+                None => app
+                    .items
+                    .insert(0, AppearanceItem::Fill(FillLayer::new(paint(color)))),
+            }
+            n.appearance = Shared::new(app);
+            true
+        })
+    }
+
+    /// Rasteriza a camada vetorial ativa: ela vira uma camada raster comum (para pintar por cima).
+    pub fn rasterize_layer(&mut self) {
+        if !self.active_is_vector() {
+            return;
+        }
+        self.checkpoint();
+        if let Some(l) = self.active_layer_mut() {
+            l.vector = None;
+        }
+    }
+}
+
+/// `p` está dentro de algum subcaminho fechado de `n`?
+fn encloses(n: &Node, p: Point) -> bool {
+    use vectorcraft_geom::Shape as _;
+    let Some(path) = n.path_data() else {
+        return false;
+    };
+    path.subpaths
+        .iter()
+        .filter(|sp| sp.closed)
+        .any(|sp| PathData::single(sp.clone()).to_bezpath().winding(p) != 0)
+}
+
+impl Layer {
+    pub fn is_vector(&self) -> bool {
+        self.vector.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    fn doc_with_vector() -> Document {
+        let mut d = Document::new(200, 200);
+        d.add_vector_layer();
+        d
+    }
+
+    #[test]
+    fn rectangle_is_drawn_and_undoable() {
+        let mut d = doc_with_vector();
+        let style = VectorStyle {
+            stroke: Some([1.0, 0.0, 0.0]),
+            width: 6.0,
+            fill: Some([0.0, 0.0, 1.0]),
+        };
+        let r = d.vector_add(
+            &Shape::Rectangle(Point::new(20.0, 20.0), Point::new(120.0, 100.0)),
+            &style,
+        );
+        assert!(!r.is_empty());
+        let s = &d.layers[1].surface;
+        let edge = s.rgba(20, 60);
+        assert!(edge[0] > 0.8 && edge[3] > 0.9, "traço vermelho: {edge:?}");
+        let inside = s.rgba(70, 60);
+        assert!(
+            inside[2] > 0.9 && inside[0] < 0.1,
+            "preenchimento azul: {inside:?}"
+        );
+        assert_eq!(s.rgba(150, 150)[3], 0.0);
+        assert!(d.undo());
+        assert_eq!(d.layers[1].surface.rgba(70, 60)[3], 0.0);
+    }
+
+    #[test]
+    fn hit_move_restyle_delete() {
+        let mut d = doc_with_vector();
+        d.vector_add(
+            &Shape::Ellipse(Point::new(50.0, 50.0), Point::new(150.0, 150.0)),
+            &VectorStyle {
+                fill: Some([0.0, 1.0, 0.0]),
+                ..Default::default()
+            },
+        );
+        let id = d.vector_hit(100.0, 100.0, 2.0).unwrap();
+        // Contorno sem preenchimento: tocar dentro também acha o objeto.
+        d.vector_add(
+            &Shape::Rectangle(Point::new(10.0, 160.0), Point::new(60.0, 190.0)),
+            &VectorStyle::default(),
+        );
+        assert!(d.vector_hit(35.0, 175.0, 1.0).is_some());
+        assert!(d.vector_hit(10.0, 10.0, 2.0).is_none());
+        d.vector_begin_drag();
+        d.vector_move(id, 30.0, 0.0);
+        assert!(d.layers[1].surface.rgba(170, 100)[3] > 0.9);
+        d.vector_fill_at(130.0, 100.0, [1.0, 1.0, 0.0]);
+        let px = d.layers[1].surface.rgba(130, 100);
+        assert!(px[0] > 0.9 && px[1] > 0.9 && px[2] < 0.1, "{px:?}");
+        d.vector_delete(id);
+        assert_eq!(d.layers[1].surface.rgba(130, 100)[3], 0.0);
+    }
+
+    #[test]
+    fn freehand_is_fitted_to_few_curves() {
+        let pts: Vec<Point> = (0..200)
+            .map(|i| Point::new(i as f64, 50.0 + (i as f64 / 20.0).sin() * 30.0))
+            .collect();
+        let sp = fit_freehand(&pts, 1.5, false);
+        assert!(
+            sp.anchors.len() >= 2 && sp.anchors.len() < 40,
+            "{}",
+            sp.anchors.len()
+        );
+        let mut d = doc_with_vector();
+        assert!(
+            !d.vector_add(
+                &Shape::Freehand {
+                    points: pts,
+                    closed: false
+                },
+                &VectorStyle::default()
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn raster_tools_skip_vector_layers_and_rasterize_converts() {
+        let mut d = doc_with_vector();
+        assert!(
+            crate::PaintSession::begin(&mut d, &crate::BrushSettings::default(), 1.0).is_none()
+        );
+        d.rasterize_layer();
+        assert!(!d.active_is_vector());
+        assert!(
+            crate::PaintSession::begin(&mut d, &crate::BrushSettings::default(), 1.0).is_some()
+        );
+    }
+}

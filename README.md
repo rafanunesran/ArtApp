@@ -5,7 +5,7 @@ para rodar no **Android** (e também no desktop, para desenvolver e testar).
 
 ![ArtApp no desktop: tela com uma curva a nanquim, preenchimento vermelho com o balde e um traço de marcador azul numa segunda camada](docs/screenshot-desktop.png)
 
-## O que já faz (MVP 1)
+## O que já faz
 
 - **Pincéis** do motor do [PhotoCraft](https://github.com/storytold/photocraft): os presets
   embutidos (General, Dry Media, Wet Media…) e pincéis de linha do ArtApp (Caneta G, Lápis, Marcador,
@@ -13,6 +13,12 @@ para rodar no **Android** (e também no desktop, para desenvolver e testar).
 - **Borracha**, **balde de tinta** (amostra todas as camadas, com tolerância) e **conta-gotas**.
 - **Camadas**: nova, duplicar, apagar, subir/descer, mesclar abaixo, limpar, mostrar/ocultar,
   opacidade, 26 modos de mesclagem (Multiplicar, Tela, Sobrepor…) e bloquear transparência.
+- **Camadas vetoriais** com o motor do [VectorCraft](https://github.com/storytold/vectorcraft)
+  (menu **Vetor**): caneta Bézier (toque põe pontos, arrastar curva, tocar no primeiro ponto fecha),
+  caneta vetorial à mão livre (o traço vira curvas ajustadas), linha, retângulo, elipse, seleção para
+  mover/recolorir/apagar objetos, balde que pinta o preenchimento da forma e borracha que apaga o
+  objeto tocado. Usar uma ferramenta vetorial numa camada raster cria uma camada vetorial; dá para
+  rasterizar uma camada vetorial para pintar por cima.
 - **Desfazer/refazer** (100 passos).
 - **Zoom e pan**: pinça com dois dedos no Android; roda do mouse e botão do meio/direito no desktop;
   ferramenta Mão.
@@ -21,11 +27,12 @@ para rodar no **Android** (e também no desktop, para desenvolver e testar).
 
 ## Próximos passos
 
-1. Ferramentas vetoriais com o [VectorCraft](https://github.com/storytold/vectorcraft): caneta
-   Bézier, formas, camadas vetoriais com traço editável.
+1. Editar pontos Bézier de objetos existentes (seleção direta) e espessura variável pela pressão.
 2. Salvar/abrir projeto com camadas (e salvamento automático no Android).
 3. Seleção (laço, retângulo), transformar, réguas e simetria.
 4. Compartilhar a imagem pelo menu do Android e importar fotos.
+
+![Camada vetorial: retângulo preenchido de vermelho com o balde e uma elipse selecionada](docs/screenshot-vetor.png)
 
 ## Arquitetura
 
@@ -34,11 +41,14 @@ nativa no Android pela `NativeActivity` — sem WebView.
 
 | Pasta | O que é |
 |---|---|
-| `crates/artapp-core` | Documento, camadas, traços, histórico, composição, balde e PNG. Sem interface; tem os testes. |
+| `crates/artapp-core` | Documento, camadas raster e vetoriais, traços, histórico, composição, balde e PNG. Sem interface; tem os testes. |
 | `crates/artapp` | O app (egui): tela de desenho, toques e gestos, painéis. Biblioteca `cdylib` para o Android e binário para o desktop. |
 | `android/` | Projeto Gradle mínimo que empacota `libartapp.so` num APK. |
 
-Os crates do PhotoCraft (e, em breve, do VectorCraft) entram como dependências Cargo fixadas por
+`third_party/epaint` é uma cópia do `epaint` 0.37 com uma correção de uma linha para conviver com o
+renderizador do VectorCraft (detalhes em `third_party/epaint/ARTAPP-PATCH.md`).
+
+Os crates do PhotoCraft e do VectorCraft entram como dependências Cargo fixadas por
 revisão de git, então dá para atualizar o motor trocando o `rev` no `Cargo.toml` da raiz.
 
 ## Rodar no desktop

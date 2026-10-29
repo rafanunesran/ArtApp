@@ -3,7 +3,10 @@
 
 use std::collections::HashMap;
 
-use artapp_core::{PaintSession, Rect, StrokePoint, composite, fill};
+use artapp_core::vector::Shape;
+use artapp_core::{
+    Anchor, BezPath, NodeId, PaintSession, Rect, StrokePoint, SubPath, VPoint, composite, fill,
+};
 use eframe::egui::{self, Color32, Pos2, Sense, TextureHandle, TextureOptions, TouchPhase, Vec2};
 
 use crate::app::{ArtApp, Tool, color_from_f32, color_to_f32};
@@ -14,8 +17,28 @@ const GESTURE_CANCEL_SECS: f64 = 0.35;
 const MIN_ZOOM: f32 = 0.02;
 const MAX_ZOOM: f32 = 64.0;
 
+/// O que o dedo/mouse está fazendo desde que encostou.
+enum ActiveKind {
+    Paint(Box<PaintSession>),
+    /// Linha, retângulo ou elipse: do ponto inicial ao atual (pixels da tela de desenho).
+    Shape {
+        tool: Tool,
+        from: VPoint,
+        to: VPoint,
+    },
+    Freehand(Vec<VPoint>),
+    /// Arrastando um objeto vetorial: aplicado ao soltar.
+    Move {
+        id: NodeId,
+        from: VPoint,
+        to: VPoint,
+    },
+    /// Puxando as alças do último ponto Bézier.
+    BezierHandle,
+}
+
 struct ActiveStroke {
-    session: PaintSession,
+    kind: ActiveKind,
     touch: Option<u64>,
     started: f64,
 }
@@ -94,6 +117,8 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
         let uv = egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
         painter.image(tex.id(), canvas, uv, Color32::WHITE);
     }
+
+    draw_overlay(app, &painter, panel);
 
     // Contorno do pincel sob o mouse (no toque não há "hover").
     let hover = ui
@@ -335,11 +360,29 @@ fn tool_down(
     touch: Option<u64>,
     time: f64,
 ) {
+    end_stroke(app);
     let pt = point(app, panel, p, force, time);
     let (x, y) = (pt.x.floor() as i32, pt.y.floor() as i32);
-    match app.tool {
+    let vp = VPoint::new(pt.x, pt.y);
+    let vector_layer = app.doc.active_is_vector();
+    // Tolerância de toque em pixels do documento (uns 12 pontos de tela).
+    let tol = 12.0 / app.view.zoom.max(0.01) as f64;
+    let kind = match app.tool {
+        Tool::Eraser if vector_layer => {
+            // Borracha vetorial: apaga o objeto tocado inteiro.
+            if let Some(id) = app.doc.vector_hit(vp.x, vp.y, tol) {
+                let r = app.doc.vector_delete(id);
+                app.invalidate(r);
+            }
+            None
+        }
         Tool::Brush | Tool::Eraser => {
-            end_stroke(app);
+            if vector_layer {
+                app.status =
+                    "Camada vetorial: use as ferramentas do menu Vetor, ou Rasterizar a camada."
+                        .into();
+                return;
+            }
             let brush = app.stroke_brush();
             let Some(mut session) = PaintSession::begin(&mut app.doc, &brush, app.view.zoom) else {
                 app.status = "A camada ativa está oculta.".into();
@@ -347,25 +390,27 @@ fn tool_down(
             };
             let dirty = session.add(&mut app.doc, &[pt]);
             app.invalidate(dirty);
-            app.view.stroke = Some(ActiveStroke {
-                session,
-                touch,
-                started: time,
-            });
             if app.tool == Tool::Brush {
                 app.remember_color();
             }
+            Some(ActiveKind::Paint(Box::new(session)))
         }
         Tool::Fill => {
-            let r = fill::flood_fill(
-                &mut app.doc,
-                x,
-                y,
-                color_to_f32(app.color),
-                app.fill_tolerance,
-            );
+            let r = if vector_layer {
+                let [r, g, b, _] = color_to_f32(app.color);
+                app.doc.vector_fill_at(vp.x, vp.y, [r, g, b])
+            } else {
+                fill::flood_fill(
+                    &mut app.doc,
+                    x,
+                    y,
+                    color_to_f32(app.color),
+                    app.fill_tolerance,
+                )
+            };
             app.invalidate(r);
             app.remember_color();
+            None
         }
         Tool::Eyedropper => {
             if let Some(c) = composite::sample(&app.doc, x, y) {
@@ -373,29 +418,238 @@ fn tool_down(
                 app.remember_color();
                 app.tool = app.previous_tool;
             }
+            None
         }
-        Tool::Hand => {}
-    }
+        Tool::Hand => None,
+        Tool::Select => {
+            app.selected = app.doc.vector_hit(vp.x, vp.y, tol);
+            if !vector_layer {
+                app.status = "Selecionar funciona em camadas vetoriais.".into();
+            }
+            app.selected.map(|id| ActiveKind::Move {
+                id,
+                from: vp,
+                to: vp,
+            })
+        }
+        Tool::VectorPen | Tool::Line | Tool::Rectangle | Tool::Ellipse => {
+            app.ensure_vector_layer();
+            Some(if app.tool == Tool::VectorPen {
+                ActiveKind::Freehand(vec![vp])
+            } else {
+                ActiveKind::Shape {
+                    tool: app.tool,
+                    from: vp,
+                    to: vp,
+                }
+            })
+        }
+        Tool::Bezier => {
+            app.ensure_vector_layer();
+            let closes = app.bezier.len() >= 2
+                && app.bezier.first().is_some_and(|a| a.p.distance(vp) <= tol);
+            if closes {
+                app.finish_bezier(true);
+                None
+            } else {
+                app.bezier.push(Anchor::corner(vp));
+                Some(ActiveKind::BezierHandle)
+            }
+        }
+    };
+    app.view.stroke = kind.map(|kind| ActiveStroke {
+        kind,
+        touch,
+        started: time,
+    });
 }
 
 fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, time: f64) {
     let pt = point(app, panel, p, force, time);
-    if let Some(s) = &mut app.view.stroke {
-        let dirty = s.session.add(&mut app.doc, &[pt]);
-        app.invalidate(dirty);
+    let vp = VPoint::new(pt.x, pt.y);
+    let min_handle = 3.0 / app.view.zoom.max(0.01) as f64;
+    let Some(s) = &mut app.view.stroke else {
+        return;
+    };
+    match &mut s.kind {
+        ActiveKind::Paint(session) => {
+            let dirty = session.add(&mut app.doc, &[pt]);
+            app.invalidate(dirty);
+        }
+        ActiveKind::Shape { to, .. } | ActiveKind::Move { to, .. } => *to = vp,
+        ActiveKind::Freehand(points) => points.push(vp),
+        ActiveKind::BezierHandle => {
+            if let Some(a) = app.bezier.last_mut() {
+                *a = if a.p.distance(vp) > min_handle {
+                    Anchor::smooth(a.p, vp)
+                } else {
+                    Anchor::corner(a.p)
+                };
+            }
+        }
     }
 }
 
 fn end_stroke(app: &mut ArtApp) {
-    if let Some(s) = app.view.stroke.take() {
-        let dirty: Rect = s.session.end(&mut app.doc);
-        app.invalidate(dirty);
-    }
+    let Some(s) = app.view.stroke.take() else {
+        return;
+    };
+    let style = app.vector_style();
+    let dirty = match s.kind {
+        ActiveKind::Paint(session) => session.end(&mut app.doc),
+        ActiveKind::Shape { tool, from, to } => {
+            if from.distance(to) < 1.0 {
+                return;
+            }
+            let shape = match tool {
+                Tool::Line => Shape::Line(from, to),
+                Tool::Ellipse => Shape::Ellipse(from, to),
+                _ => Shape::Rectangle(from, to),
+            };
+            app.remember_color();
+            app.doc.vector_add(&shape, &style)
+        }
+        ActiveKind::Freehand(points) => {
+            if points.len() < 2 {
+                return;
+            }
+            app.remember_color();
+            app.doc.vector_add(
+                &Shape::Freehand {
+                    points,
+                    closed: false,
+                },
+                &style,
+            )
+        }
+        ActiveKind::Move { id, from, to } => {
+            let d = to - from;
+            if d.hypot() < 0.5 {
+                return;
+            }
+            app.doc.vector_begin_drag();
+            app.doc.vector_move(id, d.x, d.y)
+        }
+        ActiveKind::BezierHandle => Rect::EMPTY,
+    };
+    app.invalidate(dirty);
 }
 
 fn cancel_stroke(app: &mut ArtApp) {
-    if let Some(s) = app.view.stroke.take() {
-        let dirty = s.session.cancel(&mut app.doc);
-        app.invalidate(dirty);
+    let Some(s) = app.view.stroke.take() else {
+        return;
+    };
+    match s.kind {
+        ActiveKind::Paint(session) => {
+            let dirty = session.cancel(&mut app.doc);
+            app.invalidate(dirty);
+        }
+        ActiveKind::BezierHandle => {
+            app.bezier.pop();
+        }
+        _ => {}
+    }
+}
+
+/// Converte um ponto do documento para a tela.
+fn to_screen(app: &ArtApp, panel: egui::Rect, p: VPoint) -> Pos2 {
+    panel.min + app.view.offset + egui::vec2(p.x as f32, p.y as f32) * app.view.zoom
+}
+
+/// Desenha um caminho Bézier (achatado em segmentos) na tela.
+fn draw_bez(
+    app: &ArtApp,
+    painter: &egui::Painter,
+    panel: egui::Rect,
+    path: &BezPath,
+    stroke: egui::Stroke,
+) {
+    let mut pts: Vec<Pos2> = Vec::new();
+    let tol = 0.5 / app.view.zoom.max(0.01) as f64;
+    let flush = |pts: &mut Vec<Pos2>| {
+        if pts.len() >= 2 {
+            painter.add(egui::Shape::line(std::mem::take(pts), stroke));
+        }
+        pts.clear();
+    };
+    kurbo::flatten(path.iter(), tol, |el| match el {
+        kurbo::PathEl::MoveTo(p) => {
+            flush(&mut pts);
+            pts.push(to_screen(app, panel, p));
+        }
+        kurbo::PathEl::LineTo(p) => pts.push(to_screen(app, panel, p)),
+        kurbo::PathEl::ClosePath => {
+            if let Some(first) = pts.first().copied() {
+                pts.push(first);
+            }
+        }
+        _ => {}
+    });
+    flush(&mut pts);
+}
+
+/// Prévias das ferramentas vetoriais e a seleção, por cima da tela.
+fn draw_overlay(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
+    let preview = egui::Stroke::new(
+        ((app.vector_width as f32) * app.view.zoom).max(1.0),
+        app.color,
+    );
+    let guide = egui::Stroke::new(1.5, Color32::from_rgb(40, 170, 255));
+    if let Some(s) = &app.view.stroke {
+        match &s.kind {
+            ActiveKind::Shape { tool, from, to } => {
+                let shape = match tool {
+                    Tool::Line => Shape::Line(*from, *to),
+                    Tool::Ellipse => Shape::Ellipse(*from, *to),
+                    _ => Shape::Rectangle(*from, *to),
+                };
+                if let Some(p) = shape.to_path() {
+                    draw_bez(app, painter, panel, &p.to_bezpath(), preview);
+                }
+            }
+            ActiveKind::Freehand(points) => {
+                let line: Vec<Pos2> = points.iter().map(|p| to_screen(app, panel, *p)).collect();
+                painter.add(egui::Shape::line(line, preview));
+            }
+            ActiveKind::Move { id, from, to } => {
+                if let Some(mut path) = app.doc.vector_outline(*id) {
+                    path.apply_affine(kurbo::Affine::translate(*to - *from));
+                    draw_bez(app, painter, panel, &path, guide);
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(path) = app.selected.and_then(|id| app.doc.vector_outline(id)) {
+        draw_bez(app, painter, panel, &path, guide);
+    }
+    if !app.bezier.is_empty() {
+        let path =
+            artapp_core::vector::Shape::Bezier(SubPath::new(app.bezier.clone(), false)).to_path();
+        if let Some(p) = path {
+            draw_bez(app, painter, panel, &p.to_bezpath(), preview);
+        }
+        for (i, a) in app.bezier.iter().enumerate() {
+            let c = to_screen(app, panel, a.p);
+            if a.h_out.distance(a.p) > 0.01 {
+                for h in [a.h_in, a.h_out] {
+                    let hp = to_screen(app, panel, h);
+                    painter.line_segment([c, hp], guide);
+                    painter.circle_filled(hp, 4.0, guide.color);
+                }
+            }
+            let fill = if i == 0 { Color32::WHITE } else { guide.color };
+            painter.rect_filled(
+                egui::Rect::from_center_size(c, egui::vec2(9.0, 9.0)),
+                1.0,
+                fill,
+            );
+            painter.rect_stroke(
+                egui::Rect::from_center_size(c, egui::vec2(9.0, 9.0)),
+                1.0,
+                guide,
+                egui::StrokeKind::Outside,
+            );
+        }
     }
 }

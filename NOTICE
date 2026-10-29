@@ -11,8 +11,15 @@ PhotoCraft (https://github.com/storytold/photocraft) — photocraft-geom, photoc
 photocraft-raster, photocraft-paint (brush engine, tiled surfaces, blend modes).
 Copyright (c) 2026 ArtCraft Team and the PhotoCraft contributors. MIT OR Apache-2.0.
 
-VectorCraft (https://github.com/storytold/vectorcraft) — planned for the vector tools.
+VectorCraft (https://github.com/storytold/vectorcraft) — vectorcraft-geom, vectorcraft-doc,
+vectorcraft-render, vectorcraft-pathops, vectorcraft-tools, vectorcraft-color (vector document
+model, rendering, path simplification). crates/artapp-core/src/vector.rs adapts the freehand fitting
+of VectorCraft's Pencil (engine/src/cmd/draw2/freehand.rs).
 Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors. MIT OR Apache-2.0.
+
+egui / epaint (https://github.com/emilk/egui) — third_party/epaint is a copy of epaint 0.37.0 with
+one fix (see third_party/epaint/ARTAPP-PATCH.md). Copyright (c) 2018-2021 Emil Ernerfeldt. MIT OR
+Apache-2.0 (third_party/epaint/LICENSE-MIT, LICENSE-APACHE).
 
 The ArtCraft, PhotoCraft and VectorCraft names and logos are trademarks of the ArtCraft Team and are
 not used by ArtApp. ArtApp is an independent project, not affiliated with or endorsed by them.

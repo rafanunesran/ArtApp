@@ -17,10 +17,10 @@ pub struct PaintSession {
 
 impl PaintSession {
     /// Começa um traço na camada ativa. `zoom` é o zoom da vista (a suavização usa).
-    /// Devolve `None` se a camada ativa estiver oculta ou não existir.
+    /// Devolve `None` se a camada ativa estiver oculta, for vetorial ou não existir.
     pub fn begin(doc: &mut Document, brush: &BrushSettings, zoom: f32) -> Option<Self> {
         let layer = doc.active_layer()?;
-        if !layer.visible {
+        if !layer.visible || layer.is_vector() {
             return None;
         }
         let (pre, layer_id, lock_alpha) = (layer.surface.clone(), layer.id, layer.lock_alpha);

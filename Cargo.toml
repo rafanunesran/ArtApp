@@ -16,6 +16,14 @@ photocraft-geom = { git = "https://github.com/storytold/photocraft", rev = "6fdd
 photocraft-color = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
 photocraft-raster = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
 photocraft-paint = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
+# Motores do VectorCraft (modelo de documento vetorial, geometria, renderização).
+vectorcraft-geom = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
+vectorcraft-doc = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
+vectorcraft-pathops = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
+vectorcraft-tools = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
+vectorcraft-color = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
+vectorcraft-render = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
+kurbo = "0.13"
 artapp-core = { path = "crates/artapp-core" }
 png = "0.18"
 log = "0.4"
@@ -36,3 +44,11 @@ opt-level = 2
 [profile.release]
 lto = "thin"
 codegen-units = 4
+
+
+# O VectorCraft liga o modo multithread do vello_cpu, e o epaint 0.37 (texto do egui) cria contextos
+# do vello_cpu sem `flush`, o que entra em pânico nesse modo. Usamos uma cópia do epaint 0.37.0 com
+# a correção que o time do VectorCraft aplica no fork deles (contexto de um thread por glifo).
+# Ver third_party/epaint/ARTAPP-PATCH.md.
+[patch.crates-io]
+epaint = { path = "third_party/epaint" }

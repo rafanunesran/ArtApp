@@ -1,7 +1,8 @@
 //! Estado do app e o quadro principal: barra de ferramentas, painéis e a tela de desenho.
 
 use artapp_core::brushes::{self, BrushEntry};
-use artapp_core::{BrushSettings, Document, Rect};
+use artapp_core::vector::VectorStyle;
+use artapp_core::{Anchor, BrushSettings, Document, NodeId, Rect};
 use eframe::egui::{self, Color32};
 
 use crate::canvas::CanvasView;
@@ -14,15 +15,34 @@ pub enum Tool {
     Fill,
     Eyedropper,
     Hand,
+    /// Seleciona e move objetos vetoriais.
+    Select,
+    /// Traço vetorial à mão livre (vira curvas Bézier ajustadas).
+    VectorPen,
+    /// Caneta Bézier: toque põe um ponto, arrastar puxa as alças.
+    Bezier,
+    Line,
+    Rectangle,
+    Ellipse,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 5] = [
+    /// Ferramentas raster, sempre visíveis na barra.
+    pub const RASTER: [Tool; 5] = [
         Tool::Brush,
         Tool::Eraser,
         Tool::Fill,
         Tool::Eyedropper,
         Tool::Hand,
+    ];
+    /// Ferramentas vetoriais, no menu "Vetor".
+    pub const VECTOR: [Tool; 6] = [
+        Tool::Select,
+        Tool::VectorPen,
+        Tool::Bezier,
+        Tool::Line,
+        Tool::Rectangle,
+        Tool::Ellipse,
     ];
 
     pub fn label(self) -> &'static str {
@@ -32,7 +52,18 @@ impl Tool {
             Tool::Fill => "Balde",
             Tool::Eyedropper => "Conta-gotas",
             Tool::Hand => "Mão",
+            Tool::Select => "Selecionar",
+            Tool::VectorPen => "Caneta vetorial",
+            Tool::Bezier => "Bézier",
+            Tool::Line => "Linha",
+            Tool::Rectangle => "Retângulo",
+            Tool::Ellipse => "Elipse",
         }
+    }
+
+    /// Ferramentas que só trabalham em camadas vetoriais.
+    pub fn is_vector(self) -> bool {
+        Self::VECTOR.contains(&self)
     }
 
     /// Atalho de teclado (desktop).
@@ -43,6 +74,12 @@ impl Tool {
             Tool::Fill => egui::Key::G,
             Tool::Eyedropper => egui::Key::I,
             Tool::Hand => egui::Key::H,
+            Tool::Select => egui::Key::V,
+            Tool::VectorPen => egui::Key::N,
+            Tool::Bezier => egui::Key::P,
+            Tool::Line => egui::Key::L,
+            Tool::Rectangle => egui::Key::M,
+            Tool::Ellipse => egui::Key::O,
         }
     }
 }
@@ -76,6 +113,15 @@ pub struct ArtApp {
     pub show_new_dialog: bool,
     /// Mensagem curta na barra de baixo (ex.: onde a imagem foi salva).
     pub status: String,
+    /// Estilo dos objetos vetoriais novos (a cor do traço é `color`).
+    pub vector_stroke: bool,
+    pub vector_width: f64,
+    pub vector_fill: bool,
+    pub vector_fill_color: Color32,
+    /// Objeto vetorial selecionado (ferramenta Selecionar).
+    pub selected: Option<NodeId>,
+    /// Pontos do caminho Bézier em construção.
+    pub bezier: Vec<Anchor>,
     /// Retângulo da tela que precisa ser recomposto no próximo quadro.
     pending: Rect,
 }
@@ -118,6 +164,12 @@ impl ArtApp {
             show_layers_panel: wide,
             show_new_dialog: false,
             status: String::new(),
+            vector_stroke: true,
+            vector_width: 6.0,
+            vector_fill: false,
+            vector_fill_color: Color32::from_rgb(250, 200, 40),
+            selected: None,
+            bezier: Vec::new(),
             pending: Rect::EMPTY,
         }
     }
@@ -162,7 +214,49 @@ impl ArtApp {
         if t == Tool::Eyedropper && self.tool != Tool::Eyedropper {
             self.previous_tool = self.tool;
         }
+        if t != Tool::Bezier {
+            self.finish_bezier(false);
+        }
+        if t != Tool::Select {
+            self.selected = None;
+        }
         self.tool = t;
+    }
+
+    /// O estilo vetorial atual.
+    pub fn vector_style(&self) -> VectorStyle {
+        let rgb = |c: Color32| {
+            let [r, g, b, _] = color_to_f32(c);
+            [r, g, b]
+        };
+        VectorStyle {
+            stroke: self.vector_stroke.then(|| rgb(self.color)),
+            width: self.vector_width,
+            fill: self.vector_fill.then(|| rgb(self.vector_fill_color)),
+        }
+    }
+
+    /// Garante que a camada ativa é vetorial (cria uma acima, como no Clip Studio, se não for).
+    pub fn ensure_vector_layer(&mut self) {
+        if !self.doc.active_is_vector() {
+            self.doc.add_vector_layer();
+            self.status = "Nova camada vetorial criada.".into();
+        }
+    }
+
+    /// Termina o caminho Bézier em construção (`closed` fecha no primeiro ponto).
+    pub fn finish_bezier(&mut self, closed: bool) {
+        let anchors = std::mem::take(&mut self.bezier);
+        if anchors.len() < 2 {
+            return;
+        }
+        let style = self.vector_style();
+        let r = self.doc.vector_add(
+            &artapp_core::vector::Shape::Bezier(artapp_core::SubPath::new(anchors, closed)),
+            &style,
+        );
+        self.invalidate(r);
+        self.remember_color();
     }
 
     /// Guarda a cor atual entre as recentes.
@@ -210,13 +304,28 @@ impl ArtApp {
                 egui::Key::Z,
             ) || i.consume_key(egui::Modifiers::COMMAND, egui::Key::Y);
             let undo = i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z);
-            let tool = Tool::ALL
+            let tool = Tool::RASTER
+                .into_iter()
+                .chain(Tool::VECTOR)
                 .into_iter()
                 .find(|t| i.consume_key(egui::Modifiers::NONE, t.key()));
             let bigger = i.consume_key(egui::Modifiers::NONE, egui::Key::CloseBracket);
             let smaller = i.consume_key(egui::Modifiers::NONE, egui::Key::OpenBracket);
             (undo, redo, tool, bigger, smaller)
         });
+        let (enter, escape) = ctx.input_mut(|i| {
+            (
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+            )
+        });
+        if enter {
+            self.finish_bezier(false);
+        }
+        if escape {
+            self.bezier.clear();
+            self.selected = None;
+        }
         if undo {
             self.undo();
         }
