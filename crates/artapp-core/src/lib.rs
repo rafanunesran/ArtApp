@@ -15,6 +15,7 @@ pub mod edit;
 pub mod export;
 pub mod fill;
 pub mod history;
+pub mod liquify;
 pub mod mix;
 pub mod selection;
 pub mod stroke;

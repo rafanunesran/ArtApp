@@ -38,16 +38,19 @@ pub enum Tool {
     Line,
     Rectangle,
     Ellipse,
+    /// Liquefazer: empurrar, torcer, inflar… a camada raster.
+    Liquify,
     /// Todas as ferramentas do VectorCraft (a escolhida fica em `ArtApp::kit_tool`).
     VectorKit,
 }
 
 impl Tool {
     /// Ferramentas raster, sempre visíveis na barra.
-    pub const RASTER: [Tool; 7] = [
+    pub const RASTER: [Tool; 8] = [
         Tool::Brush,
         Tool::Eraser,
         Tool::Blend,
+        Tool::Liquify,
         Tool::Fill,
         Tool::Gradient,
         Tool::Eyedropper,
@@ -93,6 +96,7 @@ impl Tool {
             Tool::Rectangle => "Retângulo",
             Tool::Ellipse => "Elipse",
             Tool::VectorKit => "Vetor pro",
+            Tool::Liquify => "Liquefazer",
         }
     }
 
@@ -118,6 +122,7 @@ impl Tool {
             Tool::Rectangle => icon::SQUARE,
             Tool::Ellipse => icon::CIRCLE,
             Tool::VectorKit => icon::SPLINE_POINTER,
+            Tool::Liquify => icon::SPLINE,
         }
     }
 
@@ -163,6 +168,7 @@ impl Tool {
             Tool::Rectangle => egui::Key::M,
             Tool::Ellipse => egui::Key::O,
             Tool::VectorKit => egui::Key::Y,
+            Tool::Liquify => egui::Key::Q,
         }
     }
 }
@@ -194,6 +200,9 @@ pub struct ArtApp {
     pub mix_kind: artapp_core::mix::MixKind,
     pub mix_brush: BrushSettings,
     pub mix_strength: f32,
+    pub liquify_tool: artapp_core::liquify::LiquifyTool,
+    pub liquify_size: f32,
+    pub liquify_pressure: f32,
     /// Carimbo: a origem, e se o próximo toque escolhe uma nova.
     pub clone_source: Option<[f64; 2]>,
     pub clone_picking: bool,
@@ -283,6 +292,9 @@ impl ArtApp {
                 ..Default::default()
             },
             mix_strength: 0.6,
+            liquify_tool: artapp_core::liquify::LiquifyTool::ForwardWarp,
+            liquify_size: 120.0,
+            liquify_pressure: 0.6,
             clone_source: None,
             clone_picking: false,
             eraser: BrushSettings {
