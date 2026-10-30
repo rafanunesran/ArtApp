@@ -25,16 +25,23 @@ pub fn init_android(app: &winit::platform::android::activity::AndroidApp) {
     let _ = SAVE_DIRS.set(dirs);
 }
 
-/// Onde ficam os dados do app (no desktop, `~/.config/artapp`).
+/// A pasta do usuário (`HOME`; no Windows, `USERPROFILE`).
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+/// Onde ficam os dados do app: no Windows `%APPDATA%\ArtApp`, nos outros desktops
+/// `~/.config/artapp`.
 pub fn data_dir() -> PathBuf {
     if let Some(d) = DATA_DIR.get() {
         return d.clone();
     }
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_default()
-        .join(".config")
-        .join("artapp")
+    if let Some(appdata) = std::env::var_os("APPDATA").filter(|_| cfg!(windows)) {
+        return PathBuf::from(appdata).join("ArtApp");
+    }
+    home().unwrap_or_default().join(".config").join("artapp")
 }
 
 fn save_dirs() -> Vec<PathBuf> {
@@ -42,7 +49,7 @@ fn save_dirs() -> Vec<PathBuf> {
         return d.clone();
     }
     let mut dirs = Vec::new();
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+    if let Some(home) = home() {
         dirs.push(home.join("Pictures").join("ArtApp"));
         dirs.push(home);
     }

@@ -86,6 +86,18 @@ Site: **https://rafanunesran.github.io/ArtApp/** (código em `site/`). O APK mai
 nos testes publica uma release com `ArtApp.apk`. Instale no celular permitindo "instalar apps
 desconhecidos".
 
+A mesma release traz as versões para computador:
+
+| Sistema | Arquivo | Como abrir |
+|---|---|---|
+| Windows 10/11 | `ArtApp-Windows-x64.zip` | Extraia e abra `ArtApp.exe` (no aviso do SmartScreen: "Mais informações › Executar assim mesmo"). |
+| Linux x64 | `ArtApp-Linux-x64.tar.gz` | Extraia e rode `./install.sh` (põe no menu) ou `./artapp`. |
+| macOS (M1/M2/M3…) | `ArtApp-macOS-AppleSilicon.zip` | Extraia, arraste `ArtApp.app` para Aplicativos e abra com botão direito › Abrir na primeira vez. |
+| macOS Intel | `ArtApp-macOS-Intel.zip` | Igual ao de cima. |
+
+Os apps de computador ainda não têm assinatura paga (Microsoft/Apple), por isso o aviso na
+primeira abertura.
+
 ## Gerar o APK
 
 O GitHub Actions (`.github/workflows/android.yml`) gera o APK em cada push; além da release, ele
