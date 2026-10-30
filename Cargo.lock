@@ -151,8 +151,10 @@ dependencies = [
  "artapp-core",
  "eframe",
  "env_logger",
+ "jni",
  "kurbo",
  "log",
+ "ndk-context",
  "serde_json",
  "winit",
 ]
@@ -162,10 +164,12 @@ name = "artapp-core"
 version = "0.1.0"
 dependencies = [
  "kurbo",
+ "log",
  "photocraft-algo",
  "photocraft-color",
  "photocraft-geom",
  "photocraft-paint",
+ "photocraft-psd",
  "photocraft-raster",
  "png",
  "serde",
@@ -173,6 +177,7 @@ dependencies = [
  "vectorcraft-color",
  "vectorcraft-doc",
  "vectorcraft-engine",
+ "vectorcraft-format",
  "vectorcraft-geom",
  "vectorcraft-pathops",
  "vectorcraft-render",
@@ -2376,6 +2381,15 @@ dependencies = [
  "photocraft-raster",
  "rayon",
  "serde",
+]
+
+[[package]]
+name = "photocraft-psd"
+version = "0.17.0"
+source = "git+https://github.com/storytold/photocraft?rev=6fdd6bb1b7de381c58c15a61aa1352f0a7061745#6fdd6bb1b7de381c58c15a61aa1352f0a7061745"
+dependencies = [
+ "flate2",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

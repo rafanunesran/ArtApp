@@ -83,6 +83,45 @@ impl Document {
         doc
     }
 
+    /// Documento montado a partir de camadas prontas (abrir um projeto ou um PSD). Sem camadas,
+    /// ganha uma vazia; o histórico começa limpo.
+    pub fn from_parts(
+        width: u32,
+        height: u32,
+        paper: [f32; 4],
+        layers: Vec<Layer>,
+        active: usize,
+    ) -> Self {
+        let next_id = layers.iter().map(|l| l.id).max().unwrap_or(0) + 1;
+        let mut doc = Self {
+            width: width.clamp(1, MAX_CANVAS_SIDE),
+            height: height.clamp(1, MAX_CANVAS_SIDE),
+            paper,
+            layers,
+            active: 0,
+            selection: None,
+            history: History::default(),
+            next_id,
+        };
+        if doc.layers.is_empty() {
+            let layer = doc.make_layer();
+            doc.layers.push(layer);
+        }
+        doc.active = active.min(doc.layers.len() - 1);
+        doc
+    }
+
+    /// Cópia das camadas sem o histórico (para salvar em segundo plano).
+    pub fn snapshot(&self) -> Self {
+        Self::from_parts(
+            self.width,
+            self.height,
+            self.paper,
+            self.layers.clone(),
+            self.active,
+        )
+    }
+
     pub fn bounds(&self) -> Rect {
         Rect::new(0, 0, self.width as i32, self.height as i32)
     }

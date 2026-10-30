@@ -8,6 +8,7 @@ mod canvas;
 mod dialogs;
 mod panels;
 pub mod platform;
+mod projects;
 mod theme;
 
 pub use app::ArtApp;
@@ -29,7 +30,14 @@ pub fn run_desktop() -> eframe::Result {
     eframe::run_native(
         "ArtApp",
         native_options(),
-        Box::new(|cc| Ok(Box::new(ArtApp::new(cc)))),
+        Box::new(|cc| {
+            let mut app = ArtApp::new(cc);
+            // `artapp desenho.artapp` (ou um .psd) já abre o arquivo.
+            if let Some(path) = std::env::args_os().nth(1) {
+                app.open_path(path.into());
+            }
+            Ok(Box::new(app))
+        }),
     )
 }
 

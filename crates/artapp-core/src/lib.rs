@@ -17,6 +17,8 @@ pub mod fill;
 pub mod history;
 pub mod liquify;
 pub mod mix;
+pub mod project;
+pub mod psd;
 pub mod selection;
 pub mod stroke;
 pub mod vector;

@@ -17,9 +17,13 @@ photocraft-color = { git = "https://github.com/storytold/photocraft", rev = "6fd
 photocraft-raster = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
 photocraft-algo = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
 photocraft-paint = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
+# Leitor/gravador de PSD (abrir e exportar com camadas).
+photocraft-psd = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
 # Motores do VectorCraft (modelo de documento vetorial, geometria, renderização).
 vectorcraft-geom = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
 vectorcraft-doc = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
+# Formato nativo .vectorcraft: guarda a arte das camadas vetoriais dentro do projeto.
+vectorcraft-format = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
 vectorcraft-pathops = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
 vectorcraft-tools = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
 vectorcraft-color = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
