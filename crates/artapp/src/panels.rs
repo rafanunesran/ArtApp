@@ -419,6 +419,8 @@ pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
                 ui.label(RichText::new("Pinta a área de cor parecida, olhando todas as camadas. Em camada vetorial, pinta o preenchimento da forma tocada.").size(12.0).color(color::TEXT_MUTED));
             } else if app.tool == Tool::Blend {
                 mix_settings(app, ui);
+            } else if app.tool == Tool::Liquify {
+                liquify_settings(app, ui);
             } else if app.tool == Tool::Gradient {
                 gradient_settings(app, ui);
             } else if app.tool == Tool::MagicWand {
@@ -625,6 +627,37 @@ fn kit_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             }
         });
     }
+}
+
+fn liquify_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
+    section(ui, "Modo");
+    ui.horizontal_wrapped(|ui| {
+        for (tool, name) in artapp_core::liquify::TOOLS {
+            ui.selectable_value(&mut app.liquify_tool, tool, name);
+        }
+    });
+    section(ui, "Ajustes");
+    ui.add(
+        egui::Slider::new(&mut app.liquify_size, 5.0..=1000.0)
+            .logarithmic(true)
+            .text("Tamanho"),
+    );
+    let mut pct = app.liquify_pressure * 100.0;
+    if ui
+        .add(
+            egui::Slider::new(&mut pct, 1.0..=100.0)
+                .suffix("%")
+                .text("Força"),
+        )
+        .changed()
+    {
+        app.liquify_pressure = pct / 100.0;
+    }
+    ui.label(
+        RichText::new("Arraste sobre a camada raster ativa. Restaurar desfaz a deformação aos poucos onde passar.")
+            .size(12.5)
+            .color(color::TEXT_MUTED),
+    );
 }
 
 fn gradient_settings(app: &mut ArtApp, ui: &mut egui::Ui) {

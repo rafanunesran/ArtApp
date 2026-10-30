@@ -56,6 +56,7 @@ enum ActiveKind {
         from: VPoint,
         to: VPoint,
     },
+    Liquify(Box<artapp_core::liquify::LiquifySession>),
     /// Uma ferramenta do VectorCraft: o último ponto, para o soltar.
     Kit(VPoint, f32),
 }
@@ -263,9 +264,15 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
         .input(|i| i.pointer.hover_pos())
         .filter(|p| panel.contains(*p));
     if let Some(p) = hover.filter(|_| {
-        !app.view.saw_touch && matches!(app.tool, Tool::Brush | Tool::Eraser | Tool::Blend)
+        !app.view.saw_touch
+            && matches!(
+                app.tool,
+                Tool::Brush | Tool::Eraser | Tool::Blend | Tool::Liquify
+            )
     }) {
-        let size = if app.tool == Tool::Blend {
+        let size = if app.tool == Tool::Liquify {
+            app.liquify_size
+        } else if app.tool == Tool::Blend {
             app.mix_brush.size
         } else {
             app.stroke_brush().size
@@ -662,6 +669,24 @@ fn tool_down(
                 }
             })
         }
+        Tool::Liquify => {
+            if vector_layer {
+                app.status = "Liquefazer funciona em camadas raster.".into();
+                return;
+            }
+            let Some(mut session) = artapp_core::liquify::LiquifySession::begin(
+                &mut app.doc,
+                app.liquify_tool,
+                app.liquify_size,
+                app.liquify_pressure,
+            ) else {
+                app.status = "A camada ativa está oculta.".into();
+                return;
+            };
+            let r = session.add(&mut app.doc, vp.x, vp.y, pt.pressure);
+            app.invalidate(r);
+            Some(ActiveKind::Liquify(Box::new(session)))
+        }
         Tool::VectorKit => {
             app.ensure_vector_layer();
             let style = app.vector_style();
@@ -712,6 +737,10 @@ fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, t
         | ActiveKind::MoveLayer { to, .. }
         | ActiveKind::Gradient { to, .. } => *to = vp,
         ActiveKind::Freehand(points) | ActiveKind::Lasso(points) => points.push(vp),
+        ActiveKind::Liquify(session) => {
+            let r = session.add(&mut app.doc, vp.x, vp.y, pt.pressure);
+            app.invalidate(r);
+        }
         ActiveKind::Kit(last, pressure) => {
             *last = vp;
             *pressure = pt.pressure;
@@ -773,6 +802,7 @@ fn end_stroke(app: &mut ArtApp) {
         }
         ActiveKind::BezierHandle => Rect::EMPTY,
         ActiveKind::Kit(last, pressure) => kit_pointer(app, PointerKind::Up, last, pressure),
+        ActiveKind::Liquify(session) => session.end(),
         ActiveKind::Marquee { tool, from, to } => {
             let (w, h) = (app.doc.width, app.doc.height);
             let (a, b) = ([from.x, from.y], [to.x, to.y]);
@@ -834,6 +864,10 @@ fn cancel_stroke(app: &mut ArtApp) {
         }
         ActiveKind::BezierHandle => {
             app.bezier.pop();
+        }
+        ActiveKind::Liquify(session) => {
+            let r = session.cancel(&mut app.doc);
+            app.invalidate(r);
         }
         ActiveKind::Kit(last, pressure) => {
             let r = kit_pointer(app, PointerKind::Up, last, pressure);
