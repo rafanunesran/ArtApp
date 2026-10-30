@@ -17,6 +17,12 @@ pub enum Tool {
     Fill,
     Eyedropper,
     Hand,
+    /// Move o conteúdo da camada ativa.
+    MoveLayer,
+    /// Seleção retangular, elíptica e à mão livre (laço).
+    SelectRect,
+    SelectEllipse,
+    Lasso,
     /// Seleciona e move objetos vetoriais.
     Select,
     /// Traço vetorial à mão livre (vira curvas Bézier ajustadas).
@@ -37,6 +43,13 @@ impl Tool {
         Tool::Eyedropper,
         Tool::Hand,
     ];
+    /// Mover camada e seleção, como o grupo "Operação/Seleção" do Clip Studio.
+    pub const SELECTION: [Tool; 4] = [
+        Tool::MoveLayer,
+        Tool::SelectRect,
+        Tool::SelectEllipse,
+        Tool::Lasso,
+    ];
     /// Ferramentas vetoriais, no menu "Vetor".
     pub const VECTOR: [Tool; 6] = [
         Tool::Select,
@@ -54,6 +67,10 @@ impl Tool {
             Tool::Fill => "Balde",
             Tool::Eyedropper => "Conta-gotas",
             Tool::Hand => "Mão",
+            Tool::MoveLayer => "Mover camada",
+            Tool::SelectRect => "Seleção retangular",
+            Tool::SelectEllipse => "Seleção elíptica",
+            Tool::Lasso => "Laço",
             Tool::Select => "Selecionar",
             Tool::VectorPen => "Caneta vetorial",
             Tool::Bezier => "Bézier",
@@ -71,6 +88,10 @@ impl Tool {
             Tool::Fill => icon::BUCKET,
             Tool::Eyedropper => icon::PIPETTE,
             Tool::Hand => icon::HAND,
+            Tool::MoveLayer => icon::MOVE,
+            Tool::SelectRect => icon::SQUARE_DASHED,
+            Tool::SelectEllipse => icon::CIRCLE_DASHED,
+            Tool::Lasso => icon::LASSO,
             Tool::Select => icon::POINTER,
             Tool::VectorPen => icon::PEN_LINE,
             Tool::Bezier => icon::PEN_TOOL,
@@ -85,6 +106,18 @@ impl Tool {
         Self::VECTOR.contains(&self)
     }
 
+    pub fn is_selection(self) -> bool {
+        matches!(self, Tool::SelectRect | Tool::SelectEllipse | Tool::Lasso)
+    }
+
+    /// Todas, na ordem da barra.
+    pub fn all() -> impl Iterator<Item = Tool> {
+        Self::RASTER
+            .into_iter()
+            .chain(Self::SELECTION)
+            .chain(Self::VECTOR)
+    }
+
     /// Atalho de teclado (desktop).
     pub fn key(self) -> egui::Key {
         match self {
@@ -93,6 +126,10 @@ impl Tool {
             Tool::Fill => egui::Key::G,
             Tool::Eyedropper => egui::Key::I,
             Tool::Hand => egui::Key::H,
+            Tool::MoveLayer => egui::Key::K,
+            Tool::SelectRect => egui::Key::S,
+            Tool::SelectEllipse => egui::Key::U,
+            Tool::Lasso => egui::Key::A,
             Tool::Select => egui::Key::V,
             Tool::VectorPen => egui::Key::N,
             Tool::Bezier => egui::Key::P,
@@ -122,11 +159,18 @@ pub struct ArtApp {
     pub brush_index: usize,
     pub brush: BrushSettings,
     pub eraser: BrushSettings,
+    /// Cor principal (a de pintar).
     pub color: Color32,
+    /// Cor secundária (troca com a principal pelo X ou tocando nela).
+    pub sub_color: Color32,
+    /// Cor transparente escolhida: pincel e balde apagam.
+    pub transparent: bool,
     pub recent_colors: Vec<Color32>,
     pub fill_tolerance: f32,
     /// Usa a pressão da caneta/dedo (desligue se o dedo gerar pressão errática).
     pub use_pressure: bool,
+    /// Girar a vista com dois dedos (além de zoom e mover).
+    pub gesture_rotate: bool,
     pub show_tools_panel: bool,
     pub show_layers_panel: bool,
     pub show_new_dialog: bool,
@@ -181,6 +225,8 @@ impl ArtApp {
                 ..Default::default()
             },
             color: Color32::BLACK,
+            sub_color: Color32::WHITE,
+            transparent: false,
             recent_colors: vec![
                 Color32::BLACK,
                 Color32::WHITE,
@@ -190,6 +236,7 @@ impl ArtApp {
             ],
             fill_tolerance: 0.15,
             use_pressure: true,
+            gesture_rotate: true,
             show_tools_panel: wide,
             show_layers_panel: wide,
             show_new_dialog: false,
@@ -288,6 +335,10 @@ impl ArtApp {
         } else {
             self.brush.clone()
         };
+        if self.transparent && self.tool == Tool::Brush {
+            // Cor transparente: o pincel apaga com a própria forma.
+            b.erase = true;
+        }
         if !b.erase {
             b.color = color_to_f32(self.color);
         }
@@ -302,6 +353,58 @@ impl ArtApp {
                 self.tool = Tool::Brush;
             }
         }
+    }
+
+    /// A cor para o balde e o "preencher seleção" (alfa 0 com a cor transparente).
+    pub fn paint_color(&self) -> [f32; 4] {
+        if self.transparent {
+            [0.0; 4]
+        } else {
+            color_to_f32(self.color)
+        }
+    }
+
+    /// Troca a cor principal com a secundária.
+    pub fn swap_colors(&mut self) {
+        std::mem::swap(&mut self.color, &mut self.sub_color);
+        self.transparent = false;
+    }
+
+    /// Ações do lançador da seleção.
+    pub fn deselect(&mut self) {
+        self.doc.set_selection(None);
+    }
+
+    pub fn select_all(&mut self) {
+        let (w, h) = (self.doc.width, self.doc.height);
+        self.doc.set_selection(artapp_core::Selection::rect(
+            [0.0, 0.0],
+            [w as f64, h as f64],
+            w,
+            h,
+        ));
+    }
+
+    pub fn invert_selection(&mut self) {
+        self.doc.invert_selection();
+    }
+
+    pub fn clear_selection(&mut self) {
+        let r = self.doc.clear_selection();
+        if r.is_empty() {
+            self.status = "Escolha uma camada raster visível para limpar.".into();
+        }
+        self.invalidate(r);
+    }
+
+    pub fn fill_selection(&mut self) {
+        let r = self.doc.fill_selection(self.paint_color());
+        if r.is_empty() {
+            self.status = "Escolha uma camada raster visível para preencher.".into();
+        } else {
+            self.remember_color();
+        }
+        self.invalidate(r);
     }
 
     pub fn set_tool(&mut self, t: Tool) {
@@ -376,6 +479,7 @@ impl ArtApp {
     pub fn new_canvas(&mut self, w: u32, h: u32) {
         self.doc = Document::new(w, h);
         self.view = CanvasView::default();
+        self.selected = None;
         self.invalidate_all();
     }
 
@@ -398,11 +502,7 @@ impl ArtApp {
                 egui::Key::Z,
             ) || i.consume_key(egui::Modifiers::COMMAND, egui::Key::Y);
             let undo = i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z);
-            let tool = Tool::RASTER
-                .into_iter()
-                .chain(Tool::VECTOR)
-                .into_iter()
-                .find(|t| i.consume_key(egui::Modifiers::NONE, t.key()));
+            let tool = Tool::all().find(|t| i.consume_key(egui::Modifiers::NONE, t.key()));
             let bigger = i.consume_key(egui::Modifiers::NONE, egui::Key::CloseBracket);
             let smaller = i.consume_key(egui::Modifiers::NONE, egui::Key::OpenBracket);
             (undo, redo, tool, bigger, smaller)
@@ -413,12 +513,41 @@ impl ArtApp {
                 i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
             )
         });
+        // Atalhos do Clip Studio para cor e seleção.
+        let (swap, deselect, invert, all, clear) = ctx.input_mut(|i| {
+            (
+                i.consume_key(egui::Modifiers::NONE, egui::Key::X),
+                i.consume_key(egui::Modifiers::COMMAND, egui::Key::D),
+                i.consume_key(
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                    egui::Key::I,
+                ),
+                i.consume_key(egui::Modifiers::COMMAND, egui::Key::A),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Delete),
+            )
+        });
+        if swap {
+            self.swap_colors();
+        }
+        if deselect {
+            self.deselect();
+        }
+        if invert {
+            self.invert_selection();
+        }
+        if all {
+            self.select_all();
+        }
+        if clear && self.doc.selection.is_some() {
+            self.clear_selection();
+        }
         if enter {
             self.finish_bezier(false);
         }
         if escape {
             self.bezier.clear();
             self.selected = None;
+            self.deselect();
         }
         if undo {
             self.undo();
@@ -525,6 +654,9 @@ impl eframe::App for ArtApp {
         }
         if self.show_color {
             panels::color_popup(self, &ctx, canvas, portrait);
+        }
+        if self.doc.selection.is_some() {
+            panels::selection_launcher(self, &ctx, canvas);
         }
         panels::toast(self, &ctx, canvas, 0.0);
         if self.show_new_dialog {

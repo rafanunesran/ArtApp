@@ -1,9 +1,10 @@
-//! Balde de tinta: preenche a região contígua de cor parecida (amostrando a imagem composta, como
-//! o "referenciar todas as camadas" do Clip Studio) na camada ativa.
+//! Balde de tinta: preenche a região contígua de cor parecida na camada ativa. Como no Clip Studio,
+//! amostra as camadas de referência se houver alguma; senão, a imagem composta sem os rascunhos.
+//! Com uma seleção ativa, só pinta dentro dela. Cor com alfa 0 (a cor transparente) apaga.
 
 use photocraft_geom::Rect;
 
-use crate::composite::composite_rgba8;
+use crate::composite::{Pass, composite_pass};
 use crate::document::Document;
 
 /// Preenche a partir de `(x, y)` com `color`. `tolerance` 0..1 (diferença máxima por canal).
@@ -18,7 +19,12 @@ pub fn flood_fill(doc: &mut Document, x: i32, y: i32, color: [f32; 4], tolerance
         return Rect::EMPTY;
     }
     let (w, h) = (doc.width as usize, doc.height as usize);
-    let (_, img) = composite_rgba8(doc, bounds, true);
+    let reference = doc.layers.iter().any(|l| l.reference && l.visible);
+    let (_, img) = if reference {
+        composite_pass(doc, bounds, false, Pass::Reference)
+    } else {
+        composite_pass(doc, bounds, true, Pass::Final)
+    };
     let idx = |x: usize, y: usize| y * w + x;
     let Some(&seed) = img.get(idx(x as usize, y as usize)) else {
         return Rect::EMPTY;
@@ -73,6 +79,9 @@ pub fn flood_fill(doc: &mut Document, x: i32, y: i32, color: [f32; 4], tolerance
     let r = Rect::new(x0 as i32, y0 as i32, x1 as i32 + 1, y1 as i32 + 1)
         .inflate(1)
         .intersect(&bounds);
+    // Cobertura da seleção dentro de `r` (1 = selecionado).
+    let sel: Option<Vec<f32>> = doc.selection.as_ref().map(|s| s.mask.read_region(r));
+    let erase = color[3] <= 0.0;
     doc.checkpoint();
     let Some(layer) = doc.active_layer_mut() else {
         return Rect::EMPTY;
@@ -83,9 +92,14 @@ pub fn flood_fill(doc: &mut Document, x: i32, y: i32, color: [f32; 4], tolerance
     let mut out = Vec::with_capacity(px.len() * 4);
     for (i, p) in px.iter().enumerate() {
         let (gx, gy) = (r.x0 as usize + i % rw, r.y0 as usize + i / rw);
-        let hit = grown[idx(gx, gy)];
+        let hit = grown[idx(gx, gy)]
+            && sel
+                .as_ref()
+                .is_none_or(|m| m.get(i).is_some_and(|v| *v >= 0.5));
         let keep = layer.lock_alpha && p[3] <= 0.0;
-        if hit && !keep {
+        if hit && erase {
+            out.extend_from_slice(&[p[0], p[1], p[2], 0.0]);
+        } else if hit && !keep {
             let a = if layer.lock_alpha { p[3] } else { 1.0 };
             let src = [color[0], color[1], color[2], color[3]];
             let o = photocraft_color::blend::composite(
@@ -125,5 +139,30 @@ mod tests {
         assert_eq!(doc.layers[0].surface.rgba(1, 1)[3], 0.0);
         assert!(doc.undo());
         assert_eq!(doc.layers[0].surface.rgba(10, 10)[3], 0.0);
+    }
+
+    #[test]
+    fn reference_layer_bounds_the_fill_on_another_layer() {
+        let mut doc = Document::new(20, 20);
+        let black = [0.0, 0.0, 0.0, 1.0];
+        // Lineart na camada de baixo, marcada como referência; o balde pinta na de cima.
+        for i in 0..20 {
+            doc.layers[0].surface.write_pixel(10, i, &black);
+        }
+        doc.layers[0].reference = true;
+        doc.add_layer();
+        let r = flood_fill(&mut doc, 2, 2, [1.0, 0.0, 0.0, 1.0], 0.1);
+        assert!(!r.is_empty());
+        assert_eq!(doc.layers[1].surface.rgba(2, 2), [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(doc.layers[1].surface.rgba(15, 2)[3], 0.0);
+    }
+
+    #[test]
+    fn fill_stays_inside_the_selection() {
+        let mut doc = Document::new(20, 20);
+        doc.set_selection(crate::Selection::rect([0.0, 0.0], [5.0, 5.0], 20, 20));
+        flood_fill(&mut doc, 2, 2, [1.0, 0.0, 0.0, 1.0], 0.1);
+        assert_eq!(doc.layers[0].surface.rgba(2, 2)[3], 1.0);
+        assert_eq!(doc.layers[0].surface.rgba(12, 12)[3], 0.0);
     }
 }

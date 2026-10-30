@@ -69,6 +69,21 @@ pub mod icon {
     pub const FILE_PLUS: char = '\u{e0cd}';
     pub const IMAGE: char = '\u{e0f9}';
     pub const SQUARE_PEN: char = '\u{e176}';
+    // Acrescentados da Lucide atual (sem conflito com os pontos de código acima).
+    pub const LASSO: char = '\u{e1ce}';
+    pub const SQUARE_DASHED: char = '\u{e1cb}';
+    pub const CIRCLE_DASHED: char = '\u{e4b0}';
+    pub const MOVE: char = '\u{e121}';
+    pub const ROTATE_CW: char = '\u{e149}';
+    pub const ROTATE_CCW: char = '\u{e148}';
+    pub const FLIP_H: char = '\u{e35e}';
+    pub const SWAP: char = '\u{e24a}';
+    pub const CLIP: char = '\u{e12d}';
+    pub const REFERENCE: char = '\u{e180}';
+    pub const DRAFT: char = '\u{e596}';
+    pub const INVERT: char = '\u{e3db}';
+    pub const DESELECT: char = '\u{e175}';
+    pub const SCISSORS: char = '\u{e14e}';
 }
 
 const ICON_FONT: &[u8] = include_bytes!("../../../assets/fonts/lucide-artapp.ttf");
@@ -208,17 +223,6 @@ pub fn section(ui: &mut egui::Ui, text: &str) {
     );
 }
 
-/// Círculo da cor atual (abre o seletor).
-pub fn color_swatch(ui: &mut egui::Ui, c: Color32, side: f32) -> Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(side), Sense::click());
-    let p = ui.painter();
-    let r = side * 0.5 - 4.0;
-    p.circle_filled(rect.center(), r + 2.5, color::BORDER);
-    p.circle_filled(rect.center(), r + 1.5, Color32::WHITE);
-    p.circle_filled(rect.center(), r, c);
-    resp.on_hover_text("Cor")
-}
-
 /// Slider vertical em pílula, estilo Procreate: preenche de baixo para cima e mostra o valor num
 /// balão ao lado enquanto é arrastado. `log` usa escala logarítmica (tamanho do pincel).
 pub fn vslider(
@@ -331,4 +335,59 @@ pub fn switch(ui: &mut egui::Ui, on: &mut bool, text: &str) -> Response {
     let x = egui::lerp(track.left() + 12.0..=track.right() - 12.0, anim);
     p.circle_filled(egui::pos2(x, track.center().y), 9.0, color::TEXT);
     resp
+}
+
+/// Parte tocada do par de cores.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ColorChip {
+    Main,
+    Sub,
+    Transparent,
+}
+
+/// Cores principal e secundária e a cor transparente, como no pé da paleta de ferramentas do Clip
+/// Studio: a principal na frente (abre o seletor), a secundária atrás (troca as duas) e o xadrez
+/// pequeno (pinta transparência). A escolhida ganha o contorno de destaque.
+pub fn color_chips(
+    ui: &mut egui::Ui,
+    main: Color32,
+    sub: Color32,
+    transparent: bool,
+) -> Option<ColorChip> {
+    let side = TOUCH;
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(side), Sense::click());
+    let p = ui.painter();
+    let main_c = rect.min + Vec2::new(17.0, 17.0);
+    let sub_c = rect.min + Vec2::new(30.0, 30.0);
+    let tr_c = rect.min + Vec2::new(9.0, 36.0);
+    let ring = |c: egui::Pos2, r: f32, on: bool| {
+        let edge = if on { color::ACCENT } else { color::BORDER };
+        p.circle_filled(c, r + 2.5, edge);
+        p.circle_filled(c, r + 1.0, Color32::WHITE);
+    };
+    ring(sub_c, 9.0, false);
+    p.circle_filled(sub_c, 9.0, sub);
+    ring(main_c, 12.0, !transparent);
+    p.circle_filled(main_c, 12.0, main);
+    ring(tr_c, 6.0, transparent);
+    for (i, q) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)]
+        .into_iter()
+        .enumerate()
+    {
+        let shade = if i == 0 || i == 3 { 200 } else { 140 };
+        let r = egui::Rect::from_two_pos(tr_c, tr_c + Vec2::new(q.0 * 4.2, q.1 * 4.2));
+        p.rect_filled(r, 0.0, Color32::from_gray(shade));
+    }
+    let resp = resp.on_hover_text("Cor (toque na de trás para trocar; xadrez = transparente)");
+    if !resp.clicked() {
+        return None;
+    }
+    let at = resp.interact_pointer_pos()?;
+    Some(if at.distance(tr_c) <= 9.0 {
+        ColorChip::Transparent
+    } else if at.distance(main_c) <= 14.0 {
+        ColorChip::Main
+    } else {
+        ColorChip::Sub
+    })
 }
