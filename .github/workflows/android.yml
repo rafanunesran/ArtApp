@@ -56,7 +56,20 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Empacotar APK
         working-directory: android
-        run: ./gradlew --no-daemon assembleRelease
+        env:
+          ARTAPP_VERSION_CODE: ${{ github.run_number }}
+          ARTAPP_KEYSTORE_BASE64: ${{ secrets.ARTAPP_KEYSTORE_BASE64 }}
+          ARTAPP_KEYSTORE_PASSWORD: ${{ secrets.ARTAPP_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$ARTAPP_KEYSTORE_BASE64" ] && [ -n "$ARTAPP_KEYSTORE_PASSWORD" ]; then
+            export ARTAPP_KEYSTORE_FILE="$RUNNER_TEMP/artapp-release.p12"
+            echo "$ARTAPP_KEYSTORE_BASE64" | base64 -d > "$ARTAPP_KEYSTORE_FILE"
+          else
+            echo "::warning::Segredos ARTAPP_KEYSTORE_BASE64/ARTAPP_KEYSTORE_PASSWORD não configurados: APK assinado com chave de debug (atualizar exige desinstalar)."
+          fi
+          ./gradlew --no-daemon assembleRelease
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/*.apk | head -3
       - uses: actions/upload-artifact@v4
         with:
           name: artapp-apk
@@ -138,7 +151,7 @@ jobs:
     # Sai mesmo que alguma versão de computador falhe ou não rode (ex.: sem máquina macOS): o
     # APK e as versões que deram certo são publicados.
     if: >-
-      always() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
       needs.test.result == 'success' && needs.apk.result == 'success'
     needs: [test, apk, desktop]
     runs-on: ubuntu-latest

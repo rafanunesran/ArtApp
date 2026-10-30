@@ -57,7 +57,7 @@ const steps = [
   { icon: Download, t: "Baixe o APK no celular", d: <>Toque em <a className="text-primary underline" href={APK}>baixar ArtApp.apk</a> ou veja todas as versões em <a className="text-primary underline" href={`${REPO}/releases`}>Releases</a>.</> },
   { icon: FolderOpen, t: "Abra o arquivo baixado", d: <>Pelas notificações ou no app <b>Arquivos › Downloads</b>.</> },
   { icon: ShieldCheck, t: "Permita instalar apps desconhecidos", d: <><b>Configurações › Apps › Acesso especial › Instalar apps desconhecidos</b>, e libere o navegador ou o app de arquivos.</> },
-  { icon: Sparkles, t: "Instale e desenhe", d: <>Toque em Instalar, abra o ArtApp e comece.</> },
+  { icon: Sparkles, t: "Instale e desenhe", d: <>Toque em Instalar, abra o ArtApp e comece. Para atualizar, baixe o APK de novo e toque em <b>Atualizar</b>: instala por cima, sem desinstalar.</> },
 ];
 
 export default function App() {
