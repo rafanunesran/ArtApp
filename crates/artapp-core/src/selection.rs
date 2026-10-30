@@ -58,7 +58,7 @@ impl Selection {
                 }
             }
             xs.sort_by(f64::total_cmp);
-            for pair in xs.chunks_exact(2) {
+            for pair in xs.as_chunks::<2>().0 {
                 let from = ((pair[0] - 0.5).ceil() as i32).max(r.x0);
                 let to = ((pair[1] - 0.5).floor() as i32).min(r.x1 - 1);
                 for x in from..=to {
