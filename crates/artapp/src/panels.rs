@@ -17,8 +17,10 @@ use crate::theme::{self, color, icon, icon_button, panel_frame, section};
 const GAP: f32 = 10.0;
 const PANEL_W: f32 = 290.0;
 const RAIL_W: f32 = 56.0;
-/// Altura do trilho em uma coluna: 15 ferramentas, 3 separadores e as cores.
-const RAIL_H: f32 = 16.0 * (theme::TOUCH + 2.0) + 50.0;
+/// Altura do trilho em uma coluna: as ferramentas, 3 separadores e as cores.
+const RAIL_H: f32 = (Tool::RASTER.len() + Tool::SELECTION.len() + Tool::VECTOR.len() + 1) as f32
+    * (theme::TOUCH + 2.0)
+    + 50.0;
 
 /// Colunas do trilho: duas quando uma não cabe na altura (como a paleta de ferramentas do Clip
 /// Studio em telas baixas).
@@ -264,7 +266,7 @@ pub fn bottom_tools(app: &mut ArtApp, ui: &mut egui::Ui) {
 
 /// Sliders verticais de tamanho e opacidade colados na borda esquerda, como no Procreate.
 pub fn side_sliders(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, portrait: bool) {
-    if !matches!(app.tool, Tool::Brush | Tool::Eraser) && !app.tool.is_vector() {
+    if !matches!(app.tool, Tool::Brush | Tool::Eraser | Tool::Blend) && !app.tool.is_vector() {
         return;
     }
     let x = if portrait {
@@ -291,6 +293,25 @@ pub fn side_sliders(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, p
                 .changed()
                 {
                     app.vector_width = f64::from(w);
+                }
+                return;
+            }
+            if app.tool == Tool::Blend {
+                theme::vslider(
+                    ui,
+                    &mut app.mix_brush.size,
+                    1.0..=max,
+                    true,
+                    "Tamanho",
+                    |v| format!("{v:.0} px"),
+                );
+                let mut pct = app.mix_strength * 100.0;
+                if theme::vslider(ui, &mut pct, 1.0..=100.0, false, "Força", |v| {
+                    format!("{v:.0}%")
+                })
+                .changed()
+                {
+                    app.mix_strength = pct / 100.0;
                 }
                 return;
             }
@@ -381,6 +402,8 @@ pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
                 section(ui, "Balde");
                 ui.add(egui::Slider::new(&mut app.fill_tolerance, 0.0..=1.0).text("Tolerância"));
                 ui.label(RichText::new("Pinta a área de cor parecida, olhando todas as camadas. Em camada vetorial, pinta o preenchimento da forma tocada.").size(12.0).color(color::TEXT_MUTED));
+            } else if app.tool == Tool::Blend {
+                mix_settings(app, ui);
             } else if app.tool.is_selection() || app.tool == Tool::MoveLayer {
                 selection_settings(app, ui);
             } else if matches!(app.tool, Tool::Eyedropper | Tool::Hand) {
@@ -390,6 +413,52 @@ pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
             }
         });
     });
+}
+
+fn mix_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
+    use artapp_core::mix::MixKind;
+    section(ui, "Modo");
+    ui.horizontal(|ui| {
+        ui.selectable_value(
+            &mut app.mix_kind,
+            MixKind::Smudge,
+            format!("{}  Dedo", icon::DROPLETS),
+        );
+        ui.selectable_value(
+            &mut app.mix_kind,
+            MixKind::Blur,
+            format!("{}  Desfocar", icon::DROPLET),
+        );
+    });
+    ui.label(
+        RichText::new(match app.mix_kind {
+            MixKind::Smudge => "Arrasta a tinta pelo caminho, como o dedo.",
+            MixKind::Blur => "Suaviza as cores e as bordas embaixo do pincel.",
+        })
+        .size(12.5)
+        .color(color::TEXT_MUTED),
+    );
+    section(ui, "Ajustes");
+    let max = photocraft_max_size().min(1000.0);
+    ui.add(
+        egui::Slider::new(&mut app.mix_brush.size, 1.0..=max)
+            .logarithmic(true)
+            .text("Tamanho"),
+    );
+    let mut pct = app.mix_strength * 100.0;
+    if ui
+        .add(
+            egui::Slider::new(&mut pct, 1.0..=100.0)
+                .suffix("%")
+                .text("Força"),
+        )
+        .changed()
+    {
+        app.mix_strength = pct / 100.0;
+    }
+    ui.add(egui::Slider::new(&mut app.mix_brush.hardness, 0.0..=1.0).text("Dureza"));
+    let mut none = artapp_core::Taper::default();
+    crate::brush_editor::show(ui, &mut app.mix_brush, &mut none);
 }
 
 fn selection_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
@@ -520,12 +589,16 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
         s.enabled = s.amount > 0.0;
     }
     theme::switch(ui, use_pressure, "Usar pressão da caneta");
+    ui.add_space(4.0);
     if app.tool == Tool::Eraser {
+        let mut none = artapp_core::Taper::default();
+        crate::brush_editor::show(ui, &mut app.eraser, &mut none);
         return;
     }
     ui.add_space(4.0);
     let mut group = String::new();
     let mut picked = None;
+    let mut remove = None;
     let previews = app.brush_previews(ui.ctx());
     for (i, entry) in app.brushes.iter().enumerate() {
         if entry.group != group {
@@ -533,12 +606,43 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             section(ui, &group);
         }
         let selected = app.brush_index == i;
-        if brush_row(ui, &entry.name, previews.get(i), selected).clicked() {
+        let row = brush_row(ui, &entry.name, previews.get(i), selected);
+        if row.clicked() {
             picked = Some(i);
+        }
+        if entry.group == artapp_core::brushes::CUSTOM_GROUP {
+            row.context_menu(|ui| {
+                if ui
+                    .button(format!("{}  Apagar pincel", icon::TRASH))
+                    .clicked()
+                {
+                    remove = Some(i);
+                    ui.close();
+                }
+            });
         }
     }
     if let Some(i) = picked {
         app.select_brush(i);
+    }
+    if let Some(i) = remove {
+        app.delete_brush(i);
+    }
+    ui.add_space(6.0);
+    section(ui, "Detalhes do pincel");
+    crate::brush_editor::show(ui, &mut app.brush, &mut app.taper);
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(&mut app.new_brush_name)
+                .hint_text("Nome do pincel")
+                .desired_width(ui.available_width() - 110.0),
+        );
+        if ui.button(format!("{}  Salvar", icon::PLUS)).clicked() {
+            app.save_brush();
+        }
+    });
+    if ui.button("Restaurar ajustes do preset").clicked() {
+        app.reset_brush();
     }
 }
 

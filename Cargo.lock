@@ -134,6 +134,8 @@ dependencies = [
  "photocraft-paint",
  "photocraft-raster",
  "png",
+ "serde",
+ "serde_json",
  "vectorcraft-color",
  "vectorcraft-doc",
  "vectorcraft-geom",
