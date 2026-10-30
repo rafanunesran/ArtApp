@@ -288,6 +288,9 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
         .resizable(false)
         .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
         .frame(panel_frame())
+        // Celular deitado: a janela não cabe na altura, então rola.
+        .vscroll(true)
+        .max_height(ctx.content_rect().height() - 60.0)
         .open(&mut open)
         .show(ctx, |ui| {
             ui.set_width(320.0);

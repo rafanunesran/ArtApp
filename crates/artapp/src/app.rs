@@ -903,6 +903,26 @@ impl ArtApp {
     }
 }
 
+impl ArtApp {
+    /// Gesto/botão "voltar" do Android: fecha o que estiver aberto por cima, um de cada vez.
+    fn back_gesture(&mut self, ctx: &egui::Context) {
+        if !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::BrowserBack)) {
+            return;
+        }
+        if self.dialog.is_some() {
+            self.dialog = None;
+        } else if self.show_new_dialog {
+            self.show_new_dialog = false;
+        } else if self.show_color {
+            self.show_color = false;
+        } else if self.show_layers_panel {
+            self.show_layers_panel = false;
+        } else if self.show_tools_panel {
+            self.show_tools_panel = false;
+        }
+    }
+}
+
 fn brushes_path() -> std::path::PathBuf {
     platform::data_dir().join("brushes.json")
 }
@@ -958,9 +978,10 @@ impl eframe::App for ArtApp {
             self.last_status.clone_from(&self.status);
             self.status_since = ctx.input(|i| i.time);
         }
+        self.back_gesture(&ctx);
         let portrait = panels::is_portrait(&ctx);
-        if portrait && self.show_tools_panel && self.show_layers_panel {
-            // No celular em pé só cabe uma folha de cada vez.
+        if panels::is_compact(&ctx) && self.show_tools_panel && self.show_layers_panel {
+            // No celular só cabe um painel de cada vez.
             self.show_tools_panel = false;
         }
         let bar = egui::Frame::new()

@@ -44,6 +44,13 @@ pub fn is_portrait(ctx: &egui::Context) -> bool {
     r.width() < 720.0 && r.height() > r.width()
 }
 
+/// Tela de celular, em pé ou deitado (o lado menor é curto): só cabe um painel aberto por vez e a
+/// barra de cima fica enxuta.
+pub fn is_compact(ctx: &egui::Context) -> bool {
+    let r = ctx.content_rect();
+    r.width().min(r.height()) < 600.0
+}
+
 // ---------- Barra de cima ----------
 
 pub fn top_bar(app: &mut ArtApp, ui: &mut egui::Ui) {
@@ -64,7 +71,8 @@ pub fn top_bar(app: &mut ArtApp, ui: &mut egui::Ui) {
             }
         });
 
-        let title = if is_portrait(ui.ctx()) {
+        let compact = is_compact(ui.ctx());
+        let title = if compact {
             format!("{:.0}%", app.view.zoom * 100.0)
         } else {
             format!(
@@ -74,8 +82,7 @@ pub fn top_bar(app: &mut ArtApp, ui: &mut egui::Ui) {
                 app.view.zoom * 100.0
             )
         };
-        let portrait = is_portrait(ui.ctx());
-        let right_w = if portrait { 3.0 } else { 6.0 } * (theme::TOUCH + 2.0);
+        let right_w = if compact { 3.0 } else { 6.0 } * (theme::TOUCH + 2.0);
         let center_w = (ui.available_width() - right_w).max(0.0);
         ui.allocate_ui_with_layout(
             Vec2::new(center_w, theme::TOUCH),
@@ -85,7 +92,7 @@ pub fn top_bar(app: &mut ArtApp, ui: &mut egui::Ui) {
             },
         );
 
-        if !portrait {
+        if !compact {
             view_buttons(app, ui);
         }
         if icon_button(
@@ -100,13 +107,13 @@ pub fn top_bar(app: &mut ArtApp, ui: &mut egui::Ui) {
         }
         if icon_button(ui, icon::SLIDERS, app.show_tools_panel, "Pincel").clicked() {
             app.show_tools_panel = !app.show_tools_panel;
-            if portrait && app.show_tools_panel {
+            if compact && app.show_tools_panel {
                 app.show_layers_panel = false;
             }
         }
         if icon_button(ui, icon::LAYERS, app.show_layers_panel, "Camadas").clicked() {
             app.show_layers_panel = !app.show_layers_panel;
-            if portrait && app.show_layers_panel {
+            if compact && app.show_layers_panel {
                 app.show_tools_panel = false;
             }
         }
@@ -245,7 +252,13 @@ fn tool_buttons(app: &mut ArtApp, ui: &mut egui::Ui, vertical: bool, cols: usize
             ui.add(egui::Separator::default().vertical().spacing(6.0));
         }
     };
-    for group in [&Tool::RASTER[..], &Tool::SELECTION[..], &Tool::VECTOR[..]] {
+    for (i, group) in [&Tool::RASTER[..], &Tool::SELECTION[..], &Tool::VECTOR[..]]
+        .into_iter()
+        .enumerate()
+    {
+        if i > 0 {
+            separator(ui);
+        }
         let mut buttons = |ui: &mut egui::Ui| {
             for &t in group {
                 if icon_button(ui, t.icon(), app.tool == t, t.label()).clicked() {
@@ -261,8 +274,12 @@ fn tool_buttons(app: &mut ArtApp, ui: &mut egui::Ui, vertical: bool, cols: usize
         } else {
             buttons(ui);
         }
-        separator(ui);
     }
+}
+
+/// As cores principal/secundária/transparente. Fica fora da rolagem das ferramentas para estar
+/// sempre à vista: tocar na principal abre o seletor de cor.
+fn color_button(app: &mut ArtApp, ui: &mut egui::Ui) {
     match theme::color_chips(ui, app.color, app.sub_color, app.transparent) {
         Some(theme::ColorChip::Main) => {
             if app.transparent {
@@ -277,9 +294,9 @@ fn tool_buttons(app: &mut ArtApp, ui: &mut egui::Ui, vertical: bool, cols: usize
     }
 }
 
-/// Trilho vertical de ferramentas, à esquerda (tablet/desktop).
+/// Trilho vertical de ferramentas, à esquerda (tablet/desktop e celular deitado). As cores ficam
+/// no topo, fixas; as ferramentas rolam quando não cabem na altura.
 pub fn tool_rail(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) {
-    // Centralizado na altura, como no protótipo; encosta no topo se a tela for baixa.
     let cols = rail_cols(canvas);
     // Fileiras de botões por grupo, mais as cores, os separadores e as margens.
     let rows: usize = [
@@ -291,8 +308,9 @@ pub fn tool_rail(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) {
     .map(|n| n.div_ceil(cols))
     .sum();
     let rail_h = (rows + 1) as f32 * (theme::TOUCH + 2.0) + 3.0 * 16.0 + 16.0;
-    let max_h = canvas.height() - 2.0 * GAP;
-    let y = (canvas.center().y - rail_h.min(max_h) / 2.0).max(canvas.min.y + GAP);
+    let h = rail_h.min(canvas.height() - 2.0 * GAP);
+    // Centralizado na altura, como no protótipo; encosta no topo se a tela for baixa.
+    let y = (canvas.center().y - h / 2.0).max(canvas.min.y + GAP);
     egui::Area::new(Id::unique("rail"))
         .order(Order::Foreground)
         .fixed_pos(Pos2::new(canvas.min.x + GAP, y))
@@ -302,19 +320,36 @@ pub fn tool_rail(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) {
                 .show(ui, |ui| {
                     ui.set_width(rail_w(canvas) - 8.0);
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    ui.vertical_centered(|ui| tool_buttons(app, ui, true, cols));
+                    ui.vertical_centered(|ui| {
+                        color_button(app, ui);
+                        ui.add(egui::Separator::default().horizontal().spacing(6.0));
+                        egui::ScrollArea::vertical()
+                            .max_height((h - theme::TOUCH - 24.0).max(theme::TOUCH))
+                            .show(ui, |ui| tool_buttons(app, ui, true, cols));
+                    });
                 });
         });
 }
 
-/// Barra de ferramentas horizontal embaixo (celular em pé).
+/// Barra de ferramentas horizontal embaixo (celular em pé). As cores ficam fixas à esquerda e as
+/// ferramentas rolam para o lado.
 pub fn bottom_tools(app: &mut ArtApp, ui: &mut egui::Ui) {
-    egui::ScrollArea::horizontal().show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            tool_buttons(app, ui, false, 1);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        color_button(app, ui);
+        ui.add(egui::Separator::default().vertical().spacing(6.0));
+        egui::ScrollArea::horizontal().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                tool_buttons(app, ui, false, 1);
+            });
         });
     });
+}
+
+/// Altura dos sliders laterais: menores quando a tela é baixa (celular deitado).
+fn slider_h(canvas: egui::Rect) -> f32 {
+    ((canvas.height() - 2.0 * GAP - 12.0) / 2.0).clamp(70.0, 144.0)
 }
 
 /// Sliders verticais de tamanho e opacidade colados na borda esquerda, como no Procreate.
@@ -322,6 +357,7 @@ pub fn side_sliders(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, p
     if !matches!(app.tool, Tool::Brush | Tool::Eraser | Tool::Blend) && !app.tool.is_vector() {
         return;
     }
+    let h = slider_h(canvas);
     let x = if portrait {
         canvas.min.x + 6.0
     } else {
@@ -330,7 +366,7 @@ pub fn side_sliders(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, p
     let y = if portrait {
         canvas.min.y + GAP
     } else {
-        (canvas.center().y - 150.0).max(canvas.min.y + GAP)
+        (canvas.center().y - h - 6.0).max(canvas.min.y + GAP)
     };
     egui::Area::new(Id::unique("sliders"))
         .order(Order::Foreground)
@@ -340,7 +376,7 @@ pub fn side_sliders(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, p
             let max = photocraft_max_size().min(1000.0);
             if app.tool.is_vector() {
                 let mut w = app.vector_width as f32;
-                if theme::vslider(ui, &mut w, 0.5..=200.0, true, "Espessura", |v| {
+                if theme::vslider(ui, &mut w, 0.5..=200.0, true, h, "Espessura", |v| {
                     format!("{v:.1}")
                 })
                 .changed()
@@ -355,11 +391,12 @@ pub fn side_sliders(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, p
                     &mut app.mix_brush.size,
                     1.0..=max,
                     true,
+                    h,
                     "Tamanho",
                     |v| format!("{v:.0} px"),
                 );
                 let mut pct = app.mix_strength * 100.0;
-                if theme::vslider(ui, &mut pct, 1.0..=100.0, false, "Força", |v| {
+                if theme::vslider(ui, &mut pct, 1.0..=100.0, false, h, "Força", |v| {
                     format!("{v:.0}%")
                 })
                 .changed()
@@ -373,11 +410,11 @@ pub fn side_sliders(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, p
             } else {
                 &mut app.brush
             };
-            theme::vslider(ui, &mut b.size, 1.0..=max, true, "Tamanho", |v| {
+            theme::vslider(ui, &mut b.size, 1.0..=max, true, h, "Tamanho", |v| {
                 format!("{v:.0} px")
             });
             let mut pct = b.opacity * 100.0;
-            if theme::vslider(ui, &mut pct, 1.0..=100.0, false, "Opacidade", |v| {
+            if theme::vslider(ui, &mut pct, 1.0..=100.0, false, h, "Opacidade", |v| {
                 format!("{v:.0}%")
             })
             .changed()
@@ -389,15 +426,20 @@ pub fn side_sliders(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, p
 
 // ---------- Painéis ----------
 
-/// Posição e tamanho de um painel: ao lado do trilho/à direita no tablet, folha de baixo no celular.
+/// Posição e tamanho de um painel: ao lado do trilho/à direita no tablet, folha de baixo no celular
+/// em pé. Todo painel tem título com botão de fechar, e o conteúdo rola quando não cabe na altura
+/// (celular deitado). `add` recebe a altura útil do painel. Devolve `true` se pediram para fechar.
+#[allow(clippy::too_many_arguments)]
 fn panel_area(
     id: &str,
     ctx: &egui::Context,
     canvas: egui::Rect,
     portrait: bool,
     right: bool,
-    add: impl FnOnce(&mut egui::Ui),
-) {
+    glyph: char,
+    title: &str,
+    add: impl FnOnce(&mut egui::Ui, f32),
+) -> bool {
     let (pos, width, max_h) = if portrait {
         let h = canvas.height() * 0.55;
         (
@@ -406,22 +448,23 @@ fn panel_area(
             h - 24.0,
         )
     } else if right {
+        let w = PANEL_W.min(canvas.width() * 0.45);
         (
-            Pos2::new(canvas.max.x - PANEL_W - GAP, canvas.min.y + GAP),
-            PANEL_W,
+            Pos2::new(canvas.max.x - w - GAP, canvas.min.y + GAP),
+            w,
             canvas.height() - 2.0 * GAP - 24.0,
         )
     } else {
         // Ao lado do trilho e dos sliders.
+        let x = canvas.min.x + GAP + rail_w(canvas) + 56.0;
         (
-            Pos2::new(
-                canvas.min.x + GAP + rail_w(canvas) + 56.0,
-                canvas.min.y + GAP,
-            ),
-            PANEL_W,
+            Pos2::new(x, canvas.min.y + GAP),
+            PANEL_W.min(canvas.max.x - x - GAP),
             canvas.height() - 2.0 * GAP - 24.0,
         )
     };
+    let max_h = max_h.max(120.0);
+    let mut close = false;
     egui::Area::new(Id::unique(id))
         .order(Order::Foreground)
         .fixed_pos(pos)
@@ -430,25 +473,42 @@ fn panel_area(
                 let inner = width - 24.0;
                 ui.set_min_width(inner);
                 ui.set_max_width(inner);
-                ui.set_max_height(max_h.max(120.0));
-                ui.spacing_mut().slider_width = (inner - 130.0).max(80.0);
-                add(ui);
+                ui.set_max_height(max_h);
+                ui.spacing_mut().slider_width = (inner - 160.0).max(80.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(glyph.to_string())
+                            .font(theme::icon_font(18.0))
+                            .color(color::ACCENT),
+                    );
+                    ui.heading(title);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        close =
+                            theme::icon_button_sized(ui, icon::X, false, "Fechar", 36.0).clicked();
+                    });
+                });
+                ui.separator();
+                let body_h = max_h - 48.0;
+                egui::ScrollArea::vertical()
+                    .id_salt(id)
+                    .max_height(body_h)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| add(ui, body_h));
             });
         });
+    close
 }
 
 pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, portrait: bool) {
-    panel_area("brush_panel", ctx, canvas, portrait, false, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(app.tool.icon().to_string())
-                    .font(theme::icon_font(18.0))
-                    .color(color::ACCENT),
-            );
-            ui.heading(app.tool.label());
-        });
-        ui.separator();
-        egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
+    let close = panel_area(
+        "brush_panel",
+        ctx,
+        canvas,
+        portrait,
+        false,
+        app.tool.icon(),
+        app.tool.label(),
+        |ui, _| {
             if app.tool == Tool::VectorKit {
                 kit_settings(app, ui);
             } else if app.tool.is_vector() {
@@ -456,8 +516,16 @@ pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
             } else if app.tool == Tool::Fill {
                 section(ui, "Balde");
                 ui.add(egui::Slider::new(&mut app.fill_tolerance, 0.0..=1.0).text("Tolerância"));
-                ui.add(egui::Slider::new(&mut app.fill_close_gap, 0.0..=40.0).suffix(" px").text("Fechar lacunas"));
-                ui.add(egui::Slider::new(&mut app.fill_expand, -10.0..=10.0).suffix(" px").text("Expandir área"));
+                ui.add(
+                    egui::Slider::new(&mut app.fill_close_gap, 0.0..=40.0)
+                        .suffix(" px")
+                        .text("Fechar lacunas"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut app.fill_expand, -10.0..=10.0)
+                        .suffix(" px")
+                        .text("Expandir área"),
+                );
                 ui.label(RichText::new("Pinta a área de cor parecida, olhando todas as camadas. Em camada vetorial, pinta o preenchimento da forma tocada.").size(12.0).color(color::TEXT_MUTED));
             } else if app.tool == Tool::Blend {
                 mix_settings(app, ui);
@@ -474,8 +542,11 @@ pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
             } else {
                 brush_settings(app, ui);
             }
-        });
-    });
+        },
+    );
+    if close {
+        app.show_tools_panel = false;
+    }
 }
 
 fn mix_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
@@ -1141,104 +1212,108 @@ fn vector_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
 }
 
 pub fn layers_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, portrait: bool) {
-    panel_area("layers_panel", ctx, canvas, portrait, true, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(icon::LAYERS.to_string())
-                    .font(theme::icon_font(18.0))
-                    .color(color::ACCENT),
-            );
-            ui.heading("Camadas");
-        });
-        ui.separator();
-        let mut changed = false;
-        let list_h = (ui.available_height() - 210.0).max(120.0);
-        egui::ScrollArea::vertical()
-            .max_height(list_h)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                let thumbs = app.layer_thumbnails(ui.ctx());
-                let active = app.doc.active;
-                let mut select = None;
-                let mut toggle = None;
-                for i in (0..app.doc.layers.len()).rev() {
-                    let Some(layer) = app.doc.layers.get(i) else {
-                        continue;
-                    };
-                    let (sel, tog) = layer_row(ui, layer, thumbs.get(&layer.id), i == active);
-                    if sel {
-                        select = Some(i);
+    let close = panel_area(
+        "layers_panel",
+        ctx,
+        canvas,
+        portrait,
+        true,
+        icon::LAYERS,
+        "Camadas",
+        |ui, body_h| {
+            let mut changed = false;
+            let list_h = (body_h - 210.0).max(120.0);
+            egui::ScrollArea::vertical()
+                .id_salt("layer_list")
+                .max_height(list_h)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    let thumbs = app.layer_thumbnails(ui.ctx());
+                    let active = app.doc.active;
+                    let mut select = None;
+                    let mut toggle = None;
+                    for i in (0..app.doc.layers.len()).rev() {
+                        let Some(layer) = app.doc.layers.get(i) else {
+                            continue;
+                        };
+                        let (sel, tog) = layer_row(ui, layer, thumbs.get(&layer.id), i == active);
+                        if sel {
+                            select = Some(i);
+                        }
+                        if tog {
+                            toggle = Some(i);
+                        }
                     }
-                    if tog {
-                        toggle = Some(i);
+                    if let Some(i) = toggle {
+                        app.doc.checkpoint();
+                        if let Some(l) = app.doc.layers.get_mut(i) {
+                            l.visible = !l.visible;
+                        }
+                        changed = true;
                     }
+                    if let Some(i) = select {
+                        app.doc.active = i;
+                        app.selected = None;
+                    }
+                });
+            ui.separator();
+            changed |= active_layer_settings(app, ui);
+            ui.separator();
+            let n = app.doc.layers.len();
+            let is_vector = app.doc.active_is_vector();
+            let b = |ui: &mut egui::Ui, g: char, tip: &str, enabled: bool| {
+                ui.add_enabled_ui(enabled, |ui| icon_button(ui, g, false, tip))
+                    .inner
+                    .clicked()
+            };
+            // Duas fileiras de botões, para caber na largura do painel.
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                if b(ui, icon::PLUS, "Nova camada", true) {
+                    app.doc.add_layer();
                 }
-                if let Some(i) = toggle {
-                    app.doc.checkpoint();
-                    if let Some(l) = app.doc.layers.get_mut(i) {
-                        l.visible = !l.visible;
-                    }
+                if b(ui, icon::SQUARE_PEN, "Nova camada vetorial", true) {
+                    app.doc.add_vector_layer();
+                }
+                if b(ui, icon::COPY, "Duplicar", true) {
+                    app.doc.duplicate_layer();
                     changed = true;
                 }
-                if let Some(i) = select {
-                    app.doc.active = i;
-                    app.selected = None;
+                if b(ui, icon::MERGE_DOWN, "Mesclar abaixo", app.doc.active > 0) {
+                    app.doc.merge_down();
+                    changed = true;
+                }
+                if b(ui, icon::TRASH, "Apagar camada", true) {
+                    app.doc.delete_layer();
+                    changed = true;
                 }
             });
-        ui.separator();
-        changed |= active_layer_settings(app, ui);
-        ui.separator();
-        let n = app.doc.layers.len();
-        let is_vector = app.doc.active_is_vector();
-        let b = |ui: &mut egui::Ui, g: char, tip: &str, enabled: bool| {
-            ui.add_enabled_ui(enabled, |ui| icon_button(ui, g, false, tip))
-                .inner
-                .clicked()
-        };
-        // Duas fileiras de botões, para caber na largura do painel.
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            if b(ui, icon::PLUS, "Nova camada", true) {
-                app.doc.add_layer();
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                if b(ui, icon::CHEVRON_UP, "Subir", app.doc.active + 1 < n) {
+                    app.doc.move_layer(true);
+                    changed = true;
+                }
+                if b(ui, icon::CHEVRON_DOWN, "Descer", app.doc.active > 0) {
+                    app.doc.move_layer(false);
+                    changed = true;
+                }
+                if b(ui, icon::IMAGE, "Rasterizar camada vetorial", is_vector) {
+                    app.doc.rasterize_layer();
+                }
+                if b(ui, icon::ERASER, "Limpar camada", true) {
+                    app.doc.clear_layer();
+                    changed = true;
+                }
+            });
+            if changed {
+                app.invalidate_all();
             }
-            if b(ui, icon::SQUARE_PEN, "Nova camada vetorial", true) {
-                app.doc.add_vector_layer();
-            }
-            if b(ui, icon::COPY, "Duplicar", true) {
-                app.doc.duplicate_layer();
-                changed = true;
-            }
-            if b(ui, icon::MERGE_DOWN, "Mesclar abaixo", app.doc.active > 0) {
-                app.doc.merge_down();
-                changed = true;
-            }
-            if b(ui, icon::TRASH, "Apagar camada", true) {
-                app.doc.delete_layer();
-                changed = true;
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            if b(ui, icon::CHEVRON_UP, "Subir", app.doc.active + 1 < n) {
-                app.doc.move_layer(true);
-                changed = true;
-            }
-            if b(ui, icon::CHEVRON_DOWN, "Descer", app.doc.active > 0) {
-                app.doc.move_layer(false);
-                changed = true;
-            }
-            if b(ui, icon::IMAGE, "Rasterizar camada vetorial", is_vector) {
-                app.doc.rasterize_layer();
-            }
-            if b(ui, icon::ERASER, "Limpar camada", true) {
-                app.doc.clear_layer();
-                changed = true;
-            }
-        });
-        if changed {
-            app.invalidate_all();
-        }
-    });
+        },
+    );
+    if close {
+        app.show_layers_panel = false;
+    }
 }
 
 /// Uma linha da lista de camadas. Devolve (selecionar, alternar visibilidade).
@@ -1457,14 +1532,17 @@ fn active_layer_settings(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
 // ---------- Cor, avisos e diálogos ----------
 
 pub fn color_popup(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, portrait: bool) {
+    // Altura do seletor inteiro; em tela baixa ele encolhe e rola.
+    let full_h: f32 = 440.0;
+    let max_h = full_h.min(canvas.height() - 12.0);
     let pos = if portrait {
-        Pos2::new(canvas.min.x + 6.0, canvas.max.y - 430.0)
+        Pos2::new(canvas.min.x + 6.0, canvas.max.y - max_h - 6.0)
     } else {
         Pos2::new(
             canvas.min.x + GAP + rail_w(canvas) + 8.0,
             (canvas.min.y + 300.0)
-                .min(canvas.max.y - 440.0)
-                .max(canvas.min.y),
+                .min(canvas.max.y - max_h - 6.0)
+                .max(canvas.min.y + 6.0),
         )
     };
     let mut close = false;
@@ -1475,68 +1553,71 @@ pub fn color_popup(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
             panel_frame().show(ui, |ui| {
                 ui.set_width(250.0);
                 ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(icon::PALETTE.to_string())
+                            .font(theme::icon_font(18.0))
+                            .color(color::ACCENT),
+                    );
                     ui.heading("Cor");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         close =
-                            theme::icon_button_sized(ui, icon::X, false, "Fechar", 32.0).clicked();
+                            theme::icon_button_sized(ui, icon::X, false, "Fechar", 36.0).clicked();
                     });
                 });
-                ui.spacing_mut().slider_width = 226.0;
-                let mut c = app.color;
-                egui::color_picker::color_picker_color32(
-                    ui,
-                    &mut c,
-                    egui::color_picker::Alpha::Opaque,
-                );
-                if c != app.color {
-                    app.color = c;
-                    app.transparent = false;
-                }
-                ui.horizontal(|ui| {
-                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::hover());
-                    ui.painter()
-                        .rect_filled(rect, CornerRadius::same(6), app.sub_color);
-                    ui.painter().rect_stroke(
-                        rect,
-                        CornerRadius::same(6),
-                        Stroke::new(1.0, color::BORDER),
-                        egui::StrokeKind::Outside,
-                    );
-                    if ui
-                        .button(format!("{}  Trocar com a secundária (X)", icon::SWAP))
-                        .clicked()
-                    {
-                        app.swap_colors();
-                    }
-                });
-                section(ui, "Recentes");
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::splat(6.0);
-                    for rc in app.recent_colors.clone() {
-                        let (rect, resp) =
-                            ui.allocate_exact_size(Vec2::splat(30.0), Sense::click());
-                        ui.painter().rect_filled(rect, CornerRadius::same(6), rc);
-                        let edge = if rc == app.color {
-                            Stroke::new(2.0, color::ACCENT)
-                        } else {
-                            Stroke::new(1.0, color::BORDER)
-                        };
-                        ui.painter().rect_stroke(
-                            rect,
-                            CornerRadius::same(6),
-                            edge,
-                            egui::StrokeKind::Outside,
-                        );
-                        if resp.clicked() {
-                            app.color = rc;
-                        }
-                    }
-                });
+                egui::ScrollArea::vertical()
+                    .id_salt("color_popup")
+                    .max_height(max_h - 72.0)
+                    .show(ui, |ui| color_body(app, ui));
             });
         });
     if close {
         app.show_color = false;
     }
+}
+
+fn color_body(app: &mut ArtApp, ui: &mut egui::Ui) {
+    ui.spacing_mut().slider_width = 226.0;
+    let mut c = app.color;
+    egui::color_picker::color_picker_color32(ui, &mut c, egui::color_picker::Alpha::Opaque);
+    if c != app.color {
+        app.color = c;
+        app.transparent = false;
+    }
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::hover());
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(6), app.sub_color);
+        ui.painter().rect_stroke(
+            rect,
+            CornerRadius::same(6),
+            Stroke::new(1.0, color::BORDER),
+            egui::StrokeKind::Outside,
+        );
+        if ui
+            .button(format!("{}  Trocar com a secundária (X)", icon::SWAP))
+            .clicked()
+        {
+            app.swap_colors();
+        }
+    });
+    section(ui, "Recentes");
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::splat(6.0);
+        for rc in app.recent_colors.clone() {
+            let (rect, resp) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::click());
+            ui.painter().rect_filled(rect, CornerRadius::same(6), rc);
+            let edge = if rc == app.color {
+                Stroke::new(2.0, color::ACCENT)
+            } else {
+                Stroke::new(1.0, color::BORDER)
+            };
+            ui.painter()
+                .rect_stroke(rect, CornerRadius::same(6), edge, egui::StrokeKind::Outside);
+            if resp.clicked() {
+                app.color = rc;
+            }
+        }
+    });
 }
 
 /// Aviso curto embaixo, que some sozinho.
@@ -1579,6 +1660,8 @@ pub fn new_canvas_dialog(app: &mut ArtApp, ctx: &egui::Context) {
         .resizable(false)
         .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
         .frame(panel_frame())
+        .vscroll(true)
+        .max_height(ctx.content_rect().height() - 60.0)
         .open(&mut open)
         .show(ctx, |ui| {
             ui.label(

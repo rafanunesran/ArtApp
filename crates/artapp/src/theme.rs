@@ -169,6 +169,10 @@ pub fn install(ctx: &egui::Context, touch: bool) {
         s.item_spacing = egui::vec2(8.0, 8.0);
         s.button_padding = egui::vec2(10.0, 6.0);
         s.slider_width = 150.0;
+        // A barra de rolagem fica meio visível mesmo parada: no toque não há "passar o mouse"
+        // para descobrir que um painel ou o trilho de ferramentas rola.
+        s.scroll.dormant_handle_opacity = 0.5;
+        s.scroll.dormant_background_opacity = 0.2;
         if touch {
             s.interact_size = egui::vec2(TOUCH, 36.0);
             s.slider_width = 170.0;
@@ -252,12 +256,14 @@ pub fn section(ui: &mut egui::Ui, text: &str) {
 }
 
 /// Slider vertical em pílula, estilo Procreate: preenche de baixo para cima e mostra o valor num
-/// balão ao lado enquanto é arrastado. `log` usa escala logarítmica (tamanho do pincel).
+/// balão ao lado enquanto é arrastado. `log` usa escala logarítmica (tamanho do pincel); `height`
+/// encolhe em telas baixas.
 pub fn vslider(
     ui: &mut egui::Ui,
     value: &mut f32,
     range: std::ops::RangeInclusive<f32>,
     log: bool,
+    height: f32,
     label: &str,
     format: impl Fn(f32) -> String,
 ) -> Response {
@@ -276,7 +282,7 @@ pub fn vslider(
             lo + t * (hi - lo)
         }
     };
-    let size = Vec2::new(36.0, 144.0);
+    let size = Vec2::new(36.0, height);
     let (rect, mut resp) = ui.allocate_exact_size(size, Sense::click_and_drag());
     // Arraste relativo: encostar não faz o valor pular, só o movimento muda (como no Procreate).
     if resp.dragged() {
