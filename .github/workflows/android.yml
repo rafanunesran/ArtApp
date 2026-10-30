@@ -135,7 +135,11 @@ jobs:
   # site (GitHub Pages) possa apontar para releases/latest/download/ArtApp.apk.
   release:
     name: Release (APK e desktop)
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Sai mesmo que alguma versão de computador falhe ou não rode (ex.: sem máquina macOS): o
+    # APK e as versões que deram certo são publicados.
+    if: >-
+      always() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.test.result == 'success' && needs.apk.result == 'success'
     needs: [test, apk, desktop]
     runs-on: ubuntu-latest
     permissions:
@@ -147,6 +151,7 @@ jobs:
           name: artapp-apk
           path: apk
       - uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           pattern: desktop-*
           path: desktop
@@ -158,6 +163,7 @@ jobs:
           VERSION=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' android/app/build.gradle.kts)
           TAG="v${VERSION}-build.${GITHUB_RUN_NUMBER}"
           cp apk/*.apk ArtApp.apk
+          shopt -s nullglob
           gh release create "$TAG" ArtApp.apk desktop/* \
             --target "$GITHUB_SHA" \
             --title "ArtApp ${VERSION} (build ${GITHUB_RUN_NUMBER})" \
