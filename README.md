@@ -98,6 +98,12 @@ Site: **https://rafanunesran.github.io/ArtApp/** (código em `site/`). O APK mai
 nos testes publica uma release com `ArtApp.apk`. Instale no celular permitindo "instalar apps
 desconhecidos".
 
+Link direto, sempre para o APK mais novo (bom para salvar nos favoritos do celular):
+**https://github.com/rafanunesran/ArtApp/releases/latest/download/ArtApp.apk**
+
+Todo APK é assinado com a mesma chave e tem `versionCode` maior que o anterior, então basta baixar
+e tocar em "Atualizar": o Android instala por cima, sem desinstalar e sem perder os desenhos.
+
 A mesma release traz as versões para computador:
 
 | Sistema | Arquivo | Como abrir |
@@ -125,8 +131,10 @@ cd android && ./gradlew assembleRelease
 # APK em android/app/build/outputs/apk/release/
 ```
 
-O APK de release ainda é assinado com a chave de debug (bom para instalar direto, não para a Play
-Store).
+No CI o APK é assinado com uma chave fixa (PKCS12, alias `artapp`, mesma senha para a chave e o
+arquivo) guardada nos segredos `ARTAPP_KEYSTORE_BASE64` (o `.p12` em base64) e
+`ARTAPP_KEYSTORE_PASSWORD` do repositório (Settings › Secrets and variables › Actions). Sem a
+senha (por exemplo num build local), o Gradle usa a chave de debug e o `versionCode` fica 1.
 
 ## Licença
 
