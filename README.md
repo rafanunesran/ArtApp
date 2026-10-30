@@ -3,7 +3,7 @@
 App de desenho e pintura digital, raster e vetorial, no estilo Clip Studio Paint / Adobe, feito
 para rodar no **Android** (e também no desktop, para desenvolver e testar).
 
-![ArtApp no tablet/desktop: trilho de ferramentas à esquerda, sliders de tamanho e opacidade, painel da ferramenta, seletor de cor e painel de camadas com miniaturas](docs/screenshot-ui.png)
+![ArtApp no tablet/desktop: pôr do sol com degradê, nuvens em aquarela e montanhas vetoriais; trilho de ferramentas à esquerda, painel de pincéis com simetria e painel de camadas](docs/screenshot-ui.png)
 
 ## Interface
 
@@ -14,13 +14,25 @@ amostra do traço), painel de camadas com miniaturas, seletor de cor com cores r
 somem sozinhos. No celular em pé, as ferramentas vão para uma barra embaixo e os painéis viram folhas
 que sobem de baixo.
 
-<img src="docs/screenshot-celular.png" alt="ArtApp no celular em pé: barra de ferramentas embaixo e o painel de camadas como folha inferior" width="260">
+<img src="docs/screenshot-celular.png" alt="ArtApp no celular em pé: céu noturno com lua e estrelas, barra de ferramentas embaixo" width="260">
 
 ## O que já faz
 
 - **Pincéis** do motor do [PhotoCraft](https://github.com/storytold/photocraft): os presets
   embutidos (General, Dry Media, Wet Media…) e pincéis de linha do ArtApp (Caneta G, Lápis, Marcador,
   Aquarela, Aerógrafo), com pressão da caneta, estabilizador, opacidade, fluxo e dureza.
+- **Pincéis profissionais**: editor completo (ponta, textura do papel, dispersão, pincel duplo,
+  início e fim do traço…) e pincéis próprios salvos no app.
+- **Misturar e retocar** (motor do PhotoCraft): desfocar, dedo, clarear, escurecer, saturar,
+  tirar saturação e carimbo.
+- **Liquefazer**: empurrar, deslocar, torcer (horário e anti-horário), contrair, inflar, suavizar e
+  restaurar.
+- **Degradê** linear ou radial (principal → secundária ou transparente) e **simetria** vertical,
+  horizontal, de quatro lados ou diagonal, com ângulo ajustável.
+- **Vetor pro**: todas as ferramentas do VectorCraft (seleção direta e de grupo, editar/converter
+  pontos, curvatura, texto, segmento, arco, espiral, grades…) na camada vetorial.
+- **Filtros** do PhotoCraft (quase 30: desfoques, nitidez, ruído, mosaico, pintura a óleo,
+  ondulação…), **transformar camada** e **correção de cor**, no menu.
 - **Borracha**, **balde de tinta** (amostra todas as camadas, com tolerância) e **conta-gotas**.
 - **Camadas**: nova, duplicar, apagar, subir/descer, mesclar abaixo, limpar, mostrar/ocultar,
   opacidade, 26 modos de mesclagem (Multiplicar, Tela, Sobrepor…) e bloquear transparência.
@@ -33,7 +45,7 @@ que sobem de baixo.
 - **Recursos de camada do Clip Studio**: recortar na camada abaixo (clipping), camada de referência
   (o balde olha só ela, por exemplo o lineart) e camada de rascunho (aparece na tela, mas fica fora
   da exportação e do balde).
-- **Seleção** retangular, elíptica e laço: pincel, balde e limpar só agem dentro dela. O lançador
+- **Seleção** retangular, elíptica, laço e varinha mágica: pincel, balde e limpar só agem dentro dela. O lançador
   embaixo da seleção desmarca, inverte, limpa, preenche e chama Mover camada (atalhos Ctrl+D,
   Ctrl+Shift+I, Ctrl+A, Delete).
 - **Mover camada** arrastando o conteúdo.
@@ -50,7 +62,7 @@ que sobem de baixo.
 
 1. Editar pontos Bézier de objetos existentes (seleção direta) e espessura variável pela pressão.
 2. Salvar/abrir projeto com camadas (e salvamento automático no Android).
-3. Transformar (escala/giro), seleção automática, réguas e simetria, pastas e máscaras de camada.
+3. Réguas de perspectiva, pastas e máscaras de camada.
 4. Compartilhar a imagem pelo menu do Android e importar fotos.
 
 ## Arquitetura
