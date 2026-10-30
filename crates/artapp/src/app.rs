@@ -42,6 +42,8 @@ pub enum Tool {
     Liquify,
     /// Todas as ferramentas do VectorCraft (a escolhida fica em `ArtApp::kit_tool`).
     VectorKit,
+    /// Réguas especiais: cria e ajusta a régua em que o pincel gruda.
+    Ruler,
 }
 
 impl Tool {
@@ -57,8 +59,9 @@ impl Tool {
         Tool::Hand,
     ];
     /// Mover camada e seleção, como o grupo "Operação/Seleção" do Clip Studio.
-    pub const SELECTION: [Tool; 5] = [
+    pub const SELECTION: [Tool; 6] = [
         Tool::MoveLayer,
+        Tool::Ruler,
         Tool::SelectRect,
         Tool::SelectEllipse,
         Tool::Lasso,
@@ -97,6 +100,7 @@ impl Tool {
             Tool::Ellipse => "Elipse",
             Tool::VectorKit => "Vetor pro",
             Tool::Liquify => "Liquefazer",
+            Tool::Ruler => "Régua",
         }
     }
 
@@ -123,6 +127,7 @@ impl Tool {
             Tool::Ellipse => icon::CIRCLE,
             Tool::VectorKit => icon::SPLINE_POINTER,
             Tool::Liquify => icon::SPLINE,
+            Tool::Ruler => icon::RULER,
         }
     }
 
@@ -169,6 +174,7 @@ impl Tool {
             Tool::Ellipse => egui::Key::O,
             Tool::VectorKit => egui::Key::Y,
             Tool::Liquify => egui::Key::Q,
+            Tool::Ruler => egui::Key::R,
         }
     }
 }
@@ -225,7 +231,19 @@ pub struct ArtApp {
     pub clipboard: Option<artapp_core::edit::Clip>,
     /// Grade por cima da tela (Visualizar › Grade).
     pub show_grid: bool,
+    /// Painel Navegador (miniatura com a vista).
+    pub show_navigator: bool,
+    /// Estado do painel de cor (aba, HSV, conjuntos, cor intermediária).
+    pub color_state: crate::color_panel::ColorState,
     pub grid_size: f32,
+    /// Régua especial atual (só uma, como a régua ativa do Clip Studio).
+    pub ruler: Option<artapp_core::ruler::Ruler>,
+    /// Que régua a ferramenta Régua cria: 0 reta, 1 paralelas, 2 concêntrica, 3 perspectiva.
+    pub ruler_kind: usize,
+    /// O pincel gruda na régua.
+    pub ruler_snap: bool,
+    /// O traço em andamento preso à régua.
+    pub ruler_live: Option<artapp_core::ruler::Snap>,
     /// Degradê: forma e se termina na secundária (senão, em transparente).
     pub gradient_shape: artapp_core::edit::GradientShape,
     pub gradient_to_sub: bool,
@@ -333,7 +351,13 @@ impl ArtApp {
             select_amount: 4.0,
             clipboard: None,
             show_grid: false,
+            show_navigator: false,
+            color_state: Default::default(),
             grid_size: 64.0,
+            ruler: None,
+            ruler_kind: 0,
+            ruler_snap: true,
+            ruler_live: None,
             gradient_shape: artapp_core::edit::GradientShape::Linear,
             gradient_to_sub: true,
             wand_tolerance: 0.1,
@@ -992,6 +1016,9 @@ impl eframe::App for ArtApp {
         }
         if self.doc.selection.is_some() {
             panels::selection_launcher(self, &ctx, canvas);
+        }
+        if self.show_navigator {
+            panels::navigator(self, &ctx, canvas, portrait);
         }
         panels::toast(self, &ctx, canvas, 0.0);
         crate::dialogs::show(self, &ctx);
