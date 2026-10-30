@@ -162,6 +162,24 @@ fn pen_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
                     .changed();
             });
     });
+    ui.horizontal(|ui| {
+        ui.label("Dedo");
+        egui::ComboBox::from_id_salt("finger_mode")
+            .selected_text(app.finger_mode.label())
+            .show_ui(ui, |ui| {
+                for m in crate::app::FingerMode::ALL {
+                    changed |= ui
+                        .selectable_value(&mut app.finger_mode, m, m.label())
+                        .changed();
+                }
+            });
+    })
+    .response
+    .on_hover_text(
+        "Automático: o dedo desenha até a caneta tocar a tela; depois só a caneta desenha e o dedo \
+         fica para zoom, giro e desfazer com dois dedos. A mão apoiada enquanto a caneta está na \
+         tela é ignorada.",
+    );
     for (value, text) in [
         (&mut app.gesture_rotate, "Girar com dois dedos"),
         (&mut app.tap_undo, "2 dedos desfaz, 3 refaz"),

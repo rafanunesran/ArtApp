@@ -434,6 +434,7 @@ impl<T: 'static> EventLoop<T> {
                                     stylus,
                                     eraser,
                                     button: stylus && button_down,
+                                    palm: tool == ToolType::Palm,
                                 },
                             );
                         }

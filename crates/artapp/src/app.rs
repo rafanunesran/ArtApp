@@ -10,6 +10,30 @@ use eframe::egui::{self, Color32, TextureHandle};
 use crate::canvas::CanvasView;
 use crate::{panels, platform};
 
+/// O que um dedo faz na tela quando há caneta.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FingerMode {
+    /// O dedo desenha como a caneta.
+    Draw,
+    /// Só a caneta desenha; o dedo move a tela.
+    PenOnly,
+    /// O dedo desenha até a caneta tocar a tela pela primeira vez; depois, só a caneta.
+    #[default]
+    Auto,
+}
+
+impl FingerMode {
+    pub const ALL: [FingerMode; 3] = [FingerMode::Auto, FingerMode::PenOnly, FingerMode::Draw];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            FingerMode::Draw => "Dedo desenha",
+            FingerMode::PenOnly => "Só caneta desenha",
+            FingerMode::Auto => "Automático",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tool {
     Brush,
@@ -284,6 +308,8 @@ pub struct ArtApp {
     pub autoclose_panels: bool,
     /// Toque rápido com dois dedos desfaz; com três, refaz.
     pub tap_undo: bool,
+    /// Se o dedo usa a ferramenta ou só mexe na vista (rejeição de palma).
+    pub finger_mode: FingerMode,
     pub show_tools_panel: bool,
     pub show_layers_panel: bool,
     /// Painel do pincel, camadas e cor no quadro anterior, para saber qual acabou de abrir.
@@ -399,6 +425,7 @@ impl ArtApp {
             pen_button_tool: Some(Tool::Eraser),
             autoclose_panels: true,
             tap_undo: true,
+            finger_mode: FingerMode::Auto,
             show_tools_panel: wide,
             show_layers_panel: wide,
             panels_before: [false; 3],
@@ -446,6 +473,12 @@ impl ArtApp {
         if let Some(b) = flag("tap_undo") {
             self.tap_undo = b;
         }
+        if let Some(name) = v.get("finger_mode").and_then(serde_json::Value::as_str) {
+            self.finger_mode = FingerMode::ALL
+                .into_iter()
+                .find(|m| format!("{m:?}") == name)
+                .unwrap_or_default();
+        }
         if let Some(name) = v.get("pen_button_tool").and_then(serde_json::Value::as_str) {
             self.pen_button_tool = Tool::PEN_BUTTON
                 .into_iter()
@@ -460,6 +493,7 @@ impl ArtApp {
             "gesture_rotate": self.gesture_rotate,
             "autoclose_panels": self.autoclose_panels,
             "tap_undo": self.tap_undo,
+            "finger_mode": format!("{:?}", self.finger_mode),
             "pen_button_tool": self.pen_button_tool.map(|t| format!("{t:?}")),
         });
         let path = prefs_path();
