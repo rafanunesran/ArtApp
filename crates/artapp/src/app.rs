@@ -18,6 +18,10 @@ pub enum Tool {
     Eyedropper,
     /// Misturar: desfocar ou dedo.
     Blend,
+    /// Degradê da cor principal para a secundária (ou transparente).
+    Gradient,
+    /// Seleção automática (varinha).
+    MagicWand,
     Hand,
     /// Move o conteúdo da camada ativa.
     MoveLayer,
@@ -38,20 +42,22 @@ pub enum Tool {
 
 impl Tool {
     /// Ferramentas raster, sempre visíveis na barra.
-    pub const RASTER: [Tool; 6] = [
+    pub const RASTER: [Tool; 7] = [
         Tool::Brush,
         Tool::Eraser,
         Tool::Blend,
         Tool::Fill,
+        Tool::Gradient,
         Tool::Eyedropper,
         Tool::Hand,
     ];
     /// Mover camada e seleção, como o grupo "Operação/Seleção" do Clip Studio.
-    pub const SELECTION: [Tool; 4] = [
+    pub const SELECTION: [Tool; 5] = [
         Tool::MoveLayer,
         Tool::SelectRect,
         Tool::SelectEllipse,
         Tool::Lasso,
+        Tool::MagicWand,
     ];
     /// Ferramentas vetoriais, no menu "Vetor".
     pub const VECTOR: [Tool; 6] = [
@@ -70,6 +76,8 @@ impl Tool {
             Tool::Fill => "Balde",
             Tool::Eyedropper => "Conta-gotas",
             Tool::Blend => "Misturar",
+            Tool::Gradient => "Degradê",
+            Tool::MagicWand => "Seleção automática",
             Tool::Hand => "Mão",
             Tool::MoveLayer => "Mover camada",
             Tool::SelectRect => "Seleção retangular",
@@ -92,6 +100,8 @@ impl Tool {
             Tool::Fill => icon::BUCKET,
             Tool::Eyedropper => icon::PIPETTE,
             Tool::Blend => icon::DROPLETS,
+            Tool::Gradient => icon::GRADIENT,
+            Tool::MagicWand => icon::WAND_SPARKLES,
             Tool::Hand => icon::HAND,
             Tool::MoveLayer => icon::MOVE,
             Tool::SelectRect => icon::SQUARE_DASHED,
@@ -112,7 +122,10 @@ impl Tool {
     }
 
     pub fn is_selection(self) -> bool {
-        matches!(self, Tool::SelectRect | Tool::SelectEllipse | Tool::Lasso)
+        matches!(
+            self,
+            Tool::SelectRect | Tool::SelectEllipse | Tool::Lasso | Tool::MagicWand
+        )
     }
 
     /// Todas, na ordem da barra.
@@ -131,6 +144,8 @@ impl Tool {
             Tool::Fill => egui::Key::G,
             Tool::Eyedropper => egui::Key::I,
             Tool::Blend => egui::Key::J,
+            Tool::Gradient => egui::Key::D,
+            Tool::MagicWand => egui::Key::W,
             Tool::Hand => egui::Key::H,
             Tool::MoveLayer => egui::Key::K,
             Tool::SelectRect => egui::Key::S,
@@ -181,6 +196,18 @@ pub struct ArtApp {
     pub transparent: bool,
     pub recent_colors: Vec<Color32>,
     pub fill_tolerance: f32,
+    /// Degradê: forma e se termina na secundária (senão, em transparente).
+    pub gradient_shape: artapp_core::edit::GradientShape,
+    pub gradient_to_sub: bool,
+    /// Seleção automática: tolerância, olhar todas as camadas, só a área contígua.
+    pub wand_tolerance: f32,
+    pub wand_all_layers: bool,
+    pub wand_contiguous: bool,
+    /// Régua de simetria (`None` = desligada) e o giro dela em graus.
+    pub symmetry: Option<artapp_core::paint::symmetry::SymmetryMode>,
+    pub symmetry_angle: f64,
+    /// Diálogo aberto no momento (transformar, filtros, ajustes).
+    pub dialog: Option<crate::dialogs::Dialog>,
     /// Usa a pressão da caneta/dedo (desligue se o dedo gerar pressão errática).
     pub use_pressure: bool,
     /// Girar a vista com dois dedos (além de zoom e mover).
@@ -260,6 +287,14 @@ impl ArtApp {
                 Color32::from_rgb(250, 200, 40),
             ],
             fill_tolerance: 0.15,
+            gradient_shape: artapp_core::edit::GradientShape::Linear,
+            gradient_to_sub: true,
+            wand_tolerance: 0.1,
+            wand_all_layers: true,
+            wand_contiguous: true,
+            symmetry: None,
+            symmetry_angle: 0.0,
+            dialog: None,
             use_pressure: true,
             gesture_rotate: true,
             show_tools_panel: wide,
@@ -387,6 +422,16 @@ impl ArtApp {
         } else {
             color_to_f32(self.color)
         }
+    }
+
+    /// A régua de simetria atual, no centro da tela.
+    pub fn symmetry_ruler(&self) -> Option<artapp_core::paint::symmetry::PresetSymmetry> {
+        let mode = self.symmetry?;
+        artapp_core::paint::symmetry::PresetSymmetry::new(
+            mode,
+            [self.doc.width as f64 / 2.0, self.doc.height as f64 / 2.0],
+            self.symmetry_angle,
+        )
     }
 
     /// Troca a cor principal com a secundária.
@@ -749,6 +794,7 @@ impl eframe::App for ArtApp {
             panels::selection_launcher(self, &ctx, canvas);
         }
         panels::toast(self, &ctx, canvas, 0.0);
+        crate::dialogs::show(self, &ctx);
         if self.show_new_dialog {
             panels::new_canvas_dialog(self, &ctx);
         }

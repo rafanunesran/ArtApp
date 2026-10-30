@@ -50,6 +50,11 @@ enum ActiveKind {
         from: VPoint,
         to: VPoint,
     },
+    /// Degradê: do ponto inicial ao atual.
+    Gradient {
+        from: VPoint,
+        to: VPoint,
+    },
 }
 
 struct ActiveStroke {
@@ -510,8 +515,12 @@ fn tool_down(
             } else {
                 artapp_core::Taper::default()
             };
+            let opts = artapp_core::StrokeOptions {
+                taper,
+                symmetry: app.symmetry_ruler(),
+            };
             let Some(mut session) =
-                PaintSession::begin_tapered(&mut app.doc, &brush, app.view.zoom, taper)
+                PaintSession::begin_with(&mut app.doc, &brush, app.view.zoom, opts)
             else {
                 app.status = "A camada ativa está oculta.".into();
                 return;
@@ -581,6 +590,25 @@ fn tool_down(
             to: vp,
         }),
         Tool::Lasso => Some(ActiveKind::Lasso(vec![vp])),
+        Tool::MagicWand => {
+            let sel = app.doc.magic_wand(
+                x,
+                y,
+                app.wand_tolerance,
+                app.wand_all_layers,
+                app.wand_contiguous,
+            );
+            app.doc.set_selection(sel);
+            None
+        }
+        Tool::Gradient => {
+            if vector_layer {
+                app.status = "Degradê funciona em camadas raster.".into();
+                None
+            } else {
+                Some(ActiveKind::Gradient { from: vp, to: vp })
+            }
+        }
         Tool::Select => {
             app.selected = app.doc.vector_hit(vp.x, vp.y, tol);
             if !vector_layer {
@@ -643,7 +671,8 @@ fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, t
         ActiveKind::Shape { to, .. }
         | ActiveKind::Move { to, .. }
         | ActiveKind::Marquee { to, .. }
-        | ActiveKind::MoveLayer { to, .. } => *to = vp,
+        | ActiveKind::MoveLayer { to, .. }
+        | ActiveKind::Gradient { to, .. } => *to = vp,
         ActiveKind::Freehand(points) | ActiveKind::Lasso(points) => points.push(vp),
         ActiveKind::BezierHandle => {
             if let Some(a) = app.bezier.last_mut() {
@@ -726,6 +755,20 @@ fn end_stroke(app: &mut ArtApp) {
             let d = to - from;
             app.doc
                 .move_layer_by(d.x.round() as i32, d.y.round() as i32)
+        }
+        ActiveKind::Gradient { from, to } => {
+            if from.distance(to) < 2.0 {
+                return;
+            }
+            let c0 = app.paint_color();
+            let c1 = if app.gradient_to_sub && !app.transparent {
+                color_to_f32(app.sub_color)
+            } else {
+                [c0[0], c0[1], c0[2], 0.0]
+            };
+            app.remember_color();
+            app.doc
+                .gradient([from.x, from.y], [to.x, to.y], app.gradient_shape, c0, c1)
         }
     };
     app.invalidate(dirty);
@@ -842,6 +885,17 @@ fn draw_overlay(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
                 let pts: Vec<Pos2> = points.iter().map(|p| to_screen(app, panel, *p)).collect();
                 ants(painter, &pts);
             }
+            ActiveKind::Gradient { from, to } => {
+                let (a, b) = (to_screen(app, panel, *from), to_screen(app, panel, *to));
+                painter.line_segment(
+                    [a, b],
+                    egui::Stroke::new(3.0, Color32::from_black_alpha(140)),
+                );
+                painter.line_segment([a, b], egui::Stroke::new(1.5, Color32::WHITE));
+                painter.circle_filled(a, 5.0, app.color);
+                painter.circle_stroke(a, 5.0, egui::Stroke::new(1.5, Color32::WHITE));
+                painter.circle_stroke(b, 5.0, egui::Stroke::new(1.5, Color32::WHITE));
+            }
             ActiveKind::MoveLayer { from, to } => {
                 if let Some(l) = app.doc.active_layer() {
                     let c = l.surface.content_bounds().intersect(&app.doc.bounds());
@@ -868,6 +922,31 @@ fn draw_overlay(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
                 }
             }
             _ => {}
+        }
+    }
+    if let Some(sym) = app.symmetry_ruler() {
+        let axis = egui::Stroke::new(1.5, Color32::from_rgb(160, 90, 255));
+        for [a, b] in sym.segments([app.doc.width as f64, app.doc.height as f64]) {
+            let (a, b) = (
+                to_screen(app, panel, VPoint::new(a[0], a[1])),
+                to_screen(app, panel, VPoint::new(b[0], b[1])),
+            );
+            painter.extend(egui::Shape::dashed_line(&[a, b], axis, 10.0, 6.0));
+        }
+    }
+    if let Some(sel) = app.doc.selection.as_ref().filter(|s| !s.edges.is_empty()) {
+        // Seleção automática: as bordas entre pixels (muitas, então sem tracejado).
+        if sel.edges.len() <= 60_000 {
+            let white = egui::Stroke::new(1.0, Color32::WHITE);
+            let black = egui::Stroke::new(1.0, Color32::BLACK);
+            for [a, b] in &sel.edges {
+                let (a, b) = (
+                    to_screen(app, panel, VPoint::new(a[0], a[1])),
+                    to_screen(app, panel, VPoint::new(b[0], b[1])),
+                );
+                painter.line_segment([a, b], white);
+                painter.line_segment([a + egui::vec2(0.5, 0.5), b + egui::vec2(0.5, 0.5)], black);
+            }
         }
     }
     if let Some(sel) = &app.doc.selection {

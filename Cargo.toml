@@ -15,6 +15,7 @@ repository = "https://github.com/rafanunesran/ArtApp"
 photocraft-geom = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
 photocraft-color = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
 photocraft-raster = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
+photocraft-algo = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
 photocraft-paint = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
 # Motores do VectorCraft (modelo de documento vetorial, geometria, renderização).
 vectorcraft-geom = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }

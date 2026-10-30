@@ -180,6 +180,19 @@ fn file_menu(app: &mut ArtApp, ui: &mut egui::Ui) {
             ui.close();
         }
     }
+    ui.separator();
+    if item(ui, icon::SCALING, "Transformar camada…").clicked() {
+        app.dialog = Some(crate::dialogs::Dialog::transform());
+        ui.close();
+    }
+    if item(ui, icon::SPARKLES, "Filtros…").clicked() {
+        app.dialog = Some(crate::dialogs::Dialog::filter(0));
+        ui.close();
+    }
+    if item(ui, icon::CONTRAST, "Correção de cor…").clicked() {
+        app.dialog = Some(crate::dialogs::Dialog::adjust());
+        ui.close();
+    }
 }
 
 // ---------- Ferramentas ----------
@@ -404,6 +417,10 @@ pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
                 ui.label(RichText::new("Pinta a área de cor parecida, olhando todas as camadas. Em camada vetorial, pinta o preenchimento da forma tocada.").size(12.0).color(color::TEXT_MUTED));
             } else if app.tool == Tool::Blend {
                 mix_settings(app, ui);
+            } else if app.tool == Tool::Gradient {
+                gradient_settings(app, ui);
+            } else if app.tool == Tool::MagicWand {
+                wand_settings(app, ui);
             } else if app.tool.is_selection() || app.tool == Tool::MoveLayer {
                 selection_settings(app, ui);
             } else if matches!(app.tool, Tool::Eyedropper | Tool::Hand) {
@@ -459,6 +476,80 @@ fn mix_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
     ui.add(egui::Slider::new(&mut app.mix_brush.hardness, 0.0..=1.0).text("Dureza"));
     let mut none = artapp_core::Taper::default();
     crate::brush_editor::show(ui, &mut app.mix_brush, &mut none);
+}
+
+fn gradient_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
+    use artapp_core::edit::GradientShape;
+    section(ui, "Forma");
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut app.gradient_shape, GradientShape::Linear, "Linear");
+        ui.selectable_value(&mut app.gradient_shape, GradientShape::Radial, "Radial");
+    });
+    section(ui, "Cores");
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut app.gradient_to_sub, true, "Principal e secundária");
+        ui.selectable_value(&mut app.gradient_to_sub, false, "Principal e transparente");
+    });
+    ui.label(
+        RichText::new(
+            "Arraste na tela do início ao fim. Com seleção ativa, só preenche dentro dela.",
+        )
+        .size(12.5)
+        .color(color::TEXT_MUTED),
+    );
+}
+
+fn wand_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
+    section(ui, "Varinha mágica");
+    let mut pct = app.wand_tolerance * 100.0;
+    if ui
+        .add(
+            egui::Slider::new(&mut pct, 0.0..=100.0)
+                .suffix("%")
+                .text("Tolerância"),
+        )
+        .changed()
+    {
+        app.wand_tolerance = pct / 100.0;
+    }
+    theme::switch(ui, &mut app.wand_all_layers, "Olhar todas as camadas");
+    theme::switch(ui, &mut app.wand_contiguous, "Só áreas contíguas");
+    ui.label(
+        RichText::new("Toque numa cor para selecionar a área parecida.")
+            .size(12.5)
+            .color(color::TEXT_MUTED),
+    );
+    ui.add_space(4.0);
+    selection_settings(app, ui);
+}
+
+fn symmetry_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
+    use artapp_core::paint::symmetry::SymmetryMode;
+    section(ui, "Simetria");
+    ui.horizontal_wrapped(|ui| {
+        ui.selectable_value(&mut app.symmetry, None, "Desligada");
+        for (mode, name) in [
+            (SymmetryMode::Vertical, "Vertical"),
+            (SymmetryMode::Horizontal, "Horizontal"),
+            (SymmetryMode::Dual, "Quatro lados"),
+            (SymmetryMode::Diagonal, "Diagonal"),
+        ] {
+            ui.selectable_value(&mut app.symmetry, Some(mode), name);
+        }
+    });
+    if app.symmetry.is_some() {
+        let mut deg = app.symmetry_angle.to_degrees();
+        if ui
+            .add(
+                egui::Slider::new(&mut deg, -180.0..=180.0)
+                    .suffix("°")
+                    .text("Ângulo"),
+            )
+            .changed()
+        {
+            app.symmetry_angle = deg.to_radians();
+        }
+    }
 }
 
 fn selection_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
@@ -590,6 +681,7 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
     }
     theme::switch(ui, use_pressure, "Usar pressão da caneta");
     ui.add_space(4.0);
+    symmetry_settings(app, ui);
     if app.tool == Tool::Eraser {
         let mut none = artapp_core::Taper::default();
         crate::brush_editor::show(ui, &mut app.eraser, &mut none);

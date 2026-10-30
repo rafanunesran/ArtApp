@@ -1,7 +1,8 @@
 //! Um traço de pincel em andamento, desenhado ao vivo com o `StrokeRenderer` do PhotoCraft.
 
 use photocraft_geom::Rect;
-use photocraft_paint::{BrushSettings, StrokePoint, StrokeRenderer};
+use photocraft_paint::symmetry::PresetSymmetry;
+use photocraft_paint::{BrushSettings, StrokePoint, StrokeRenderer, UnionLive};
 use photocraft_raster::Surface;
 
 use crate::document::Document;
@@ -27,11 +28,24 @@ impl Taper {
     }
 }
 
+/// Opções de um traço além do pincel.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct StrokeOptions {
+    pub taper: Taper,
+    /// Régua de simetria: o traço é repetido espelhado nos eixos.
+    pub symmetry: Option<PresetSymmetry>,
+}
+
 pub struct PaintSession {
     renderer: StrokeRenderer,
+    /// Um renderizador por espelho da simetria.
+    mirrors: Vec<StrokeRenderer>,
+    live: UnionLive,
+    /// Ainda não compôs nada (a primeira composição com espelhos redesenha tudo).
+    first: bool,
     brush: BrushSettings,
     zoom: f32,
-    taper: Taper,
+    opts: StrokeOptions,
     /// Pontos recebidos (sem o afinamento), para refazer o traço com o fim afinado.
     raw: Vec<StrokePoint>,
     /// Distância percorrida até o último ponto.
@@ -49,7 +63,7 @@ impl PaintSession {
     /// Começa um traço na camada ativa. `zoom` é o zoom da vista (a suavização usa).
     /// Devolve `None` se a camada ativa estiver oculta, for vetorial ou não existir.
     pub fn begin(doc: &mut Document, brush: &BrushSettings, zoom: f32) -> Option<Self> {
-        Self::begin_tapered(doc, brush, zoom, Taper::default())
+        Self::begin_with(doc, brush, zoom, StrokeOptions::default())
     }
 
     /// Como [`Self::begin`], afinando o começo e o fim do traço.
@@ -59,19 +73,43 @@ impl PaintSession {
         zoom: f32,
         taper: Taper,
     ) -> Option<Self> {
+        Self::begin_with(
+            doc,
+            brush,
+            zoom,
+            StrokeOptions {
+                taper,
+                symmetry: None,
+            },
+        )
+    }
+
+    /// Como [`Self::begin`], com afinamento e simetria.
+    pub fn begin_with(
+        doc: &mut Document,
+        brush: &BrushSettings,
+        zoom: f32,
+        opts: StrokeOptions,
+    ) -> Option<Self> {
         let layer = doc.active_layer()?;
         if !layer.visible || layer.is_vector() {
             return None;
         }
         let (pre, layer_id, lock_alpha) = (layer.surface.clone(), layer.id, layer.lock_alpha);
         let selection = doc.selection.as_ref().map(|s| s.mask.clone());
-        let renderer = StrokeRenderer::new(&brush.bounded_for_render(), Some(pre.format()), zoom);
+        let make = || StrokeRenderer::new(&brush.bounded_for_render(), Some(pre.format()), zoom);
+        let renderer = make();
+        let mirrors = opts.symmetry.map_or(0, |s| s.mirror_count());
+        let mirrors = (0..mirrors).map(|_| make()).collect();
         doc.checkpoint();
         Some(Self {
             renderer,
+            mirrors,
+            live: UnionLive::default(),
+            first: true,
             brush: brush.clone(),
             zoom,
-            taper,
+            opts,
             raw: Vec::new(),
             travelled: 0.0,
             pre,
@@ -85,6 +123,16 @@ impl PaintSession {
     /// Quantos pontos o traço já recebeu.
     pub fn points(&self) -> usize {
         self.points
+    }
+
+    /// Manda pontos para o traço e para os espelhos.
+    fn push(&mut self, pts: &[StrokePoint]) {
+        self.renderer.push(pts);
+        if let Some(sym) = self.opts.symmetry {
+            for (m, pass) in self.mirrors.iter_mut().zip(sym.reflected_passes(pts)) {
+                m.push(&pass);
+            }
+        }
     }
 
     /// Acrescenta pontos e desenha. Devolve o retângulo alterado (já recortado à tela).
@@ -105,26 +153,27 @@ impl PaintSession {
             }
             self.raw.push(p);
             live.push(StrokePoint {
-                pressure: p.pressure * self.taper.factor(self.travelled, None),
+                pressure: p.pressure * self.opts.taper.factor(self.travelled, None),
                 ..p
             });
         }
-        self.renderer.push(&live);
+        self.push(&live);
         self.composite(doc)
     }
 
     /// Termina o traço. Devolve o retângulo alterado.
     pub fn end(mut self, doc: &mut Document) -> Rect {
-        if self.taper.end > 0.0 && self.raw.len() > 1 {
+        if self.opts.taper.end > 0.0 && self.raw.len() > 1 {
             return self.redo_with_end_taper(doc);
         }
         self.renderer.finish();
+        self.mirrors.iter_mut().for_each(StrokeRenderer::finish);
         self.composite(doc)
     }
 
     /// Refaz o traço inteiro com o fim afinado (só dá para saber onde é o fim quando ele acaba).
     fn redo_with_end_taper(mut self, doc: &mut Document) -> Rect {
-        let before = self.renderer.bounds();
+        let before = self.bounds();
         let total = self.travelled;
         let mut d = 0.0;
         let pts: Vec<StrokePoint> = self
@@ -137,37 +186,48 @@ impl PaintSession {
                     d += (p.x - q.x).hypot(p.y - q.y);
                 }
                 StrokePoint {
-                    pressure: p.pressure * self.taper.factor(d, Some(total - d)),
+                    pressure: p.pressure * self.opts.taper.factor(d, Some(total - d)),
                     ..*p
                 }
             })
             .collect();
-        self.renderer = StrokeRenderer::new(
-            &self.brush.bounded_for_render(),
-            Some(self.pre.format()),
-            self.zoom,
-        );
-        self.renderer.push(&pts);
+        let make = || {
+            StrokeRenderer::new(
+                &self.brush.bounded_for_render(),
+                Some(self.pre.format()),
+                self.zoom,
+            )
+        };
+        self.renderer = make();
+        self.mirrors = self.mirrors.iter().map(|_| make()).collect();
+        self.push(&pts);
         self.renderer.finish();
+        self.mirrors.iter_mut().for_each(StrokeRenderer::finish);
         let canvas = doc.bounds();
         let id = self.layer_id;
         let Some(layer) = doc.layers.iter_mut().find(|l| l.id == id) else {
             return Rect::EMPTY;
         };
         layer.surface = self.pre.clone();
-        let r = self.renderer.composite(
+        let r = self.renderer.composite_union_many(
+            self.mirrors.iter(),
             &self.pre,
             &mut layer.surface,
             self.selection.as_ref(),
             self.lock_alpha,
-            true,
         );
         r.union(&before.inflate(2)).intersect(&canvas)
     }
 
+    fn bounds(&self) -> Rect {
+        self.mirrors
+            .iter()
+            .fold(self.renderer.bounds(), |r, m| r.union(&m.bounds()))
+    }
+
     /// Desfaz o traço inteiro (ex.: o segundo dedo encostou, era um gesto de zoom).
     pub fn cancel(self, doc: &mut Document) -> Rect {
-        let bounds = self.renderer.bounds();
+        let bounds = self.bounds();
         let id = self.layer_id;
         if let Some(l) = doc.layers.iter_mut().find(|l| l.id == id) {
             l.surface = self.pre;
@@ -182,13 +242,29 @@ impl PaintSession {
         let Some(layer) = doc.layers.iter_mut().find(|l| l.id == id) else {
             return Rect::EMPTY;
         };
-        let r = self.renderer.composite(
-            &self.pre,
-            &mut layer.surface,
-            self.selection.as_ref(),
-            self.lock_alpha,
-            false,
-        );
+        let r = if self.mirrors.is_empty() {
+            self.renderer.composite(
+                &self.pre,
+                &mut layer.surface,
+                self.selection.as_ref(),
+                self.lock_alpha,
+                false,
+            )
+        } else {
+            let mut passes: Vec<&mut StrokeRenderer> = std::iter::once(&mut self.renderer)
+                .chain(self.mirrors.iter_mut())
+                .collect();
+            let full = std::mem::replace(&mut self.first, false);
+            StrokeRenderer::composite_union_live(
+                &mut passes,
+                &mut self.live,
+                full,
+                &self.pre,
+                &mut layer.surface,
+                self.selection.as_ref(),
+                self.lock_alpha,
+            )
+        };
         r.intersect(&canvas)
     }
 }
@@ -243,6 +319,27 @@ mod tests {
         assert!(surf.rgba(150, 57)[3] > 0.5);
         assert!(surf.rgba(54, 57)[3] < 0.1);
         assert!(surf.rgba(246, 57)[3] < 0.1);
+    }
+
+    #[test]
+    fn symmetry_mirrors_the_stroke() {
+        use photocraft_paint::symmetry::SymmetryMode;
+        let mut doc = Document::new(200, 100);
+        let opts = StrokeOptions {
+            symmetry: PresetSymmetry::new(SymmetryMode::Vertical, [100.0, 50.0], 0.0),
+            ..Default::default()
+        };
+        let mut s =
+            PaintSession::begin_with(&mut doc, &BrushSettings::default(), 1.0, opts).unwrap();
+        let pts: Vec<_> = (0..20)
+            .map(|i| StrokePoint::new(20.0 + i as f64, 50.0, 1.0))
+            .collect();
+        s.add(&mut doc, &pts);
+        s.end(&mut doc);
+        let surf = &doc.layers[0].surface;
+        assert!(surf.rgba(30, 50)[3] > 0.5);
+        // Espelho no eixo vertical x = 100: o ponto 30 vira 170.
+        assert!(surf.rgba(170, 50)[3] > 0.5);
     }
 
     #[test]

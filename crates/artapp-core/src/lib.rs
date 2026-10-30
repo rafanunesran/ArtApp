@@ -11,6 +11,7 @@
 pub mod brushes;
 pub mod composite;
 pub mod document;
+pub mod edit;
 pub mod export;
 pub mod fill;
 pub mod history;
@@ -20,13 +21,14 @@ pub mod stroke;
 pub mod vector;
 
 pub use document::{Document, Layer};
+pub use photocraft_algo::FilterParams;
 pub use photocraft_color::BlendMode;
 pub use photocraft_geom::Rect;
 /// O motor de pincéis do PhotoCraft (o editor de pincel mexe em todos os ajustes dele).
 pub use photocraft_paint as paint;
 pub use photocraft_paint::{BrushSettings, StrokePoint};
 pub use selection::Selection;
-pub use stroke::{PaintSession, Taper};
+pub use stroke::{PaintSession, StrokeOptions, Taper};
 pub use vectorcraft_doc::NodeId;
 pub use vectorcraft_geom::path::{Anchor, SubPath};
 pub use vectorcraft_geom::{BezPath, Point as VPoint};
