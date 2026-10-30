@@ -221,7 +221,7 @@ impl Document {
     }
 
     /// Descarta o último ponto do histórico sem aplicá-lo (um traço cancelado).
-    pub(crate) fn drop_checkpoint(&mut self) {
+    pub fn drop_checkpoint(&mut self) {
         self.history.drop_last();
     }
 }

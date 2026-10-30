@@ -25,6 +25,15 @@ use crate::document::{Document, Layer};
 #[derive(Clone)]
 pub struct VectorArt {
     pub doc: vectorcraft_doc::Document,
+    /// Muda a cada edição (único no processo): o kit vetorial sabe se a arte que tem ainda é esta.
+    pub rev: u64,
+}
+
+/// Uma revisão nova, nunca usada antes.
+pub fn next_rev() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static REV: AtomicU64 = AtomicU64::new(1);
+    REV.fetch_add(1, Ordering::Relaxed)
 }
 
 /// Traço e preenchimento de um objeto novo. Cores em sRGB 0..1; `None` = sem traço / sem
@@ -190,6 +199,7 @@ impl VectorArt {
     pub fn new(width: u32, height: u32) -> Self {
         Self {
             doc: vectorcraft_doc::Document::new(width as f64, height as f64),
+            rev: next_rev(),
         }
     }
 
@@ -238,6 +248,7 @@ impl Document {
         if !f(art) {
             return Rect::EMPTY;
         }
+        art.rev = next_rev();
         layer.surface = rasterize(art, w, h);
         bounds
     }

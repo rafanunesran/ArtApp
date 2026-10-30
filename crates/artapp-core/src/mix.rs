@@ -2,6 +2,7 @@
 //! com a maquinaria de retoque do PhotoCraft. Cada marca lê os pixels de baixo dela já com as marcas
 //! anteriores aplicadas, então o dedo arrasta a tinta pelo caminho.
 
+use photocraft_algo::retouch;
 use photocraft_geom::Rect;
 use photocraft_paint::retouch::{Region, Smudge, alpha_index};
 use photocraft_paint::{BrushContext, BrushSettings, Stroke, StrokePoint, dabs};
@@ -15,6 +16,18 @@ pub enum MixKind {
     Blur,
     /// Arrasta a tinta, como o dedo.
     Smudge,
+    /// Clareia (subexpor), puxando os meios-tons.
+    Dodge,
+    /// Escurece (superexpor).
+    Burn,
+    /// Satura as cores (esponja).
+    Saturate,
+    /// Tira saturação (esponja).
+    Desaturate,
+    /// Realça as bordas (nitidez).
+    Sharpen,
+    /// Carimbo: copia de outro lugar da camada (a origem fica em `MixSession::with_source`).
+    Clone,
 }
 
 pub struct MixSession {
@@ -30,9 +43,18 @@ pub struct MixSession {
     layer_id: u64,
     lock_alpha: bool,
     selection: Option<Surface>,
+    /// Carimbo: o ponto de origem e, depois do primeiro ponto, o deslocamento até ela.
+    source: Option<[f64; 2]>,
+    offset: Option<(i32, i32)>,
 }
 
 impl MixSession {
+    /// De onde o carimbo copia (coordenadas do documento).
+    pub fn with_source(mut self, source: [f64; 2]) -> Self {
+        self.source = Some(source);
+        self
+    }
+
     pub fn begin(
         doc: &mut Document,
         kind: MixKind,
@@ -60,6 +82,8 @@ impl MixSession {
             layer_id,
             lock_alpha,
             selection,
+            source: None,
+            offset: None,
         })
     }
 
@@ -70,6 +94,17 @@ impl MixSession {
                 .copied()
                 .filter(|p| p.x.is_finite() && p.y.is_finite()),
         );
+        if self.offset.is_none()
+            && let (Some(src), Some(first)) = (self.source, self.points.first())
+        {
+            self.offset = Some((
+                (src[0] - first.x).round() as i32,
+                (src[1] - first.y).round() as i32,
+            ));
+        }
+        if self.kind == MixKind::Clone && self.offset.is_none() {
+            return Rect::EMPTY;
+        }
         let stroke = Stroke {
             brush: self.brush.clone(),
             points: self.points.clone(),
@@ -92,9 +127,25 @@ impl MixSession {
             let outer = fp.rect.inflate(halo).intersect(&canvas);
             let orig = Region::read(&layer.surface, outer);
             let mut work = orig.clone();
+            let k = self.strength;
             match self.kind {
                 MixKind::Smudge => self.smudge.dab(&mut work, &fp),
-                MixKind::Blur => blur_dab(&mut work, &orig, &fp, self.strength),
+                MixKind::Blur => blur_dab(&mut work, &orig, &fp, k),
+                MixKind::Sharpen => sharpen_dab(&mut work, &orig, &fp, k),
+                MixKind::Dodge | MixKind::Burn => {
+                    let burn = self.kind == MixKind::Burn;
+                    tone_dab(&mut work, &fp, k, |c, e| {
+                        retouch::dodge_burn(c, e, retouch::ToneRange::Midtones, burn, true)
+                    })
+                }
+                MixKind::Saturate | MixKind::Desaturate => {
+                    let up = self.kind == MixKind::Saturate;
+                    tone_dab(&mut work, &fp, k, |c, e| retouch::sponge(c, e, up, true))
+                }
+                MixKind::Clone => {
+                    let (dx, dy) = self.offset.unwrap_or_default();
+                    clone_dab(&mut work, &self.pre, &fp, k, dx, dy)
+                }
             }
             // Devolve só o retângulo da marca, respeitando seleção e bloqueio de transparência.
             let mut out = orig.crop(rect);
@@ -137,6 +188,89 @@ impl MixSession {
         }
         doc.drop_checkpoint();
         doc.bounds()
+    }
+}
+
+/// Aplica `f` (cor sem alfa, intensidade) a cada pixel da marca, na medida da cobertura.
+fn tone_dab(
+    work: &mut Region,
+    fp: &photocraft_paint::retouch::Footprint,
+    strength: f32,
+    f: impl Fn([f32; 3], f32) -> [f32; 3],
+) {
+    let wr = work.rect;
+    if work.ch < 3 {
+        return;
+    }
+    for y in fp.rect.y0.max(wr.y0)..fp.rect.y1.min(wr.y1) {
+        for x in fp.rect.x0.max(wr.x0)..fp.rect.x1.min(wr.x1) {
+            let k = fp.at(x, y) * strength;
+            if k <= 0.0 {
+                continue;
+            }
+            let px = work.px_mut(x, y);
+            let out = f([px[0], px[1], px[2]], k);
+            px[..3].copy_from_slice(&out);
+        }
+    }
+}
+
+/// Nitidez: afasta cada pixel da média dos vizinhos.
+fn sharpen_dab(
+    work: &mut Region,
+    orig: &Region,
+    fp: &photocraft_paint::retouch::Footprint,
+    strength: f32,
+) {
+    let mut blurred = orig.clone();
+    blur_dab(&mut blurred, orig, fp, 1.0);
+    let wr = work.rect;
+    let a = if work.ch == 4 { Some(3) } else { None };
+    for y in fp.rect.y0.max(wr.y0)..fp.rect.y1.min(wr.y1) {
+        for x in fp.rect.x0.max(wr.x0)..fp.rect.x1.min(wr.x1) {
+            let k = fp.at(x, y) * strength;
+            if k <= 0.0 {
+                continue;
+            }
+            let o = orig.px(x, y).to_vec();
+            let b = blurred.px(x, y).to_vec();
+            let px = work.px_mut(x, y);
+            for c in 0..px.len() {
+                if Some(c) == a {
+                    continue;
+                }
+                px[c] = (o[c] + (o[c] - b[c]) * k * 1.5).clamp(0.0, 1.0);
+            }
+        }
+    }
+}
+
+/// Carimbo: copia os pixels de antes do traço, deslocados por `(dx, dy)`.
+fn clone_dab(
+    work: &mut Region,
+    pre: &Surface,
+    fp: &photocraft_paint::retouch::Footprint,
+    strength: f32,
+    dx: i32,
+    dy: i32,
+) {
+    let wr = work.rect;
+    let src = Region::read(
+        pre,
+        Rect::new(wr.x0 + dx, wr.y0 + dy, wr.x1 + dx, wr.y1 + dy),
+    );
+    for y in fp.rect.y0.max(wr.y0)..fp.rect.y1.min(wr.y1) {
+        for x in fp.rect.x0.max(wr.x0)..fp.rect.x1.min(wr.x1) {
+            let k = (fp.at(x, y) * strength).min(1.0);
+            if k <= 0.0 {
+                continue;
+            }
+            let s = src.px(x + dx, y + dy).to_vec();
+            let px = work.px_mut(x, y);
+            for c in 0..px.len() {
+                px[c] += (s[c] - px[c]) * k;
+            }
+        }
     }
 }
 
@@ -203,5 +337,51 @@ mod tests {
             assert!(doc.undo());
             assert_eq!(doc.layers[0].surface.rgba(52, 20)[3], 0.0);
         }
+    }
+
+    #[test]
+    fn retouch_kinds_change_colour() {
+        let run = |kind: MixKind, fill: [f32; 4], source: Option<[f64; 2]>| {
+            let mut doc = Document::new(60, 60);
+            doc.layers[0]
+                .surface
+                .fill_rect(Rect::new(0, 0, 60, 30), &fill);
+            let brush = BrushSettings {
+                size: 12.0,
+                ..Default::default()
+            };
+            let mut s = MixSession::begin(&mut doc, kind, &brush, 1.0).unwrap();
+            if let Some(src) = source {
+                s = s.with_source(src);
+            }
+            let pts: Vec<_> = (0..10)
+                .map(|i| StrokePoint::new(20.0 + i as f64, 15.0, 1.0))
+                .collect();
+            s.add(&mut doc, &pts);
+            doc.layers[0].surface.rgba(25, 15)
+        };
+        let grey = [0.5, 0.5, 0.5, 1.0];
+        assert!(run(MixKind::Dodge, grey, None)[0] > 0.55);
+        assert!(run(MixKind::Burn, grey, None)[0] < 0.45);
+        let red = [0.8, 0.3, 0.3, 1.0];
+        let d = run(MixKind::Desaturate, red, None);
+        assert!(d[0] - d[1] < 0.45);
+        // Carimbo de cima (tinta) para baixo (vazio): a tinta aparece onde não havia.
+        let mut doc = Document::new(60, 60);
+        doc.layers[0]
+            .surface
+            .fill_rect(Rect::new(0, 0, 60, 30), &red);
+        let brush = BrushSettings {
+            size: 12.0,
+            ..Default::default()
+        };
+        let mut s = MixSession::begin(&mut doc, MixKind::Clone, &brush, 1.0)
+            .unwrap()
+            .with_source([20.0, 10.0]);
+        let pts: Vec<_> = (0..10)
+            .map(|i| StrokePoint::new(20.0 + i as f64, 45.0, 1.0))
+            .collect();
+        s.add(&mut doc, &pts);
+        assert!(doc.layers[0].surface.rgba(25, 45)[3] > 0.5);
     }
 }

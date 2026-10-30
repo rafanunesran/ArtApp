@@ -38,6 +38,8 @@ pub enum Tool {
     Line,
     Rectangle,
     Ellipse,
+    /// Todas as ferramentas do VectorCraft (a escolhida fica em `ArtApp::kit_tool`).
+    VectorKit,
 }
 
 impl Tool {
@@ -60,7 +62,8 @@ impl Tool {
         Tool::MagicWand,
     ];
     /// Ferramentas vetoriais, no menu "Vetor".
-    pub const VECTOR: [Tool; 6] = [
+    pub const VECTOR: [Tool; 7] = [
+        Tool::VectorKit,
         Tool::Select,
         Tool::VectorPen,
         Tool::Bezier,
@@ -89,6 +92,7 @@ impl Tool {
             Tool::Line => "Linha",
             Tool::Rectangle => "Retângulo",
             Tool::Ellipse => "Elipse",
+            Tool::VectorKit => "Vetor pro",
         }
     }
 
@@ -113,6 +117,7 @@ impl Tool {
             Tool::Line => icon::MINUS,
             Tool::Rectangle => icon::SQUARE,
             Tool::Ellipse => icon::CIRCLE,
+            Tool::VectorKit => icon::SPLINE_POINTER,
         }
     }
 
@@ -157,6 +162,7 @@ impl Tool {
             Tool::Line => egui::Key::L,
             Tool::Rectangle => egui::Key::M,
             Tool::Ellipse => egui::Key::O,
+            Tool::VectorKit => egui::Key::Y,
         }
     }
 }
@@ -188,6 +194,9 @@ pub struct ArtApp {
     pub mix_kind: artapp_core::mix::MixKind,
     pub mix_brush: BrushSettings,
     pub mix_strength: f32,
+    /// Carimbo: a origem, e se o próximo toque escolhe uma nova.
+    pub clone_source: Option<[f64; 2]>,
+    pub clone_picking: bool,
     /// Cor principal (a de pintar).
     pub color: Color32,
     /// Cor secundária (troca com a principal pelo X ou tocando nela).
@@ -208,6 +217,11 @@ pub struct ArtApp {
     pub symmetry_angle: f64,
     /// Diálogo aberto no momento (transformar, filtros, ajustes).
     pub dialog: Option<crate::dialogs::Dialog>,
+    /// O motor do VectorCraft e a ferramenta dele escolhida.
+    pub kit: artapp_core::vectorkit::VectorKit,
+    pub kit_tool: &'static str,
+    /// O que a ferramenta do kit desenha por cima, recalculado a cada quadro.
+    pub kit_overlays: Vec<artapp_core::vectorkit::Overlay>,
     /// Usa a pressão da caneta/dedo (desligue se o dedo gerar pressão errática).
     pub use_pressure: bool,
     /// Girar a vista com dois dedos (além de zoom e mover).
@@ -269,6 +283,8 @@ impl ArtApp {
                 ..Default::default()
             },
             mix_strength: 0.6,
+            clone_source: None,
+            clone_picking: false,
             eraser: BrushSettings {
                 size: 30.0,
                 hardness: 0.8,
@@ -295,6 +311,9 @@ impl ArtApp {
             symmetry: None,
             symmetry_angle: 0.0,
             dialog: None,
+            kit: artapp_core::vectorkit::VectorKit::new(),
+            kit_tool: "directSelection",
+            kit_overlays: Vec::new(),
             use_pressure: true,
             gesture_rotate: true,
             show_tools_panel: wide,
@@ -548,6 +567,9 @@ impl ArtApp {
         if t != Tool::Select {
             self.selected = None;
         }
+        if t == Tool::VectorKit && self.kit.tool_id() != self.kit_tool {
+            self.kit.select_tool(self.kit_tool);
+        }
         self.tool = t;
     }
 
@@ -623,8 +645,94 @@ impl ArtApp {
         };
     }
 
+    /// Escolhe uma ferramenta do VectorCraft.
+    pub fn set_kit_tool(&mut self, id: &'static str) {
+        self.kit_tool = id;
+        self.kit.select_tool(id);
+        self.set_tool(Tool::VectorKit);
+    }
+
+    /// Manda uma tecla para a ferramenta do kit (Enter conclui, Esc cancela…).
+    pub fn kit_key(&mut self, key: artapp_core::vectorkit::ToolKey) {
+        let r = self.kit.key(&mut self.doc, key);
+        self.invalidate(r);
+    }
+
+    /// Roda um comando do VectorCraft na camada vetorial ativa.
+    pub fn kit_command(&mut self, id: &str, params: serde_json::Value) {
+        self.ensure_vector_layer();
+        let r = self.kit.execute(&mut self.doc, id, &params);
+        self.invalidate(r);
+        if let Some(msg) = self.kit.status.take() {
+            self.status = msg;
+        }
+    }
+
+    /// Com a ferramenta de texto do kit digitando, o teclado vai todo para ela.
+    fn kit_typing(&mut self, ctx: &egui::Context) -> bool {
+        use artapp_core::vectorkit::ToolKey;
+        if self.tool != Tool::VectorKit || ctx.egui_wants_keyboard_input() {
+            return false;
+        }
+        let typing = self.kit.wants_text();
+        let events = ctx.input(|i| i.events.clone());
+        for ev in events {
+            match ev {
+                egui::Event::Text(t) if typing => {
+                    let r = self.kit.text(&mut self.doc, &t);
+                    self.invalidate(r);
+                }
+                egui::Event::Key {
+                    key, pressed: true, ..
+                } => {
+                    let k = match key {
+                        egui::Key::Enter => ToolKey::Enter,
+                        egui::Key::Escape => ToolKey::Escape,
+                        egui::Key::Backspace => ToolKey::Backspace,
+                        egui::Key::Delete => ToolKey::Delete,
+                        egui::Key::ArrowUp => ToolKey::Up,
+                        egui::Key::ArrowDown => ToolKey::Down,
+                        egui::Key::ArrowLeft => ToolKey::Left,
+                        egui::Key::ArrowRight => ToolKey::Right,
+                        egui::Key::Tab => ToolKey::Tab,
+                        egui::Key::Home => ToolKey::Home,
+                        egui::Key::End => ToolKey::End,
+                        _ => continue,
+                    };
+                    self.kit_key(k);
+                }
+                _ => {}
+            }
+        }
+        // O que foi para o kit não vira atalho do app (Delete não limpa a camada, por exemplo).
+        ctx.input_mut(|i| {
+            i.events.retain(|e| match e {
+                egui::Event::Text(_) => !typing,
+                egui::Event::Key { key, .. } => {
+                    !typing
+                        && !matches!(
+                            key,
+                            egui::Key::Enter
+                                | egui::Key::Escape
+                                | egui::Key::Backspace
+                                | egui::Key::Delete
+                                | egui::Key::ArrowUp
+                                | egui::Key::ArrowDown
+                                | egui::Key::ArrowLeft
+                                | egui::Key::ArrowRight
+                                | egui::Key::Tab
+                                | egui::Key::Home
+                                | egui::Key::End
+                        )
+                }
+                _ => true,
+            })
+        });
+        typing
+    }
+
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        if ctx.egui_wants_keyboard_input() {
+        if ctx.egui_wants_keyboard_input() || self.kit_typing(ctx) {
             return;
         }
         let (undo, redo, tool, bigger, smaller) = ctx.input_mut(|i| {
