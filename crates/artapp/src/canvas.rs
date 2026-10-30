@@ -246,6 +246,9 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
     } else {
         Vec::new()
     };
+    if app.show_grid {
+        draw_grid(app, &painter, panel);
+    }
     draw_overlay(app, &painter, panel);
     draw_kit_overlays(app, &painter, panel);
     if app.tool == Tool::Blend
@@ -592,13 +595,12 @@ fn tool_down(
                 let [r, g, b, _] = color_to_f32(app.color);
                 app.doc.vector_fill_at(vp.x, vp.y, [r, g, b])
             } else {
-                fill::flood_fill(
-                    &mut app.doc,
-                    x,
-                    y,
-                    color_to_f32(app.color),
-                    app.fill_tolerance,
-                )
+                let opts = fill::FillOptions {
+                    tolerance: app.fill_tolerance,
+                    close_gap: app.fill_close_gap,
+                    expand: app.fill_expand,
+                };
+                fill::flood_fill_with(&mut app.doc, x, y, color_to_f32(app.color), &opts)
             };
             app.invalidate(r);
             app.remember_color();
@@ -635,7 +637,7 @@ fn tool_down(
                 app.wand_all_layers,
                 app.wand_contiguous,
             );
-            app.doc.set_selection(sel);
+            app.doc.combine_selection(sel, app.select_mode);
             None
         }
         Tool::Gradient => {
@@ -814,16 +816,13 @@ fn end_stroke(app: &mut ArtApp) {
             } else {
                 artapp_core::Selection::rect(a, b, w, h)
             };
-            app.doc.set_selection(sel);
+            app.doc.combine_selection(sel, app.select_mode);
             Rect::EMPTY
         }
         ActiveKind::Lasso(points) => {
             let pts: Vec<[f64; 2]> = points.iter().map(|p| [p.x, p.y]).collect();
-            app.doc.set_selection(artapp_core::Selection::polygon(
-                &pts,
-                app.doc.width,
-                app.doc.height,
-            ));
+            let sel = artapp_core::Selection::polygon(&pts, app.doc.width, app.doc.height);
+            app.doc.combine_selection(sel, app.select_mode);
             Rect::EMPTY
         }
         ActiveKind::MoveLayer { from, to } => {
@@ -875,6 +874,47 @@ fn cancel_stroke(app: &mut ArtApp) {
             app.kit_key(artapp_core::vectorkit::ToolKey::Escape);
         }
         _ => {}
+    }
+}
+
+/// Grade de `grid_size` pixels do documento, com uma linha mais forte a cada quatro.
+fn draw_grid(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
+    let (w, h) = (app.doc.width as f32, app.doc.height as f32);
+    let step = app.grid_size.max(2.0);
+    // Linhas muito juntas na tela viram ruído: pula de 2 em 2 até ficarem a 6 px ou mais.
+    let mut skip = 1usize;
+    while step * skip as f32 * app.view.zoom < 6.0 {
+        skip *= 2;
+    }
+    let thin = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(60, 140, 255, 60));
+    let bold = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(60, 140, 255, 130));
+    let mut i = 0usize;
+    let mut x = 0.0;
+    while x <= w {
+        let st = if i.is_multiple_of(4) { bold } else { thin };
+        painter.line_segment(
+            [
+                app.view.doc_to_screen(panel, x, 0.0),
+                app.view.doc_to_screen(panel, x, h),
+            ],
+            st,
+        );
+        i += skip;
+        x = i as f32 * step;
+    }
+    i = 0;
+    let mut y = 0.0;
+    while y <= h {
+        let st = if i.is_multiple_of(4) { bold } else { thin };
+        painter.line_segment(
+            [
+                app.view.doc_to_screen(panel, 0.0, y),
+                app.view.doc_to_screen(panel, w, y),
+            ],
+            st,
+        );
+        i += skip;
+        y = i as f32 * step;
     }
 }
 

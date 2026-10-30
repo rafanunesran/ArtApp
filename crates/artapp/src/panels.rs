@@ -129,6 +129,14 @@ fn view_buttons(app: &mut ArtApp, ui: &mut egui::Ui) {
 }
 
 fn file_menu(app: &mut ArtApp, ui: &mut egui::Ui) {
+    // O menu cresceu: rola quando não cabe na altura da tela.
+    let max_h = (ui.ctx().content_rect().height() - 80.0).max(200.0);
+    egui::ScrollArea::vertical()
+        .max_height(max_h)
+        .show(ui, |ui| file_menu_items(app, ui));
+}
+
+fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
     ui.set_min_width(220.0);
     let item = |ui: &mut egui::Ui, glyph: char, text: &str| {
         ui.add(
@@ -165,6 +173,17 @@ fn file_menu(app: &mut ArtApp, ui: &mut egui::Ui) {
     ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
         theme::switch(ui, &mut app.gesture_rotate, "Girar com dois dedos")
     });
+    ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
+        theme::switch(ui, &mut app.show_grid, "Grade")
+    });
+    if app.show_grid {
+        ui.add(
+            egui::Slider::new(&mut app.grid_size, 8.0..=512.0)
+                .logarithmic(true)
+                .suffix(" px")
+                .text("Grade"),
+        );
+    }
     ui.separator();
     if item(ui, icon::SQUARE_DASHED, "Selecionar tudo").clicked() {
         app.select_all();
@@ -179,6 +198,27 @@ fn file_menu(app: &mut ArtApp, ui: &mut egui::Ui) {
             app.invert_selection();
             ui.close();
         }
+    }
+    ui.separator();
+    if item(ui, icon::SCISSORS, "Recortar (Ctrl+X)").clicked() {
+        app.cut();
+        ui.close();
+    }
+    if item(ui, icon::COPY, "Copiar (Ctrl+C)").clicked() {
+        app.copy();
+        ui.close();
+    }
+    if item(ui, icon::PLUS, "Colar em camada nova (Ctrl+V)").clicked() {
+        app.paste();
+        ui.close();
+    }
+    if item(ui, icon::PALETTE, "Mudar cor da linha para a principal").clicked() {
+        app.line_to_color();
+        ui.close();
+    }
+    if item(ui, icon::SUN_DIM, "Converter brilho em opacidade").clicked() {
+        app.brightness_to_opacity();
+        ui.close();
     }
     ui.separator();
     if item(ui, icon::SCALING, "Transformar camada…").clicked() {
@@ -416,6 +456,8 @@ pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
             } else if app.tool == Tool::Fill {
                 section(ui, "Balde");
                 ui.add(egui::Slider::new(&mut app.fill_tolerance, 0.0..=1.0).text("Tolerância"));
+                ui.add(egui::Slider::new(&mut app.fill_close_gap, 0.0..=40.0).suffix(" px").text("Fechar lacunas"));
+                ui.add(egui::Slider::new(&mut app.fill_expand, -10.0..=10.0).suffix(" px").text("Expandir área"));
                 ui.label(RichText::new("Pinta a área de cor parecida, olhando todas as camadas. Em camada vetorial, pinta o preenchimento da forma tocada.").size(12.0).color(color::TEXT_MUTED));
             } else if app.tool == Tool::Blend {
                 mix_settings(app, ui);
@@ -743,6 +785,20 @@ fn selection_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
         }
     };
     ui.label(RichText::new(hint).size(12.5).color(color::TEXT_MUTED));
+    if app.tool != Tool::MoveLayer {
+        use artapp_core::selection::SelectMode;
+        section(ui, "Modo");
+        ui.horizontal_wrapped(|ui| {
+            for (mode, name) in [
+                (SelectMode::New, "Nova"),
+                (SelectMode::Add, "Adicionar"),
+                (SelectMode::Subtract, "Subtrair"),
+                (SelectMode::Intersect, "Interseção"),
+            ] {
+                ui.selectable_value(&mut app.select_mode, mode, name);
+            }
+        });
+    }
     section(ui, "Seleção");
     ui.horizontal_wrapped(|ui| {
         if ui
@@ -770,7 +826,31 @@ fn selection_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
         {
             app.invert_selection();
         }
+        if ui.button(format!("{}  Da camada", icon::LAYERS)).clicked() {
+            app.doc.select_layer_content();
+        }
     });
+    if app.doc.selection.is_some() {
+        section(ui, "Ajustar seleção");
+        ui.add(
+            egui::Slider::new(&mut app.select_amount, 1.0..=100.0)
+                .logarithmic(true)
+                .suffix(" px")
+                .text("Quanto"),
+        );
+        ui.horizontal_wrapped(|ui| {
+            let n = app.select_amount;
+            if ui.button("Expandir").clicked() {
+                app.doc.grow_selection(n);
+            }
+            if ui.button("Contrair").clicked() {
+                app.doc.grow_selection(-n);
+            }
+            if ui.button("Suavizar borda").clicked() {
+                app.doc.feather_selection(n);
+            }
+        });
+    }
 }
 
 /// Barra flutuante embaixo da seleção, como o "lançador de seleção" do Clip Studio.
