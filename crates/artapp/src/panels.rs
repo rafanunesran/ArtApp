@@ -128,6 +128,47 @@ fn view_buttons(app: &mut ArtApp, ui: &mut egui::Ui) {
     }
 }
 
+/// Ajustes de caneta e gestos (gravados entre as sessões).
+fn pen_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
+    ui.separator();
+    ui.label(
+        RichText::new("Caneta e gestos")
+            .size(13.0)
+            .color(color::TEXT_MUTED),
+    );
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label("Botão da caneta");
+        let name = app.pen_button_tool.map_or("Nada", Tool::label);
+        egui::ComboBox::from_id_salt("pen_button_tool")
+            .selected_text(name)
+            .show_ui(ui, |ui| {
+                for t in Tool::PEN_BUTTON {
+                    changed |= ui
+                        .selectable_value(&mut app.pen_button_tool, Some(t), t.label())
+                        .changed();
+                }
+                changed |= ui
+                    .selectable_value(&mut app.pen_button_tool, None, "Nada")
+                    .changed();
+            });
+    });
+    for (value, text) in [
+        (&mut app.gesture_rotate, "Girar com dois dedos"),
+        (&mut app.tap_undo, "2 dedos desfaz, 3 refaz"),
+        (&mut app.autoclose_panels, "Fechar painéis ao desenhar"),
+    ] {
+        changed |= ui
+            .add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
+                theme::switch(ui, value, text)
+            })
+            .changed();
+    }
+    if changed {
+        app.save_prefs();
+    }
+}
+
 fn file_menu(app: &mut ArtApp, ui: &mut egui::Ui) {
     // O menu cresceu: rola quando não cabe na altura da tela.
     let max_h = (ui.ctx().content_rect().height() - 80.0).max(200.0);
@@ -171,9 +212,6 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         ui.close();
     }
     ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
-        theme::switch(ui, &mut app.gesture_rotate, "Girar com dois dedos")
-    });
-    ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
         theme::switch(ui, &mut app.show_navigator, "Navegador")
     });
     ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
@@ -187,6 +225,7 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
                 .text("Grade"),
         );
     }
+    pen_settings(app, ui);
     ui.separator();
     if item(ui, icon::SQUARE_DASHED, "Selecionar tudo").clicked() {
         app.select_all();
@@ -252,7 +291,15 @@ fn tool_buttons(app: &mut ArtApp, ui: &mut egui::Ui, vertical: bool, cols: usize
         let mut buttons = |ui: &mut egui::Ui| {
             for &t in group {
                 if icon_button(ui, t.icon(), app.tool == t, t.label()).clicked() {
-                    app.set_tool(t);
+                    if app.tool == t {
+                        // Tocar de novo na ferramenta escolhida abre (ou fecha) os ajustes dela.
+                        app.show_tools_panel = !app.show_tools_panel;
+                        if app.show_tools_panel && is_portrait(ui.ctx()) {
+                            app.show_layers_panel = false;
+                        }
+                    } else {
+                        app.set_tool(t);
+                    }
                 }
             }
         };
@@ -994,7 +1041,10 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
     {
         s.enabled = s.amount > 0.0;
     }
-    theme::switch(ui, use_pressure, "Usar pressão da caneta");
+    let pressure_changed = theme::switch(ui, use_pressure, "Usar pressão da caneta").changed();
+    if pressure_changed {
+        app.save_prefs();
+    }
     ui.add_space(4.0);
     symmetry_settings(app, ui);
     if app.tool == Tool::Eraser {

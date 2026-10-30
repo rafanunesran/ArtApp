@@ -78,6 +78,19 @@ impl Tool {
         Tool::Ellipse,
     ];
 
+    /// O que o botão lateral da caneta pode virar (ferramentas sem estado pela metade).
+    pub const PEN_BUTTON: [Tool; 9] = [
+        Tool::Eraser,
+        Tool::Eyedropper,
+        Tool::Hand,
+        Tool::Blend,
+        Tool::Brush,
+        Tool::Fill,
+        Tool::Lasso,
+        Tool::SelectRect,
+        Tool::MoveLayer,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             Tool::Brush => "Pincel",
@@ -265,6 +278,12 @@ pub struct ArtApp {
     pub use_pressure: bool,
     /// Girar a vista com dois dedos (além de zoom e mover).
     pub gesture_rotate: bool,
+    /// Ferramenta usada enquanto o botão lateral da caneta fica apertado (`None` = desligado).
+    pub pen_button_tool: Option<Tool>,
+    /// Fecha os painéis e o seletor de cor ao começar a desenhar.
+    pub autoclose_panels: bool,
+    /// Toque rápido com dois dedos desfaz; com três, refaz.
+    pub tap_undo: bool,
     pub show_tools_panel: bool,
     pub show_layers_panel: bool,
     pub show_new_dialog: bool,
@@ -304,7 +323,7 @@ impl ArtApp {
             .map(|b| b.settings.clone())
             .unwrap_or_default();
         let wide = cc.egui_ctx.content_rect().width() > 900.0;
-        Self {
+        let mut app = Self {
             doc: Document::new(1536, 2048),
             view: CanvasView::default(),
             tool: Tool::Brush,
@@ -371,6 +390,9 @@ impl ArtApp {
             kit_overlays: Vec::new(),
             use_pressure: true,
             gesture_rotate: true,
+            pen_button_tool: Some(Tool::Eraser),
+            autoclose_panels: true,
+            tap_undo: true,
             show_tools_panel: wide,
             show_layers_panel: wide,
             show_new_dialog: false,
@@ -390,6 +412,64 @@ impl ArtApp {
             thumbs_stale: true,
             thumbs_at: 0.0,
             pending: Rect::EMPTY,
+        };
+        app.load_prefs();
+        app
+    }
+
+    /// Lê os ajustes de caneta e gestos gravados (se houver).
+    fn load_prefs(&mut self) {
+        let Ok(text) = std::fs::read_to_string(prefs_path()) else {
+            return;
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+            return;
+        };
+        let flag = |k: &str| v.get(k).and_then(serde_json::Value::as_bool);
+        if let Some(b) = flag("use_pressure") {
+            self.use_pressure = b;
+        }
+        if let Some(b) = flag("gesture_rotate") {
+            self.gesture_rotate = b;
+        }
+        if let Some(b) = flag("autoclose_panels") {
+            self.autoclose_panels = b;
+        }
+        if let Some(b) = flag("tap_undo") {
+            self.tap_undo = b;
+        }
+        if let Some(name) = v.get("pen_button_tool").and_then(serde_json::Value::as_str) {
+            self.pen_button_tool = Tool::PEN_BUTTON
+                .into_iter()
+                .find(|t| format!("{t:?}") == name);
+        }
+    }
+
+    /// Grava os ajustes de caneta e gestos.
+    pub fn save_prefs(&mut self) {
+        let v = serde_json::json!({
+            "use_pressure": self.use_pressure,
+            "gesture_rotate": self.gesture_rotate,
+            "autoclose_panels": self.autoclose_panels,
+            "tap_undo": self.tap_undo,
+            "pen_button_tool": self.pen_button_tool.map(|t| format!("{t:?}")),
+        });
+        let path = prefs_path();
+        let result = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&path, v.to_string()));
+        if let Err(e) = result {
+            self.status = format!("Não foi possível gravar os ajustes: {e}");
+        }
+    }
+
+    /// Fecha os painéis flutuantes (ao começar a desenhar).
+    pub fn close_panels(&mut self) {
+        if self.autoclose_panels {
+            self.show_tools_panel = false;
+            self.show_layers_panel = false;
+            self.show_color = false;
         }
     }
 
@@ -925,6 +1005,10 @@ impl ArtApp {
             target.size = (target.size / 1.2).max(1.0);
         }
     }
+}
+
+fn prefs_path() -> std::path::PathBuf {
+    platform::data_dir().join("prefs.json")
 }
 
 fn brushes_path() -> std::path::PathBuf {
