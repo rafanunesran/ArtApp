@@ -63,12 +63,80 @@ jobs:
           path: android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
+  # Versões para computador: Windows (.zip com o .exe), Linux (.tar.gz com instalador) e macOS
+  # (.zip com o ArtApp.app, Apple Silicon e Intel).
+  desktop:
+    name: Desktop (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: ArtApp-Windows-x64.zip
+          - name: Linux
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            asset: ArtApp-Linux-x64.tar.gz
+          - name: macOS Apple Silicon
+            os: macos-14
+            target: aarch64-apple-darwin
+            asset: ArtApp-macOS-AppleSilicon.zip
+          - name: macOS Intel
+            os: macos-14
+            target: x86_64-apple-darwin
+            asset: ArtApp-macOS-Intel.zip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop-${{ matrix.target }}
+      - name: Dependências do sistema (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev
+      - name: Compilar
+        run: cargo build --release -p artapp --bin artapp --target ${{ matrix.target }}
+      - name: Empacotar (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/ArtApp | Out-Null
+          Copy-Item target/${{ matrix.target }}/release/artapp.exe dist/ArtApp/ArtApp.exe
+          Compress-Archive -Path dist/ArtApp -DestinationPath ${{ matrix.asset }}
+      - name: Empacotar (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist/ArtApp
+          cp target/${{ matrix.target }}/release/artapp packaging/linux/artapp.desktop packaging/linux/install.sh dist/ArtApp/
+          tar -C dist -czf ${{ matrix.asset }} ArtApp
+      - name: Empacotar (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          VERSION=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' android/app/build.gradle.kts)
+          APP=dist/ArtApp.app/Contents
+          mkdir -p "$APP/MacOS"
+          cp target/${{ matrix.target }}/release/artapp "$APP/MacOS/artapp"
+          sed "s/VERSION/${VERSION}/g" packaging/macos/Info.plist > "$APP/Info.plist"
+          # Assinatura ad-hoc: sem ela o macOS em Apple Silicon recusa abrir o app.
+          codesign --force --deep -s - dist/ArtApp.app
+          (cd dist && ditto -c -k --keepParent ArtApp.app ../${{ matrix.asset }})
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.target }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
   # Cada push na main que passa nos testes vira uma release pública com o APK, para que o
   # site (GitHub Pages) possa apontar para releases/latest/download/ArtApp.apk.
   release:
-    name: Release do APK
+    name: Release (APK e desktop)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [test, apk]
+    needs: [test, apk, desktop]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -78,6 +146,11 @@ jobs:
         with:
           name: artapp-apk
           path: apk
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          path: desktop
+          merge-multiple: true
       - name: Criar release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -85,8 +158,8 @@ jobs:
           VERSION=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' android/app/build.gradle.kts)
           TAG="v${VERSION}-build.${GITHUB_RUN_NUMBER}"
           cp apk/*.apk ArtApp.apk
-          gh release create "$TAG" ArtApp.apk \
+          gh release create "$TAG" ArtApp.apk desktop/* \
             --target "$GITHUB_SHA" \
             --title "ArtApp ${VERSION} (build ${GITHUB_RUN_NUMBER})" \
-            --notes "APK gerado automaticamente a partir de ${GITHUB_SHA::7}: $(git log -1 --format=%s)" \
+            --notes "APK e versões para Windows, Linux e macOS gerados automaticamente a partir de ${GITHUB_SHA::7}: $(git log -1 --format=%s)" \
             --latest

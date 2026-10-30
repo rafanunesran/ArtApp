@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=ArtApp
+Comment=Desenho raster e vetorial
+Exec=artapp
+Terminal=false
+Categories=Graphics;2DGraphics;RasterGraphics;VectorGraphics;
