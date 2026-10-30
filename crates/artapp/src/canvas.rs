@@ -15,6 +15,11 @@ use crate::app::{ArtApp, Tool, color_from_f32, color_to_f32};
 /// Um traço que começou há menos que isto quando o segundo dedo encosta é considerado parte do
 /// gesto de zoom e é desfeito.
 const GESTURE_CANCEL_SECS: f64 = 0.35;
+/// Toque de dois (desfazer) ou três dedos (refazer): todos saem antes disto e quase sem mexer.
+const TAP_MAX_SECS: f64 = 0.45;
+const TAP_MAX_MOVE: f32 = 24.0;
+/// Os painéis somem quando o traço passa disto (antes pode ser o começo de um gesto de dois dedos).
+const PANEL_CLOSE_SECS: f64 = 0.15;
 const MIN_ZOOM: f32 = 0.02;
 const MAX_ZOOM: f32 = 64.0;
 
@@ -61,6 +66,17 @@ enum ActiveKind {
     Kit(VPoint, f32),
 }
 
+/// Acompanha os dedos desde que o primeiro encostou, para reconhecer o toque de vários dedos.
+#[derive(Default)]
+struct TapGesture {
+    started: f64,
+    /// Máximo de dedos juntos na tela.
+    fingers: usize,
+    origins: HashMap<u64, Pos2>,
+    /// Quanto o dedo que mais andou se afastou de onde encostou, em pontos.
+    moved: f32,
+}
+
 struct ActiveStroke {
     kind: ActiveKind,
     touch: Option<u64>,
@@ -89,6 +105,10 @@ pub struct CanvasView {
     saw_touch: bool,
     /// Último ponto do arraste de pan (mouse ou ferramenta Mão).
     pan_from: Option<Pos2>,
+    /// Ferramenta trocada pela caneta (botão lateral ou ponta de borracha): o toque que trocou e
+    /// a ferramenta a que volta quando ele sair da tela.
+    pen_swap: Option<(u64, Tool)>,
+    tap: TapGesture,
 }
 
 impl CanvasView {
@@ -372,10 +392,20 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
                         if app.view.touches.is_empty() && !on_canvas(*pos) {
                             continue;
                         }
+                        if app.view.touches.is_empty() {
+                            app.view.tap = TapGesture {
+                                started: time,
+                                ..Default::default()
+                            };
+                        }
                         app.view.touches.insert(id, *pos);
+                        let tap = &mut app.view.tap;
+                        tap.origins.insert(id, *pos);
+                        tap.fingers = tap.fingers.max(app.view.touches.len());
                         if app.view.touches.len() >= 2 {
                             start_gesture(app, time);
                         } else if !app.view.gesturing {
+                            pen_swap(app, id);
                             tool_down(app, panel, *pos, *force, Some(id), time);
                         }
                     }
@@ -383,6 +413,10 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
                         let Some(prev) = app.view.touches.insert(id, *pos) else {
                             continue;
                         };
+                        let tap = &mut app.view.tap;
+                        if let Some(o) = tap.origins.get(&id) {
+                            tap.moved = tap.moved.max(o.distance(*pos));
+                        }
                         if app.view.gesturing {
                             continue;
                         }
@@ -412,8 +446,15 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
                                 end_stroke(app)
                             }
                         }
+                        if let Some((_, prev)) = app.view.pen_swap.filter(|(t, _)| *t == id) {
+                            app.tool = prev;
+                            app.view.pen_swap = None;
+                        }
                         if app.view.touches.is_empty() {
                             app.view.gesturing = false;
+                            if *phase == TouchPhase::End {
+                                finish_tap(app, time);
+                            }
                         }
                     }
                 }
@@ -479,6 +520,43 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
         if factor != 1.0 {
             app.view.zoom_at(panel, hover, factor);
         }
+    }
+}
+
+/// Caneta com o botão lateral apertado (ou virada na ponta de borracha): troca a ferramenta até
+/// esse toque sair da tela.
+fn pen_swap(app: &mut ArtApp, id: u64) {
+    let pen = crate::platform::pen_info(id);
+    let tool = if pen.eraser {
+        Some(Tool::Eraser)
+    } else if pen.button {
+        app.pen_button_tool
+    } else {
+        None
+    };
+    if let Some(t) = tool.filter(|t| *t != app.tool) {
+        app.view.pen_swap = Some((id, app.tool));
+        app.tool = t;
+    }
+}
+
+/// Todos os dedos saíram: um toque rápido de dois dedos desfaz, de três refaz (como no Clip
+/// Studio e no Procreate).
+fn finish_tap(app: &mut ArtApp, time: f64) {
+    let tap = std::mem::take(&mut app.view.tap);
+    if !app.tap_undo || time - tap.started > TAP_MAX_SECS || tap.moved > TAP_MAX_MOVE {
+        return;
+    }
+    match tap.fingers {
+        2 if app.doc.can_undo() => {
+            app.undo();
+            app.status = "Desfeito".into();
+        }
+        3 if app.doc.can_redo() => {
+            app.redo();
+            app.status = "Refeito".into();
+        }
+        _ => {}
     }
 }
 
@@ -719,6 +797,14 @@ fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, t
     let pt = point(app, panel, p, force, time);
     let vp = VPoint::new(pt.x, pt.y);
     let min_handle = 3.0 / app.view.zoom.max(0.01) as f64;
+    if app
+        .view
+        .stroke
+        .as_ref()
+        .is_some_and(|s| time - s.started > PANEL_CLOSE_SECS)
+    {
+        app.close_panels();
+    }
     let Some(s) = &mut app.view.stroke else {
         return;
     };
@@ -763,6 +849,7 @@ fn end_stroke(app: &mut ArtApp) {
     let Some(s) = app.view.stroke.take() else {
         return;
     };
+    app.close_panels();
     let style = app.vector_style();
     let dirty = match s.kind {
         ActiveKind::Paint(session) => session.end(&mut app.doc),
