@@ -170,10 +170,94 @@ impl Selection {
     }
 }
 
+/// Como uma seleção nova se junta à atual (Clip Studio: nova, adicionar, subtrair, interseção).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SelectMode {
+    #[default]
+    New,
+    Add,
+    Subtract,
+    Intersect,
+}
+
 impl Document {
     /// Troca a seleção (`None` desmarca).
     pub fn set_selection(&mut self, sel: Option<Selection>) {
         self.selection = sel;
+    }
+
+    /// Junta `sel` à seleção atual conforme `mode`.
+    pub fn combine_selection(&mut self, sel: Option<Selection>, mode: SelectMode) {
+        let old = self.selection.take();
+        self.selection = match (mode, old, sel) {
+            (SelectMode::New, _, new) => new,
+            (_, None, new) => new.filter(|_| mode == SelectMode::Add),
+            (SelectMode::Add, Some(old), None) => Some(old),
+            (SelectMode::Subtract, Some(old), None) => Some(old),
+            (SelectMode::Intersect, Some(_), None) => None,
+            (_, Some(old), Some(new)) => {
+                let area = match mode {
+                    SelectMode::Add => old.bounds.union(&new.bounds),
+                    _ => old.bounds,
+                }
+                .intersect(&self.bounds());
+                let a = old.mask.read_region(area);
+                let b = new.mask.read_region(area);
+                let m: Vec<f32> = a
+                    .iter()
+                    .zip(&b)
+                    .map(|(a, b)| match mode {
+                        SelectMode::Add => a.max(*b),
+                        SelectMode::Subtract => (a - b).max(0.0),
+                        _ => a.min(*b),
+                    })
+                    .collect();
+                Selection::from_mask(&m, area)
+            }
+        };
+    }
+
+    /// A seleção inteira como máscara 0..1 do tamanho da tela.
+    fn selection_full(&self) -> Option<Vec<f32>> {
+        self.selection
+            .as_ref()
+            .map(|s| s.mask.read_region(self.bounds()))
+    }
+
+    /// Expande (`px > 0`) ou contrai (`px < 0`) a seleção.
+    pub fn grow_selection(&mut self, px: f32) {
+        let Some(m) = self.selection_full() else {
+            return;
+        };
+        let (w, h) = (self.width as usize, self.height as usize);
+        let on: Vec<bool> = m.iter().map(|v| *v >= 0.5).collect();
+        let g: Vec<f32> = crate::mask::grow(&on, w, h, px)
+            .into_iter()
+            .map(|b| if b { 1.0 } else { 0.0 })
+            .collect();
+        self.selection = Selection::from_mask(&g, self.bounds());
+    }
+
+    /// Suaviza a borda da seleção (`px` de raio): pintar perto da borda fica gradual.
+    pub fn feather_selection(&mut self, px: f32) {
+        let Some(m) = self.selection_full() else {
+            return;
+        };
+        let (w, h) = (self.width as usize, self.height as usize);
+        let f = crate::mask::feather(&m, w, h, px.max(0.0).round() as usize);
+        self.selection = Selection::from_mask(&f, self.bounds());
+    }
+
+    /// Seleciona o que está pintado na camada ativa (o "converter camada em seleção").
+    pub fn select_layer_content(&mut self) {
+        let Some(layer) = self.active_layer() else {
+            return;
+        };
+        let r = self.bounds();
+        let mut px = vec![[0.0f32; 4]; r.width() as usize * r.height() as usize];
+        layer.surface.read_rgba_into(r, &mut px);
+        let m: Vec<f32> = px.iter().map(|p| p[3]).collect();
+        self.selection = Selection::from_mask(&m, r);
     }
 
     pub fn invert_selection(&mut self) {
@@ -299,5 +383,34 @@ mod tests {
         assert_eq!(doc.layers[0].surface.rgba(11, 6)[3], 1.0);
         assert!(doc.undo());
         assert_eq!(doc.layers[0].surface.rgba(1, 1)[3], 1.0);
+    }
+
+    #[test]
+    fn modes_grow_and_feather() {
+        let mut doc = Document::new(40, 40);
+        doc.set_selection(Selection::rect([0.0, 0.0], [20.0, 20.0], 40, 40));
+        doc.combine_selection(
+            Selection::rect([10.0, 10.0], [30.0, 30.0], 40, 40),
+            SelectMode::Add,
+        );
+        let s = doc.selection.as_ref().unwrap();
+        assert!(s.contains(5, 5) && s.contains(25, 25) && !s.contains(5, 25));
+        doc.combine_selection(
+            Selection::rect([0.0, 0.0], [12.0, 12.0], 40, 40),
+            SelectMode::Subtract,
+        );
+        let s = doc.selection.as_ref().unwrap();
+        assert!(!s.contains(5, 5) && s.contains(15, 5));
+        doc.set_selection(Selection::rect([10.0, 10.0], [20.0, 20.0], 40, 40));
+        doc.grow_selection(4.0);
+        assert!(doc.selection.as_ref().unwrap().contains(7, 15));
+        doc.grow_selection(-6.0);
+        assert!(!doc.selection.as_ref().unwrap().contains(11, 15));
+        doc.set_selection(Selection::rect([5.0, 5.0], [35.0, 35.0], 40, 40));
+        doc.feather_selection(4.0);
+        let s = doc.selection.as_ref().unwrap();
+        let edge = s.mask.sample_channel(5, 20, 0);
+        assert!(edge > 0.2 && edge < 0.8, "{edge}");
+        assert!(s.contains(20, 20));
     }
 }

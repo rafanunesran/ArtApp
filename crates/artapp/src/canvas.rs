@@ -15,6 +15,11 @@ use crate::app::{ArtApp, Tool, color_from_f32, color_to_f32};
 /// Um traço que começou há menos que isto quando o segundo dedo encosta é considerado parte do
 /// gesto de zoom e é desfeito.
 const GESTURE_CANCEL_SECS: f64 = 0.35;
+/// Toque de dois (desfazer) ou três dedos (refazer): todos saem antes disto e quase sem mexer.
+const TAP_MAX_SECS: f64 = 0.45;
+const TAP_MAX_MOVE: f32 = 24.0;
+/// Os painéis somem quando o traço passa disto (antes pode ser o começo de um gesto de dois dedos).
+const PANEL_CLOSE_SECS: f64 = 0.15;
 const MIN_ZOOM: f32 = 0.02;
 const MAX_ZOOM: f32 = 64.0;
 
@@ -59,6 +64,22 @@ enum ActiveKind {
     Liquify(Box<artapp_core::liquify::LiquifySession>),
     /// Uma ferramenta do VectorCraft: o último ponto, para o soltar.
     Kit(VPoint, f32),
+    /// Ferramenta Régua: arrastando uma alça (`Some`) ou criando a régua a partir de `from`.
+    Ruler {
+        handle: Option<usize>,
+        from: VPoint,
+    },
+}
+
+/// Acompanha os dedos desde que o primeiro encostou, para reconhecer o toque de vários dedos.
+#[derive(Default)]
+struct TapGesture {
+    started: f64,
+    /// Máximo de dedos juntos na tela.
+    fingers: usize,
+    origins: HashMap<u64, Pos2>,
+    /// Quanto o dedo que mais andou se afastou de onde encostou, em pontos.
+    moved: f32,
 }
 
 struct ActiveStroke {
@@ -89,6 +110,10 @@ pub struct CanvasView {
     saw_touch: bool,
     /// Último ponto do arraste de pan (mouse ou ferramenta Mão).
     pan_from: Option<Pos2>,
+    /// Ferramenta trocada pela caneta (botão lateral ou ponta de borracha): o toque que trocou e
+    /// a ferramenta a que volta quando ele sair da tela.
+    pen_swap: Option<(u64, Tool)>,
+    tap: TapGesture,
 }
 
 impl CanvasView {
@@ -246,7 +271,11 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
     } else {
         Vec::new()
     };
+    if app.show_grid {
+        draw_grid(app, &painter, panel);
+    }
     draw_overlay(app, &painter, panel);
+    draw_ruler(app, &painter, panel);
     draw_kit_overlays(app, &painter, panel);
     if app.tool == Tool::Blend
         && app.mix_kind == artapp_core::mix::MixKind::Clone
@@ -372,10 +401,20 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
                         if app.view.touches.is_empty() && !on_canvas(*pos) {
                             continue;
                         }
+                        if app.view.touches.is_empty() {
+                            app.view.tap = TapGesture {
+                                started: time,
+                                ..Default::default()
+                            };
+                        }
                         app.view.touches.insert(id, *pos);
+                        let tap = &mut app.view.tap;
+                        tap.origins.insert(id, *pos);
+                        tap.fingers = tap.fingers.max(app.view.touches.len());
                         if app.view.touches.len() >= 2 {
                             start_gesture(app, time);
                         } else if !app.view.gesturing {
+                            pen_swap(app, id);
                             tool_down(app, panel, *pos, *force, Some(id), time);
                         }
                     }
@@ -383,6 +422,10 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
                         let Some(prev) = app.view.touches.insert(id, *pos) else {
                             continue;
                         };
+                        let tap = &mut app.view.tap;
+                        if let Some(o) = tap.origins.get(&id) {
+                            tap.moved = tap.moved.max(o.distance(*pos));
+                        }
                         if app.view.gesturing {
                             continue;
                         }
@@ -412,8 +455,15 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
                                 end_stroke(app)
                             }
                         }
+                        if let Some((_, prev)) = app.view.pen_swap.filter(|(t, _)| *t == id) {
+                            app.tool = prev;
+                            app.view.pen_swap = None;
+                        }
                         if app.view.touches.is_empty() {
                             app.view.gesturing = false;
+                            if *phase == TouchPhase::End {
+                                finish_tap(app, time);
+                            }
                         }
                     }
                 }
@@ -482,6 +532,43 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
     }
 }
 
+/// Caneta com o botão lateral apertado (ou virada na ponta de borracha): troca a ferramenta até
+/// esse toque sair da tela.
+fn pen_swap(app: &mut ArtApp, id: u64) {
+    let pen = crate::platform::pen_info(id);
+    let tool = if pen.eraser {
+        Some(Tool::Eraser)
+    } else if pen.button {
+        app.pen_button_tool
+    } else {
+        None
+    };
+    if let Some(t) = tool.filter(|t| *t != app.tool) {
+        app.view.pen_swap = Some((id, app.tool));
+        app.tool = t;
+    }
+}
+
+/// Todos os dedos saíram: um toque rápido de dois dedos desfaz, de três refaz (como no Clip
+/// Studio e no Procreate).
+fn finish_tap(app: &mut ArtApp, time: f64) {
+    let tap = std::mem::take(&mut app.view.tap);
+    if !app.tap_undo || time - tap.started > TAP_MAX_SECS || tap.moved > TAP_MAX_MOVE {
+        return;
+    }
+    match tap.fingers {
+        2 if app.doc.can_undo() => {
+            app.undo();
+            app.status = "Desfeito".into();
+        }
+        3 if app.doc.can_redo() => {
+            app.redo();
+            app.status = "Refeito".into();
+        }
+        _ => {}
+    }
+}
+
 fn start_gesture(app: &mut ArtApp, time: f64) {
     app.view.gesturing = true;
     if let Some(s) = &app.view.stroke {
@@ -505,6 +592,74 @@ fn point(app: &ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, time: f64
     }
 }
 
+/// Prende o ponto do pincel, da borracha ou do misturar à régua especial, se ligada.
+fn snap_to_ruler(app: &mut ArtApp, pt: &mut StrokePoint) {
+    if !app.ruler_snap || !matches!(app.tool, Tool::Brush | Tool::Eraser | Tool::Blend) {
+        return;
+    }
+    let Some(ruler) = &app.ruler else {
+        return;
+    };
+    // A perspectiva decide o ponto de fuga depois de uns 12 pontos de tela.
+    let decide = 12.0 / f64::from(app.view.zoom.max(0.01));
+    let snap = app.ruler_live.get_or_insert_with(|| {
+        artapp_core::ruler::Snap::new(ruler, [pt.x, pt.y]).with_decide(decide)
+    });
+    let [x, y] = snap.apply(ruler, [pt.x, pt.y]);
+    pt.x = x;
+    pt.y = y;
+}
+
+/// Começa a mexer na régua: pega a alça tocada ou cria uma régua nova do tipo escolhido.
+fn ruler_down(app: &mut ArtApp, vp: VPoint, tol: f64) -> ActiveKind {
+    use artapp_core::ruler::Ruler;
+    let handle = app.ruler.as_ref().and_then(|r| {
+        r.handles()
+            .iter()
+            .position(|h| (h[0] - vp.x).hypot(h[1] - vp.y) <= tol * 1.5)
+    });
+    if handle.is_none() {
+        let p = [vp.x, vp.y];
+        app.ruler = Some(match (app.ruler_kind, app.ruler.take()) {
+            (1, _) => Ruler::Parallel { angle: 0.0 },
+            (2, _) => Ruler::Concentric { center: p },
+            // Perspectiva: cada toque fora das alças põe mais um ponto de fuga (até três).
+            (3, Some(Ruler::Perspective { mut vanishing })) => {
+                if vanishing.len() >= 3 {
+                    vanishing.remove(0);
+                }
+                vanishing.push(p);
+                Ruler::Perspective { vanishing }
+            }
+            (3, _) => Ruler::Perspective { vanishing: vec![p] },
+            _ => Ruler::Line { a: p, b: p },
+        });
+        if app.ruler_kind == 0 {
+            return ActiveKind::Ruler {
+                handle: Some(1),
+                from: vp,
+            };
+        }
+    }
+    ActiveKind::Ruler { handle, from: vp }
+}
+
+fn ruler_drag(app: &mut ArtApp, handle: Option<usize>, from: VPoint, vp: VPoint) {
+    use artapp_core::ruler::Ruler;
+    let Some(r) = &mut app.ruler else {
+        return;
+    };
+    match (handle, r) {
+        (_, Ruler::Parallel { angle }) => {
+            if from.distance(vp) > 2.0 {
+                *angle = (vp.y - from.y).atan2(vp.x - from.x);
+            }
+        }
+        (Some(i), r) => r.set_handle(i, [vp.x, vp.y]),
+        (None, _) => {}
+    }
+}
+
 fn tool_down(
     app: &mut ArtApp,
     panel: egui::Rect,
@@ -514,7 +669,9 @@ fn tool_down(
     time: f64,
 ) {
     end_stroke(app);
-    let pt = point(app, panel, p, force, time);
+    app.ruler_live = None;
+    let mut pt = point(app, panel, p, force, time);
+    snap_to_ruler(app, &mut pt);
     let (x, y) = (pt.x.floor() as i32, pt.y.floor() as i32);
     let vp = VPoint::new(pt.x, pt.y);
     let vector_layer = app.doc.active_is_vector();
@@ -592,13 +749,12 @@ fn tool_down(
                 let [r, g, b, _] = color_to_f32(app.color);
                 app.doc.vector_fill_at(vp.x, vp.y, [r, g, b])
             } else {
-                fill::flood_fill(
-                    &mut app.doc,
-                    x,
-                    y,
-                    color_to_f32(app.color),
-                    app.fill_tolerance,
-                )
+                let opts = fill::FillOptions {
+                    tolerance: app.fill_tolerance,
+                    close_gap: app.fill_close_gap,
+                    expand: app.fill_expand,
+                };
+                fill::flood_fill_with(&mut app.doc, x, y, color_to_f32(app.color), &opts)
             };
             app.invalidate(r);
             app.remember_color();
@@ -635,7 +791,7 @@ fn tool_down(
                 app.wand_all_layers,
                 app.wand_contiguous,
             );
-            app.doc.set_selection(sel);
+            app.doc.combine_selection(sel, app.select_mode);
             None
         }
         Tool::Gradient => {
@@ -687,6 +843,7 @@ fn tool_down(
             app.invalidate(r);
             Some(ActiveKind::Liquify(Box::new(session)))
         }
+        Tool::Ruler => Some(ruler_down(app, vp, tol)),
         Tool::VectorKit => {
             app.ensure_vector_layer();
             let style = app.vector_style();
@@ -716,9 +873,18 @@ fn tool_down(
 }
 
 fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, time: f64) {
-    let pt = point(app, panel, p, force, time);
+    let mut pt = point(app, panel, p, force, time);
+    snap_to_ruler(app, &mut pt);
     let vp = VPoint::new(pt.x, pt.y);
     let min_handle = 3.0 / app.view.zoom.max(0.01) as f64;
+    if app
+        .view
+        .stroke
+        .as_ref()
+        .is_some_and(|s| time - s.started > PANEL_CLOSE_SECS)
+    {
+        app.close_panels();
+    }
     let Some(s) = &mut app.view.stroke else {
         return;
     };
@@ -740,6 +906,10 @@ fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, t
         ActiveKind::Liquify(session) => {
             let r = session.add(&mut app.doc, vp.x, vp.y, pt.pressure);
             app.invalidate(r);
+        }
+        ActiveKind::Ruler { handle, from } => {
+            let (handle, from) = (*handle, *from);
+            ruler_drag(app, handle, from, vp);
         }
         ActiveKind::Kit(last, pressure) => {
             *last = vp;
@@ -763,6 +933,7 @@ fn end_stroke(app: &mut ArtApp) {
     let Some(s) = app.view.stroke.take() else {
         return;
     };
+    app.close_panels();
     let style = app.vector_style();
     let dirty = match s.kind {
         ActiveKind::Paint(session) => session.end(&mut app.doc),
@@ -803,6 +974,7 @@ fn end_stroke(app: &mut ArtApp) {
         ActiveKind::BezierHandle => Rect::EMPTY,
         ActiveKind::Kit(last, pressure) => kit_pointer(app, PointerKind::Up, last, pressure),
         ActiveKind::Liquify(session) => session.end(),
+        ActiveKind::Ruler { .. } => return,
         ActiveKind::Marquee { tool, from, to } => {
             let (w, h) = (app.doc.width, app.doc.height);
             let (a, b) = ([from.x, from.y], [to.x, to.y]);
@@ -814,16 +986,13 @@ fn end_stroke(app: &mut ArtApp) {
             } else {
                 artapp_core::Selection::rect(a, b, w, h)
             };
-            app.doc.set_selection(sel);
+            app.doc.combine_selection(sel, app.select_mode);
             Rect::EMPTY
         }
         ActiveKind::Lasso(points) => {
             let pts: Vec<[f64; 2]> = points.iter().map(|p| [p.x, p.y]).collect();
-            app.doc.set_selection(artapp_core::Selection::polygon(
-                &pts,
-                app.doc.width,
-                app.doc.height,
-            ));
+            let sel = artapp_core::Selection::polygon(&pts, app.doc.width, app.doc.height);
+            app.doc.combine_selection(sel, app.select_mode);
             Rect::EMPTY
         }
         ActiveKind::MoveLayer { from, to } => {
@@ -875,6 +1044,120 @@ fn cancel_stroke(app: &mut ArtApp) {
             app.kit_key(artapp_core::vectorkit::ToolKey::Escape);
         }
         _ => {}
+    }
+}
+
+/// A régua especial: linhas-guia em roxo e, com a ferramenta Régua, as alças.
+fn draw_ruler(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
+    use artapp_core::ruler::Ruler;
+    let Some(ruler) = &app.ruler else {
+        return;
+    };
+    let editing = app.tool == Tool::Ruler;
+    if !editing && !app.ruler_snap {
+        return;
+    }
+    let st = egui::Stroke::new(1.2, Color32::from_rgba_unmultiplied(170, 90, 255, 200));
+    let faint = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(170, 90, 255, 90));
+    let s = |x: f64, y: f64| app.view.doc_to_screen(panel, x as f32, y as f32);
+    // Uma reta "infinita": longa o bastante para cruzar a tela toda.
+    let reach = f64::from(app.doc.width.max(app.doc.height)) * 4.0;
+    let line = |o: [f64; 2], dx: f64, dy: f64, stroke: egui::Stroke| {
+        painter.line_segment(
+            [
+                s(o[0] - dx * reach, o[1] - dy * reach),
+                s(o[0] + dx * reach, o[1] + dy * reach),
+            ],
+            stroke,
+        );
+    };
+    let (w, h) = (f64::from(app.doc.width), f64::from(app.doc.height));
+    match ruler {
+        Ruler::Line { a, b } => {
+            let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+            let l = dx.hypot(dy);
+            if l > 1e-6 {
+                line(*a, dx / l, dy / l, st);
+            }
+        }
+        Ruler::Parallel { angle } => {
+            let (dy, dx) = angle.sin_cos();
+            let step = w.max(h) / 12.0;
+            for i in -12..=12 {
+                let o = [
+                    w / 2.0 - dy * step * i as f64,
+                    h / 2.0 + dx * step * i as f64,
+                ];
+                line(o, dx, dy, if i == 0 { st } else { faint });
+            }
+        }
+        Ruler::Concentric { center } => {
+            let c = s(center[0], center[1]);
+            let step = w.max(h) / 10.0 * f64::from(app.view.zoom);
+            for i in 1..=10 {
+                painter.circle_stroke(c, (step * i as f64) as f32, faint);
+            }
+        }
+        Ruler::Perspective { vanishing } => {
+            for v in vanishing {
+                for i in 0..24 {
+                    let (dy, dx) = (i as f64 / 24.0 * std::f64::consts::PI).sin_cos();
+                    line(*v, dx, dy, faint);
+                }
+            }
+        }
+    }
+    if editing {
+        for [x, y] in ruler.handles() {
+            let c = s(x, y);
+            painter.circle_filled(c, 7.0, Color32::WHITE);
+            painter.circle_stroke(
+                c,
+                7.0,
+                egui::Stroke::new(2.0, Color32::from_rgb(170, 90, 255)),
+            );
+        }
+    }
+}
+
+/// Grade de `grid_size` pixels do documento, com uma linha mais forte a cada quatro.
+fn draw_grid(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
+    let (w, h) = (app.doc.width as f32, app.doc.height as f32);
+    let step = app.grid_size.max(2.0);
+    // Linhas muito juntas na tela viram ruído: pula de 2 em 2 até ficarem a 6 px ou mais.
+    let mut skip = 1usize;
+    while step * skip as f32 * app.view.zoom < 6.0 {
+        skip *= 2;
+    }
+    let thin = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(60, 140, 255, 60));
+    let bold = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(60, 140, 255, 130));
+    let mut i = 0usize;
+    let mut x = 0.0;
+    while x <= w {
+        let st = if i.is_multiple_of(4) { bold } else { thin };
+        painter.line_segment(
+            [
+                app.view.doc_to_screen(panel, x, 0.0),
+                app.view.doc_to_screen(panel, x, h),
+            ],
+            st,
+        );
+        i += skip;
+        x = i as f32 * step;
+    }
+    i = 0;
+    let mut y = 0.0;
+    while y <= h {
+        let st = if i.is_multiple_of(4) { bold } else { thin };
+        painter.line_segment(
+            [
+                app.view.doc_to_screen(panel, 0.0, y),
+                app.view.doc_to_screen(panel, w, y),
+            ],
+            st,
+        );
+        i += skip;
+        y = i as f32 * step;
     }
 }
 
@@ -1256,4 +1539,53 @@ fn ants(painter: &egui::Painter, pts: &[Pos2]) {
         5.0,
         5.0,
     ));
+}
+
+/// Navegador: miniatura do desenho com o retângulo da vista. Tocar ou arrastar leva a vista
+/// para aquele ponto. `bottom_right` é o canto onde o painel encosta.
+pub fn navigator(app: &mut ArtApp, ctx: &egui::Context, bottom_right: Pos2) {
+    let Some(tex) = app.view.texture.as_ref().map(|(t, _)| t.id()) else {
+        return;
+    };
+    let (w, h) = (app.doc.width.max(1) as f32, app.doc.height.max(1) as f32);
+    let scale = 170.0 / w.max(h);
+    let size = egui::vec2(w * scale, h * scale);
+    let frame = size + Vec2::splat(26.0);
+    let panel = app.canvas_rect;
+    egui::Area::new(egui::Id::unique("navigator"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(bottom_right - frame)
+        .show(ctx, |ui| {
+            crate::theme::panel_frame().show(ui, |ui| {
+                let (rect, resp) = ui.allocate_exact_size(size, Sense::click_and_drag());
+                let painter = ui.painter_at(rect);
+                painter.rect_filled(rect, 0.0, Color32::from_gray(185));
+                let uv = egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+                painter.image(tex, rect, uv, Color32::WHITE);
+                // Os cantos da vista, levados para a miniatura.
+                let view: Vec<Pos2> = [
+                    panel.left_top(),
+                    panel.right_top(),
+                    panel.right_bottom(),
+                    panel.left_bottom(),
+                ]
+                .into_iter()
+                .map(|p| {
+                    let (x, y) = app.view.to_canvas(panel, p);
+                    rect.min + egui::vec2(x as f32, y as f32) * scale
+                })
+                .collect();
+                painter.add(egui::Shape::closed_line(
+                    view,
+                    egui::Stroke::new(1.5, Color32::from_rgb(255, 70, 70)),
+                ));
+                if let Some(p) = resp.interact_pointer_pos()
+                    && (resp.dragged() || resp.clicked())
+                {
+                    let d = (p - rect.min) / scale;
+                    app.view
+                        .pin(panel, (d.x as f64, d.y as f64), panel.center());
+                }
+            });
+        });
 }

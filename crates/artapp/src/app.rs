@@ -42,6 +42,8 @@ pub enum Tool {
     Liquify,
     /// Todas as ferramentas do VectorCraft (a escolhida fica em `ArtApp::kit_tool`).
     VectorKit,
+    /// Réguas especiais: cria e ajusta a régua em que o pincel gruda.
+    Ruler,
 }
 
 impl Tool {
@@ -57,8 +59,9 @@ impl Tool {
         Tool::Hand,
     ];
     /// Mover camada e seleção, como o grupo "Operação/Seleção" do Clip Studio.
-    pub const SELECTION: [Tool; 5] = [
+    pub const SELECTION: [Tool; 6] = [
         Tool::MoveLayer,
+        Tool::Ruler,
         Tool::SelectRect,
         Tool::SelectEllipse,
         Tool::Lasso,
@@ -73,6 +76,19 @@ impl Tool {
         Tool::Line,
         Tool::Rectangle,
         Tool::Ellipse,
+    ];
+
+    /// O que o botão lateral da caneta pode virar (ferramentas sem estado pela metade).
+    pub const PEN_BUTTON: [Tool; 9] = [
+        Tool::Eraser,
+        Tool::Eyedropper,
+        Tool::Hand,
+        Tool::Blend,
+        Tool::Brush,
+        Tool::Fill,
+        Tool::Lasso,
+        Tool::SelectRect,
+        Tool::MoveLayer,
     ];
 
     pub fn label(self) -> &'static str {
@@ -97,6 +113,7 @@ impl Tool {
             Tool::Ellipse => "Elipse",
             Tool::VectorKit => "Vetor pro",
             Tool::Liquify => "Liquefazer",
+            Tool::Ruler => "Régua",
         }
     }
 
@@ -123,6 +140,7 @@ impl Tool {
             Tool::Ellipse => icon::CIRCLE,
             Tool::VectorKit => icon::SPLINE_POINTER,
             Tool::Liquify => icon::SPLINE,
+            Tool::Ruler => icon::RULER,
         }
     }
 
@@ -169,6 +187,7 @@ impl Tool {
             Tool::Ellipse => egui::Key::O,
             Tool::VectorKit => egui::Key::Y,
             Tool::Liquify => egui::Key::Q,
+            Tool::Ruler => egui::Key::R,
         }
     }
 }
@@ -214,6 +233,30 @@ pub struct ArtApp {
     pub transparent: bool,
     pub recent_colors: Vec<Color32>,
     pub fill_tolerance: f32,
+    /// Balde: fechar lacunas e expandir área, em pixels.
+    pub fill_close_gap: f32,
+    pub fill_expand: f32,
+    /// Como uma seleção nova se junta à atual.
+    pub select_mode: artapp_core::selection::SelectMode,
+    /// Quanto expandir/contrair/suavizar a seleção (px).
+    pub select_amount: f32,
+    /// Área de transferência interna (recortar/copiar/colar).
+    pub clipboard: Option<artapp_core::edit::Clip>,
+    /// Grade por cima da tela (Visualizar › Grade).
+    pub show_grid: bool,
+    /// Painel Navegador (miniatura com a vista).
+    pub show_navigator: bool,
+    /// Estado do painel de cor (aba, HSV, conjuntos, cor intermediária).
+    pub color_state: crate::color_panel::ColorState,
+    pub grid_size: f32,
+    /// Régua especial atual (só uma, como a régua ativa do Clip Studio).
+    pub ruler: Option<artapp_core::ruler::Ruler>,
+    /// Que régua a ferramenta Régua cria: 0 reta, 1 paralelas, 2 concêntrica, 3 perspectiva.
+    pub ruler_kind: usize,
+    /// O pincel gruda na régua.
+    pub ruler_snap: bool,
+    /// O traço em andamento preso à régua.
+    pub ruler_live: Option<artapp_core::ruler::Snap>,
     /// Degradê: forma e se termina na secundária (senão, em transparente).
     pub gradient_shape: artapp_core::edit::GradientShape,
     pub gradient_to_sub: bool,
@@ -235,6 +278,12 @@ pub struct ArtApp {
     pub use_pressure: bool,
     /// Girar a vista com dois dedos (além de zoom e mover).
     pub gesture_rotate: bool,
+    /// Ferramenta usada enquanto o botão lateral da caneta fica apertado (`None` = desligado).
+    pub pen_button_tool: Option<Tool>,
+    /// Fecha os painéis e o seletor de cor ao começar a desenhar.
+    pub autoclose_panels: bool,
+    /// Toque rápido com dois dedos desfaz; com três, refaz.
+    pub tap_undo: bool,
     pub show_tools_panel: bool,
     pub show_layers_panel: bool,
     pub show_new_dialog: bool,
@@ -276,7 +325,7 @@ impl ArtApp {
             .map(|b| b.settings.clone())
             .unwrap_or_default();
         let wide = cc.egui_ctx.content_rect().width() > 900.0;
-        Self {
+        let mut app = Self {
             doc: Document::new(1536, 2048),
             view: CanvasView::default(),
             tool: Tool::Brush,
@@ -317,6 +366,19 @@ impl ArtApp {
                 Color32::from_rgb(250, 200, 40),
             ],
             fill_tolerance: 0.15,
+            fill_close_gap: 0.0,
+            fill_expand: 0.0,
+            select_mode: artapp_core::selection::SelectMode::New,
+            select_amount: 4.0,
+            clipboard: None,
+            show_grid: false,
+            show_navigator: false,
+            color_state: Default::default(),
+            grid_size: 64.0,
+            ruler: None,
+            ruler_kind: 0,
+            ruler_snap: true,
+            ruler_live: None,
             gradient_shape: artapp_core::edit::GradientShape::Linear,
             gradient_to_sub: true,
             wand_tolerance: 0.1,
@@ -330,6 +392,9 @@ impl ArtApp {
             kit_overlays: Vec::new(),
             use_pressure: true,
             gesture_rotate: true,
+            pen_button_tool: Some(Tool::Eraser),
+            autoclose_panels: true,
+            tap_undo: true,
             show_tools_panel: wide,
             show_layers_panel: wide,
             show_new_dialog: false,
@@ -350,6 +415,64 @@ impl ArtApp {
             thumbs_at: 0.0,
             pending: Rect::EMPTY,
             projects: crate::projects::Projects::default(),
+        };
+        app.load_prefs();
+        app
+    }
+
+    /// Lê os ajustes de caneta e gestos gravados (se houver).
+    fn load_prefs(&mut self) {
+        let Ok(text) = std::fs::read_to_string(prefs_path()) else {
+            return;
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+            return;
+        };
+        let flag = |k: &str| v.get(k).and_then(serde_json::Value::as_bool);
+        if let Some(b) = flag("use_pressure") {
+            self.use_pressure = b;
+        }
+        if let Some(b) = flag("gesture_rotate") {
+            self.gesture_rotate = b;
+        }
+        if let Some(b) = flag("autoclose_panels") {
+            self.autoclose_panels = b;
+        }
+        if let Some(b) = flag("tap_undo") {
+            self.tap_undo = b;
+        }
+        if let Some(name) = v.get("pen_button_tool").and_then(serde_json::Value::as_str) {
+            self.pen_button_tool = Tool::PEN_BUTTON
+                .into_iter()
+                .find(|t| format!("{t:?}") == name);
+        }
+    }
+
+    /// Grava os ajustes de caneta e gestos.
+    pub fn save_prefs(&mut self) {
+        let v = serde_json::json!({
+            "use_pressure": self.use_pressure,
+            "gesture_rotate": self.gesture_rotate,
+            "autoclose_panels": self.autoclose_panels,
+            "tap_undo": self.tap_undo,
+            "pen_button_tool": self.pen_button_tool.map(|t| format!("{t:?}")),
+        });
+        let path = prefs_path();
+        let result = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&path, v.to_string()));
+        if let Err(e) = result {
+            self.status = format!("Não foi possível gravar os ajustes: {e}");
+        }
+    }
+
+    /// Fecha os painéis flutuantes (ao começar a desenhar).
+    pub fn close_panels(&mut self) {
+        if self.autoclose_panels {
+            self.show_tools_panel = false;
+            self.show_layers_panel = false;
+            self.show_color = false;
         }
     }
 
@@ -493,6 +616,49 @@ impl ArtApp {
 
     pub fn invert_selection(&mut self) {
         self.doc.invert_selection();
+    }
+
+    pub fn copy(&mut self) {
+        match self.doc.copy_pixels() {
+            Some(c) => {
+                self.clipboard = Some(c);
+                self.status = "Copiado.".into();
+            }
+            None => self.status = "Nada para copiar na camada ativa.".into(),
+        }
+    }
+
+    pub fn cut(&mut self) {
+        match self.doc.cut_pixels() {
+            Some((c, dirty)) => {
+                self.clipboard = Some(c);
+                self.invalidate(dirty);
+            }
+            None => self.status = "Nada para recortar na camada ativa.".into(),
+        }
+    }
+
+    /// Cola numa camada nova e já deixa a ferramenta de mover pronta.
+    pub fn paste(&mut self) {
+        let Some(clip) = self.clipboard.clone() else {
+            self.status = "A área de transferência está vazia.".into();
+            return;
+        };
+        let r = self.doc.paste_layer(&clip);
+        self.invalidate(r);
+        self.set_tool(Tool::MoveLayer);
+    }
+
+    pub fn line_to_color(&mut self) {
+        let [r, g, b, _] = color_to_f32(self.color);
+        let d = self.doc.line_to_color([r, g, b]);
+        self.invalidate(d);
+    }
+
+    pub fn brightness_to_opacity(&mut self) {
+        let [r, g, b, _] = color_to_f32(self.color);
+        let d = self.doc.brightness_to_opacity([r, g, b]);
+        self.invalidate(d);
     }
 
     pub fn clear_selection(&mut self) {
@@ -771,6 +937,24 @@ impl ArtApp {
             )
         });
         // Atalhos do Clip Studio para cor e seleção.
+        // O egui entrega Ctrl+C/X/V como eventos próprios, não como teclas.
+        let (copy, cut, paste) = ctx.input(|i| {
+            let has = |f: fn(&egui::Event) -> bool| i.events.iter().any(f);
+            (
+                has(|e| matches!(e, egui::Event::Copy)),
+                has(|e| matches!(e, egui::Event::Cut)),
+                has(|e| matches!(e, egui::Event::Paste(_))),
+            )
+        });
+        if copy {
+            self.copy();
+        }
+        if cut {
+            self.cut();
+        }
+        if paste {
+            self.paste();
+        }
         let (swap, deselect, invert, all, clear) = ctx.input_mut(|i| {
             (
                 i.consume_key(egui::Modifiers::NONE, egui::Key::X),
@@ -845,6 +1029,10 @@ impl ArtApp {
             target.size = (target.size / 1.2).max(1.0);
         }
     }
+}
+
+fn prefs_path() -> std::path::PathBuf {
+    platform::data_dir().join("prefs.json")
 }
 
 fn brushes_path() -> std::path::PathBuf {
@@ -937,6 +1125,9 @@ impl eframe::App for ArtApp {
         }
         if self.doc.selection.is_some() {
             panels::selection_launcher(self, &ctx, canvas);
+        }
+        if self.show_navigator {
+            panels::navigator(self, &ctx, canvas, portrait);
         }
         panels::toast(self, &ctx, canvas, 0.0);
         crate::dialogs::show(self, &ctx);

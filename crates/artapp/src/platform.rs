@@ -306,3 +306,26 @@ mod android_files {
         })
     }
 }
+
+/// O que se sabe da caneta que fez um toque.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PenInfo {
+    /// A ponta de borracha (ou a caneta virada).
+    pub eraser: bool,
+    /// O botão lateral apertado.
+    pub button: bool,
+}
+
+/// A caneta do toque `id`. No Android vem da cópia corrigida do winit (`third_party/winit`); no
+/// desktop a caneta chega como mouse e isto fica vazio.
+pub fn pen_info(id: u64) -> PenInfo {
+    #[cfg(target_os = "android")]
+    if let Some(p) = winit::platform::android::stylus::pointer_info(id) {
+        return PenInfo {
+            eraser: p.eraser,
+            button: p.button,
+        };
+    }
+    let _ = id;
+    PenInfo::default()
+}

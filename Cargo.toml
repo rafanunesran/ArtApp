@@ -60,6 +60,8 @@ codegen-units = 4
 # Ver third_party/epaint/ARTAPP-PATCH.md.
 [patch.crates-io]
 epaint = { path = "third_party/epaint" }
+# Ver third_party/winit/ARTAPP-PATCH.md: expõe o botão lateral e a borracha da caneta no Android.
+winit = { path = "third_party/winit" }
 hayro-syntax = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
 hayro-interpret = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
 hayro-jbig2 = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
