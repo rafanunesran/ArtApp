@@ -42,6 +42,8 @@ pub enum Tool {
     Liquify,
     /// Todas as ferramentas do VectorCraft (a escolhida fica em `ArtApp::kit_tool`).
     VectorKit,
+    /// Réguas especiais: cria e ajusta a régua em que o pincel gruda.
+    Ruler,
 }
 
 impl Tool {
@@ -57,8 +59,9 @@ impl Tool {
         Tool::Hand,
     ];
     /// Mover camada e seleção, como o grupo "Operação/Seleção" do Clip Studio.
-    pub const SELECTION: [Tool; 5] = [
+    pub const SELECTION: [Tool; 6] = [
         Tool::MoveLayer,
+        Tool::Ruler,
         Tool::SelectRect,
         Tool::SelectEllipse,
         Tool::Lasso,
@@ -73,6 +76,19 @@ impl Tool {
         Tool::Line,
         Tool::Rectangle,
         Tool::Ellipse,
+    ];
+
+    /// O que o botão lateral da caneta pode virar (ferramentas sem estado pela metade).
+    pub const PEN_BUTTON: [Tool; 9] = [
+        Tool::Eraser,
+        Tool::Eyedropper,
+        Tool::Hand,
+        Tool::Blend,
+        Tool::Brush,
+        Tool::Fill,
+        Tool::Lasso,
+        Tool::SelectRect,
+        Tool::MoveLayer,
     ];
 
     pub fn label(self) -> &'static str {
@@ -97,6 +113,7 @@ impl Tool {
             Tool::Ellipse => "Elipse",
             Tool::VectorKit => "Vetor pro",
             Tool::Liquify => "Liquefazer",
+            Tool::Ruler => "Régua",
         }
     }
 
@@ -123,6 +140,7 @@ impl Tool {
             Tool::Ellipse => icon::CIRCLE,
             Tool::VectorKit => icon::SPLINE_POINTER,
             Tool::Liquify => icon::SPLINE,
+            Tool::Ruler => icon::RULER,
         }
     }
 
@@ -169,6 +187,7 @@ impl Tool {
             Tool::Ellipse => egui::Key::O,
             Tool::VectorKit => egui::Key::Y,
             Tool::Liquify => egui::Key::Q,
+            Tool::Ruler => egui::Key::R,
         }
     }
 }
@@ -225,7 +244,19 @@ pub struct ArtApp {
     pub clipboard: Option<artapp_core::edit::Clip>,
     /// Grade por cima da tela (Visualizar › Grade).
     pub show_grid: bool,
+    /// Painel Navegador (miniatura com a vista).
+    pub show_navigator: bool,
+    /// Estado do painel de cor (aba, HSV, conjuntos, cor intermediária).
+    pub color_state: crate::color_panel::ColorState,
     pub grid_size: f32,
+    /// Régua especial atual (só uma, como a régua ativa do Clip Studio).
+    pub ruler: Option<artapp_core::ruler::Ruler>,
+    /// Que régua a ferramenta Régua cria: 0 reta, 1 paralelas, 2 concêntrica, 3 perspectiva.
+    pub ruler_kind: usize,
+    /// O pincel gruda na régua.
+    pub ruler_snap: bool,
+    /// O traço em andamento preso à régua.
+    pub ruler_live: Option<artapp_core::ruler::Snap>,
     /// Degradê: forma e se termina na secundária (senão, em transparente).
     pub gradient_shape: artapp_core::edit::GradientShape,
     pub gradient_to_sub: bool,
@@ -247,8 +278,16 @@ pub struct ArtApp {
     pub use_pressure: bool,
     /// Girar a vista com dois dedos (além de zoom e mover).
     pub gesture_rotate: bool,
+    /// Ferramenta usada enquanto o botão lateral da caneta fica apertado (`None` = desligado).
+    pub pen_button_tool: Option<Tool>,
+    /// Fecha os painéis e o seletor de cor ao começar a desenhar.
+    pub autoclose_panels: bool,
+    /// Toque rápido com dois dedos desfaz; com três, refaz.
+    pub tap_undo: bool,
     pub show_tools_panel: bool,
     pub show_layers_panel: bool,
+    /// Painel do pincel, camadas e cor no quadro anterior, para saber qual acabou de abrir.
+    panels_before: [bool; 3],
     pub show_new_dialog: bool,
     /// Mensagem curta na barra de baixo (ex.: onde a imagem foi salva).
     pub status: String,
@@ -285,8 +324,10 @@ impl ArtApp {
             .first()
             .map(|b| b.settings.clone())
             .unwrap_or_default();
-        let wide = cc.egui_ctx.content_rect().width() > 900.0;
-        Self {
+        // No Android o tamanho ainda não está em pontos ao criar o app (um celular parecia "largo"
+        // e abria com os painéis por cima do desenho): lá eles começam fechados.
+        let wide = !platform::TOUCH_FIRST && cc.egui_ctx.content_rect().width() > 900.0;
+        let mut app = Self {
             doc: Document::new(1536, 2048),
             view: CanvasView::default(),
             tool: Tool::Brush,
@@ -333,7 +374,13 @@ impl ArtApp {
             select_amount: 4.0,
             clipboard: None,
             show_grid: false,
+            show_navigator: false,
+            color_state: Default::default(),
             grid_size: 64.0,
+            ruler: None,
+            ruler_kind: 0,
+            ruler_snap: true,
+            ruler_live: None,
             gradient_shape: artapp_core::edit::GradientShape::Linear,
             gradient_to_sub: true,
             wand_tolerance: 0.1,
@@ -347,8 +394,12 @@ impl ArtApp {
             kit_overlays: Vec::new(),
             use_pressure: true,
             gesture_rotate: true,
+            pen_button_tool: Some(Tool::Eraser),
+            autoclose_panels: true,
+            tap_undo: true,
             show_tools_panel: wide,
             show_layers_panel: wide,
+            panels_before: [false; 3],
             show_new_dialog: false,
             status: String::new(),
             vector_stroke: true,
@@ -366,6 +417,64 @@ impl ArtApp {
             thumbs_stale: true,
             thumbs_at: 0.0,
             pending: Rect::EMPTY,
+        };
+        app.load_prefs();
+        app
+    }
+
+    /// Lê os ajustes de caneta e gestos gravados (se houver).
+    fn load_prefs(&mut self) {
+        let Ok(text) = std::fs::read_to_string(prefs_path()) else {
+            return;
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+            return;
+        };
+        let flag = |k: &str| v.get(k).and_then(serde_json::Value::as_bool);
+        if let Some(b) = flag("use_pressure") {
+            self.use_pressure = b;
+        }
+        if let Some(b) = flag("gesture_rotate") {
+            self.gesture_rotate = b;
+        }
+        if let Some(b) = flag("autoclose_panels") {
+            self.autoclose_panels = b;
+        }
+        if let Some(b) = flag("tap_undo") {
+            self.tap_undo = b;
+        }
+        if let Some(name) = v.get("pen_button_tool").and_then(serde_json::Value::as_str) {
+            self.pen_button_tool = Tool::PEN_BUTTON
+                .into_iter()
+                .find(|t| format!("{t:?}") == name);
+        }
+    }
+
+    /// Grava os ajustes de caneta e gestos.
+    pub fn save_prefs(&mut self) {
+        let v = serde_json::json!({
+            "use_pressure": self.use_pressure,
+            "gesture_rotate": self.gesture_rotate,
+            "autoclose_panels": self.autoclose_panels,
+            "tap_undo": self.tap_undo,
+            "pen_button_tool": self.pen_button_tool.map(|t| format!("{t:?}")),
+        });
+        let path = prefs_path();
+        let result = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&path, v.to_string()));
+        if let Err(e) = result {
+            self.status = format!("Não foi possível gravar os ajustes: {e}");
+        }
+    }
+
+    /// Fecha os painéis flutuantes (ao começar a desenhar).
+    pub fn close_panels(&mut self) {
+        if self.autoclose_panels {
+            self.show_tools_panel = false;
+            self.show_layers_panel = false;
+            self.show_color = false;
         }
     }
 
@@ -921,6 +1030,33 @@ impl ArtApp {
             self.show_tools_panel = false;
         }
     }
+
+    /// No celular só cabe um painel de cada vez: o que acabou de abrir fecha os outros.
+    fn one_panel_at_a_time(&mut self) {
+        let now = [
+            self.show_tools_panel,
+            self.show_layers_panel,
+            self.show_color,
+        ];
+        let keep = (0..3)
+            .rev()
+            .find(|&i| now[i] && !self.panels_before[i])
+            .or_else(|| (0..3).rev().find(|&i| now[i]));
+        if let Some(keep) = keep {
+            self.show_tools_panel = keep == 0;
+            self.show_layers_panel = keep == 1;
+            self.show_color = keep == 2;
+        }
+        self.panels_before = [
+            self.show_tools_panel,
+            self.show_layers_panel,
+            self.show_color,
+        ];
+    }
+}
+
+fn prefs_path() -> std::path::PathBuf {
+    platform::data_dir().join("prefs.json")
 }
 
 fn brushes_path() -> std::path::PathBuf {
@@ -980,9 +1116,8 @@ impl eframe::App for ArtApp {
         }
         self.back_gesture(&ctx);
         let portrait = panels::is_portrait(&ctx);
-        if panels::is_compact(&ctx) && self.show_tools_panel && self.show_layers_panel {
-            // No celular só cabe um painel de cada vez.
-            self.show_tools_panel = false;
+        if panels::is_compact(&ctx) {
+            self.one_panel_at_a_time();
         }
         let bar = egui::Frame::new()
             .fill(crate::theme::color::SURFACE)
@@ -1013,6 +1148,9 @@ impl eframe::App for ArtApp {
         }
         if self.doc.selection.is_some() {
             panels::selection_launcher(self, &ctx, canvas);
+        }
+        if self.show_navigator {
+            panels::navigator(self, &ctx, canvas, portrait);
         }
         panels::toast(self, &ctx, canvas, 0.0);
         crate::dialogs::show(self, &ctx);

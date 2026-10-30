@@ -135,6 +135,47 @@ fn view_buttons(app: &mut ArtApp, ui: &mut egui::Ui) {
     }
 }
 
+/// Ajustes de caneta e gestos (gravados entre as sessões).
+fn pen_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
+    ui.separator();
+    ui.label(
+        RichText::new("Caneta e gestos")
+            .size(13.0)
+            .color(color::TEXT_MUTED),
+    );
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label("Botão da caneta");
+        let name = app.pen_button_tool.map_or("Nada", Tool::label);
+        egui::ComboBox::from_id_salt("pen_button_tool")
+            .selected_text(name)
+            .show_ui(ui, |ui| {
+                for t in Tool::PEN_BUTTON {
+                    changed |= ui
+                        .selectable_value(&mut app.pen_button_tool, Some(t), t.label())
+                        .changed();
+                }
+                changed |= ui
+                    .selectable_value(&mut app.pen_button_tool, None, "Nada")
+                    .changed();
+            });
+    });
+    for (value, text) in [
+        (&mut app.gesture_rotate, "Girar com dois dedos"),
+        (&mut app.tap_undo, "2 dedos desfaz, 3 refaz"),
+        (&mut app.autoclose_panels, "Fechar painéis ao desenhar"),
+    ] {
+        changed |= ui
+            .add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
+                theme::switch(ui, value, text)
+            })
+            .changed();
+    }
+    if changed {
+        app.save_prefs();
+    }
+}
+
 fn file_menu(app: &mut ArtApp, ui: &mut egui::Ui) {
     // O menu cresceu: rola quando não cabe na altura da tela.
     let max_h = (ui.ctx().content_rect().height() - 80.0).max(200.0);
@@ -178,7 +219,7 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         ui.close();
     }
     ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
-        theme::switch(ui, &mut app.gesture_rotate, "Girar com dois dedos")
+        theme::switch(ui, &mut app.show_navigator, "Navegador")
     });
     ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
         theme::switch(ui, &mut app.show_grid, "Grade")
@@ -191,6 +232,7 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
                 .text("Grade"),
         );
     }
+    pen_settings(app, ui);
     ui.separator();
     if item(ui, icon::SQUARE_DASHED, "Selecionar tudo").clicked() {
         app.select_all();
@@ -262,7 +304,15 @@ fn tool_buttons(app: &mut ArtApp, ui: &mut egui::Ui, vertical: bool, cols: usize
         let mut buttons = |ui: &mut egui::Ui| {
             for &t in group {
                 if icon_button(ui, t.icon(), app.tool == t, t.label()).clicked() {
-                    app.set_tool(t);
+                    if app.tool == t {
+                        // Tocar de novo na ferramenta escolhida abre (ou fecha) os ajustes dela.
+                        app.show_tools_panel = !app.show_tools_panel;
+                        if app.show_tools_panel && is_compact(ui.ctx()) {
+                            app.show_layers_panel = false;
+                        }
+                    } else {
+                        app.set_tool(t);
+                    }
                 }
             }
         };
@@ -531,6 +581,8 @@ pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
                 mix_settings(app, ui);
             } else if app.tool == Tool::Liquify {
                 liquify_settings(app, ui);
+            } else if app.tool == Tool::Ruler {
+                ruler_settings(app, ui);
             } else if app.tool == Tool::Gradient {
                 gradient_settings(app, ui);
             } else if app.tool == Tool::MagicWand {
@@ -739,6 +791,54 @@ fn kit_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
                 }
             }
         });
+    }
+}
+
+/// Navegador no canto de baixo à direita, ao lado do painel de camadas se ele estiver aberto.
+pub fn navigator(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, portrait: bool) {
+    let corner = if portrait {
+        // Em retrato os painéis abrem embaixo: o navegador fica no alto.
+        Pos2::new(canvas.max.x - GAP, canvas.min.y + GAP + 196.0)
+    } else if app.show_layers_panel {
+        Pos2::new(canvas.max.x - 2.0 * GAP - PANEL_W, canvas.max.y - GAP)
+    } else {
+        Pos2::new(canvas.max.x - GAP, canvas.max.y - GAP)
+    };
+    crate::canvas::navigator(app, ctx, corner);
+}
+
+fn ruler_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
+    section(ui, "Tipo de régua");
+    ui.horizontal_wrapped(|ui| {
+        for (i, name) in ["Reta", "Paralelas", "Concêntrica", "Perspectiva"]
+            .into_iter()
+            .enumerate()
+        {
+            ui.selectable_value(&mut app.ruler_kind, i, name);
+        }
+    });
+    ui.label(
+        RichText::new(match app.ruler_kind {
+            0 => "Arraste para traçar a reta. Arraste as pontas para ajustar.",
+            1 => "Arraste na direção das linhas paralelas.",
+            2 => "Toque no centro dos círculos. Arraste o centro para mover.",
+            _ => "Cada toque põe um ponto de fuga (até três). Arraste para mover.",
+        })
+        .size(12.0)
+        .color(color::TEXT_MUTED),
+    );
+    section(ui, "Uso");
+    ui.checkbox(&mut app.ruler_snap, "Grudar o pincel na régua");
+    ui.label(
+        RichText::new("Vale para pincel, borracha e misturar. Desligue para desenhar livre sem perder a régua.")
+            .size(12.0)
+            .color(color::TEXT_MUTED),
+    );
+    if ui
+        .add_enabled(app.ruler.is_some(), egui::Button::new("Apagar régua"))
+        .clicked()
+    {
+        app.ruler = None;
     }
 }
 
@@ -1012,7 +1112,10 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
     {
         s.enabled = s.amount > 0.0;
     }
-    theme::switch(ui, use_pressure, "Usar pressão da caneta");
+    let pressure_changed = theme::switch(ui, use_pressure, "Usar pressão da caneta").changed();
+    if pressure_changed {
+        app.save_prefs();
+    }
     ui.add_space(4.0);
     symmetry_settings(app, ui);
     if app.tool == Tool::Eraser {
@@ -1533,7 +1636,7 @@ fn active_layer_settings(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
 
 pub fn color_popup(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, portrait: bool) {
     // Altura do seletor inteiro; em tela baixa ele encolhe e rola.
-    let full_h: f32 = 440.0;
+    let full_h: f32 = 540.0;
     let max_h = full_h.min(canvas.height() - 12.0);
     let pos = if portrait {
         Pos2::new(canvas.min.x + 6.0, canvas.max.y - max_h - 6.0)
@@ -1551,7 +1654,7 @@ pub fn color_popup(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
         .fixed_pos(pos)
         .show(ctx, |ui| {
             panel_frame().show(ui, |ui| {
-                ui.set_width(250.0);
+                ui.set_width(270.0);
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new(icon::PALETTE.to_string())
@@ -1576,13 +1679,8 @@ pub fn color_popup(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
 }
 
 fn color_body(app: &mut ArtApp, ui: &mut egui::Ui) {
-    ui.spacing_mut().slider_width = 226.0;
-    let mut c = app.color;
-    egui::color_picker::color_picker_color32(ui, &mut c, egui::color_picker::Alpha::Opaque);
-    if c != app.color {
-        app.color = c;
-        app.transparent = false;
-    }
+    ui.spacing_mut().slider_width = 170.0;
+    crate::color_panel::show(app, ui);
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::hover());
         ui.painter()
