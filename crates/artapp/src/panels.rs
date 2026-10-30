@@ -174,6 +174,9 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         theme::switch(ui, &mut app.gesture_rotate, "Girar com dois dedos")
     });
     ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
+        theme::switch(ui, &mut app.show_navigator, "Navegador")
+    });
+    ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
         theme::switch(ui, &mut app.show_grid, "Grade")
     });
     if app.show_grid {
@@ -463,6 +466,8 @@ pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
                 mix_settings(app, ui);
             } else if app.tool == Tool::Liquify {
                 liquify_settings(app, ui);
+            } else if app.tool == Tool::Ruler {
+                ruler_settings(app, ui);
             } else if app.tool == Tool::Gradient {
                 gradient_settings(app, ui);
             } else if app.tool == Tool::MagicWand {
@@ -668,6 +673,54 @@ fn kit_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
                 }
             }
         });
+    }
+}
+
+/// Navegador no canto de baixo à direita, ao lado do painel de camadas se ele estiver aberto.
+pub fn navigator(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, portrait: bool) {
+    let corner = if portrait {
+        // Em retrato os painéis abrem embaixo: o navegador fica no alto.
+        Pos2::new(canvas.max.x - GAP, canvas.min.y + GAP + 196.0)
+    } else if app.show_layers_panel {
+        Pos2::new(canvas.max.x - 2.0 * GAP - PANEL_W, canvas.max.y - GAP)
+    } else {
+        Pos2::new(canvas.max.x - GAP, canvas.max.y - GAP)
+    };
+    crate::canvas::navigator(app, ctx, corner);
+}
+
+fn ruler_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
+    section(ui, "Tipo de régua");
+    ui.horizontal_wrapped(|ui| {
+        for (i, name) in ["Reta", "Paralelas", "Concêntrica", "Perspectiva"]
+            .into_iter()
+            .enumerate()
+        {
+            ui.selectable_value(&mut app.ruler_kind, i, name);
+        }
+    });
+    ui.label(
+        RichText::new(match app.ruler_kind {
+            0 => "Arraste para traçar a reta. Arraste as pontas para ajustar.",
+            1 => "Arraste na direção das linhas paralelas.",
+            2 => "Toque no centro dos círculos. Arraste o centro para mover.",
+            _ => "Cada toque põe um ponto de fuga (até três). Arraste para mover.",
+        })
+        .size(12.0)
+        .color(color::TEXT_MUTED),
+    );
+    section(ui, "Uso");
+    ui.checkbox(&mut app.ruler_snap, "Grudar o pincel na régua");
+    ui.label(
+        RichText::new("Vale para pincel, borracha e misturar. Desligue para desenhar livre sem perder a régua.")
+            .size(12.0)
+            .color(color::TEXT_MUTED),
+    );
+    if ui
+        .add_enabled(app.ruler.is_some(), egui::Button::new("Apagar régua"))
+        .clicked()
+    {
+        app.ruler = None;
     }
 }
 
@@ -1458,12 +1511,12 @@ fn active_layer_settings(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
 
 pub fn color_popup(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, portrait: bool) {
     let pos = if portrait {
-        Pos2::new(canvas.min.x + 6.0, canvas.max.y - 430.0)
+        Pos2::new(canvas.min.x + 6.0, (canvas.max.y - 520.0).max(canvas.min.y))
     } else {
         Pos2::new(
             canvas.min.x + GAP + rail_w(canvas) + 8.0,
-            (canvas.min.y + 300.0)
-                .min(canvas.max.y - 440.0)
+            (canvas.min.y + 200.0)
+                .min(canvas.max.y - 540.0)
                 .max(canvas.min.y),
         )
     };
@@ -1473,7 +1526,7 @@ pub fn color_popup(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
         .fixed_pos(pos)
         .show(ctx, |ui| {
             panel_frame().show(ui, |ui| {
-                ui.set_width(250.0);
+                ui.set_width(270.0);
                 ui.horizontal(|ui| {
                     ui.heading("Cor");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1481,17 +1534,8 @@ pub fn color_popup(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
                             theme::icon_button_sized(ui, icon::X, false, "Fechar", 32.0).clicked();
                     });
                 });
-                ui.spacing_mut().slider_width = 226.0;
-                let mut c = app.color;
-                egui::color_picker::color_picker_color32(
-                    ui,
-                    &mut c,
-                    egui::color_picker::Alpha::Opaque,
-                );
-                if c != app.color {
-                    app.color = c;
-                    app.transparent = false;
-                }
+                ui.spacing_mut().slider_width = 170.0;
+                crate::color_panel::show(app, ui);
                 ui.horizontal(|ui| {
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::hover());
                     ui.painter()

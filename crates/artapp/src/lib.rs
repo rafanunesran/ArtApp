@@ -5,6 +5,7 @@
 mod app;
 mod brush_editor;
 mod canvas;
+mod color_panel;
 mod dialogs;
 mod panels;
 pub mod platform;
