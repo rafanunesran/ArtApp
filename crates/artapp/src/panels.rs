@@ -409,7 +409,9 @@ pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
         });
         ui.separator();
         egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
-            if app.tool.is_vector() {
+            if app.tool == Tool::VectorKit {
+                kit_settings(app, ui);
+            } else if app.tool.is_vector() {
                 vector_settings(app, ui);
             } else if app.tool == Tool::Fill {
                 section(ui, "Balde");
@@ -435,26 +437,44 @@ pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
 fn mix_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
     use artapp_core::mix::MixKind;
     section(ui, "Modo");
-    ui.horizontal(|ui| {
-        ui.selectable_value(
-            &mut app.mix_kind,
-            MixKind::Smudge,
-            format!("{}  Dedo", icon::DROPLETS),
-        );
-        ui.selectable_value(
-            &mut app.mix_kind,
-            MixKind::Blur,
-            format!("{}  Desfocar", icon::DROPLET),
-        );
+    ui.horizontal_wrapped(|ui| {
+        for (kind, name) in [
+            (MixKind::Smudge, "Dedo"),
+            (MixKind::Blur, "Desfocar"),
+            (MixKind::Sharpen, "Nitidez"),
+            (MixKind::Dodge, "Clarear"),
+            (MixKind::Burn, "Escurecer"),
+            (MixKind::Saturate, "Saturar"),
+            (MixKind::Desaturate, "Dessaturar"),
+            (MixKind::Clone, "Carimbo"),
+        ] {
+            ui.selectable_value(&mut app.mix_kind, kind, name);
+        }
     });
     ui.label(
         RichText::new(match app.mix_kind {
             MixKind::Smudge => "Arrasta a tinta pelo caminho, como o dedo.",
             MixKind::Blur => "Suaviza as cores e as bordas embaixo do pincel.",
+            MixKind::Sharpen => "Realça as bordas e os detalhes embaixo do pincel.",
+            MixKind::Dodge => "Clareia os meios-tons, mantendo o matiz (subexpor).",
+            MixKind::Burn => "Escurece os meios-tons, mantendo o matiz (superexpor).",
+            MixKind::Saturate => "Deixa as cores mais vivas (esponja).",
+            MixKind::Desaturate => "Puxa as cores para o cinza (esponja).",
+            MixKind::Clone => "Toque para marcar a origem; depois pinte para copiar dela.",
         })
         .size(12.5)
         .color(color::TEXT_MUTED),
     );
+    if app.mix_kind == MixKind::Clone
+        && ui
+            .selectable_label(
+                app.clone_picking,
+                format!("{}  Marcar nova origem", icon::STAMP),
+            )
+            .clicked()
+    {
+        app.clone_picking = !app.clone_picking;
+    }
     section(ui, "Ajustes");
     let max = photocraft_max_size().min(1000.0);
     ui.add(
@@ -476,6 +496,135 @@ fn mix_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
     ui.add(egui::Slider::new(&mut app.mix_brush.hardness, 0.0..=1.0).text("Dureza"));
     let mut none = artapp_core::Taper::default();
     crate::brush_editor::show(ui, &mut app.mix_brush, &mut none);
+}
+
+/// Comandos do VectorCraft que valem um botão, sem diálogo: (id, nome).
+const KIT_COMMANDS: &[(&str, &[(&str, &str)])] = &[
+    (
+        "Objeto",
+        &[
+            ("object.group", "Agrupar"),
+            ("object.ungroup", "Desagrupar"),
+            ("edit.duplicate", "Duplicar"),
+            ("edit.clear", "Apagar"),
+            ("select.all", "Selecionar tudo"),
+            ("select.none", "Desmarcar"),
+            ("object.transformAgain", "Repetir transformação"),
+        ],
+    ),
+    (
+        "Ordem",
+        &[
+            ("object.arrange.bringToFront", "Para a frente"),
+            ("object.arrange.bringForward", "Avançar"),
+            ("object.arrange.sendBackward", "Recuar"),
+            ("object.arrange.sendToBack", "Para trás"),
+        ],
+    ),
+    (
+        "Combinar formas",
+        &[
+            ("object.pathfinder.unite", "Unir"),
+            ("object.pathfinder.minusFront", "Subtrair"),
+            ("object.pathfinder.intersect", "Interseção"),
+            ("object.pathfinder.exclude", "Excluir sobreposição"),
+            ("object.pathfinder.divide", "Dividir"),
+            ("object.pathfinder.outline", "Contorno"),
+        ],
+    ),
+    (
+        "Traçado",
+        &[
+            ("path.join", "Unir pontas"),
+            ("object.path.outlineStroke", "Traço em forma"),
+            ("object.compoundPath.make", "Traçado composto"),
+            ("object.compoundPath.release", "Soltar composto"),
+            ("object.clippingMask.make", "Máscara de recorte"),
+            ("object.clippingMask.release", "Soltar máscara"),
+            ("object.expand", "Expandir"),
+            ("effect.expandAppearance", "Expandir aparência"),
+        ],
+    ),
+];
+
+fn kit_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
+    use artapp_core::vectorkit::{ToolKey, groups, label_pt};
+    ui.label(
+        RichText::new(
+            "Todas as ferramentas do VectorCraft. Trabalham na camada vetorial ativa (uma é criada se precisar). A cor do traço é a principal; preenchimento e espessura vêm de Vetor.",
+        )
+        .size(12.5)
+        .color(color::TEXT_MUTED),
+    );
+    ui.horizontal_wrapped(|ui| {
+        if ui.button("Concluir").clicked() {
+            app.kit_key(ToolKey::Enter);
+        }
+        if ui.button("Cancelar").clicked() {
+            app.kit_key(ToolKey::Escape);
+        }
+        if ui.button(format!("{}  Apagar", icon::TRASH)).clicked() {
+            app.kit_key(ToolKey::Delete);
+        }
+    });
+    let options = app.kit.options();
+    if let Some(map) = options
+        .as_object()
+        .filter(|m| m.values().any(|v| v.is_number() || v.is_boolean()))
+    {
+        section(ui, "Opções da ferramenta");
+        for (key, v) in map {
+            let mut changed = None;
+            match v {
+                serde_json::Value::Bool(b) => {
+                    let mut b = *b;
+                    if ui.checkbox(&mut b, key.as_str()).changed() {
+                        changed = Some(serde_json::Value::Bool(b));
+                    }
+                }
+                serde_json::Value::Number(n) => {
+                    let mut x = n.as_f64().unwrap_or(0.0);
+                    ui.horizontal(|ui| {
+                        if ui.add(egui::DragValue::new(&mut x).speed(0.5)).changed() {
+                            changed =
+                                serde_json::Number::from_f64(x).map(serde_json::Value::Number);
+                        }
+                        ui.label(key.as_str());
+                    });
+                }
+                _ => {}
+            }
+            if let Some(v) = changed {
+                app.kit.set_option(key, &v);
+            }
+        }
+    }
+    for group in groups() {
+        ui.add_space(2.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+            for t in group {
+                let name = label_pt(t.id);
+                if name.is_empty() {
+                    continue;
+                }
+                if ui.selectable_label(app.kit_tool == t.id, name).clicked() {
+                    app.set_kit_tool(t.id);
+                }
+            }
+        });
+        ui.separator();
+    }
+    for (title, cmds) in KIT_COMMANDS {
+        section(ui, title);
+        ui.horizontal_wrapped(|ui| {
+            for (id, name) in *cmds {
+                if ui.button(*name).clicked() {
+                    app.kit_command(id, serde_json::json!({}));
+                }
+            }
+        });
+    }
 }
 
 fn gradient_settings(app: &mut ArtApp, ui: &mut egui::Ui) {

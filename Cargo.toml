@@ -24,6 +24,7 @@ vectorcraft-pathops = { git = "https://github.com/storytold/vectorcraft", rev = 
 vectorcraft-tools = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
 vectorcraft-color = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
 vectorcraft-render = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
+vectorcraft-engine = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10", features = ["bundled-fonts"] }
 kurbo = "0.13"
 artapp-core = { path = "crates/artapp-core" }
 png = "0.18"
@@ -55,3 +56,9 @@ codegen-units = 4
 # Ver third_party/epaint/ARTAPP-PATCH.md.
 [patch.crates-io]
 epaint = { path = "third_party/epaint" }
+hayro-syntax = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
+hayro-interpret = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
+hayro-jbig2 = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
+hayro-cmap = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
+hayro-postscript = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
+krilla = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }

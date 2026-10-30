@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 
 use artapp_core::vector::Shape;
+use artapp_core::vectorkit::PointerKind;
 use artapp_core::{
     Anchor, BezPath, NodeId, PaintSession, Rect, StrokePoint, SubPath, VPoint, composite, fill,
 };
@@ -55,6 +56,8 @@ enum ActiveKind {
         from: VPoint,
         to: VPoint,
     },
+    /// Uma ferramenta do VectorCraft: o último ponto, para o soltar.
+    Kit(VPoint, f32),
 }
 
 struct ActiveStroke {
@@ -236,7 +239,24 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
         quad(tex.id(), corners, Color32::WHITE);
     }
 
+    app.kit.zoom = app.view.zoom as f64;
+    app.kit_overlays = if app.tool == Tool::VectorKit {
+        app.kit.overlays(&app.doc)
+    } else {
+        Vec::new()
+    };
     draw_overlay(app, &painter, panel);
+    draw_kit_overlays(app, &painter, panel);
+    if app.tool == Tool::Blend
+        && app.mix_kind == artapp_core::mix::MixKind::Clone
+        && let Some([x, y]) = app.clone_source
+    {
+        let c = app.view.doc_to_screen(panel, x as f32, y as f32);
+        let st = egui::Stroke::new(1.5, Color32::from_rgb(40, 170, 255));
+        painter.circle_stroke(c, 8.0, st);
+        painter.line_segment([c - egui::vec2(12.0, 0.0), c + egui::vec2(12.0, 0.0)], st);
+        painter.line_segment([c - egui::vec2(0.0, 12.0), c + egui::vec2(0.0, 12.0)], st);
+    }
 
     // Contorno do pincel sob o mouse (no toque não há "hover").
     let hover = ui
@@ -537,6 +557,13 @@ fn tool_down(
                 app.status = "Misturar funciona em camadas raster.".into();
                 return;
             }
+            let clone = app.mix_kind == artapp_core::mix::MixKind::Clone;
+            if clone && (app.clone_picking || app.clone_source.is_none()) {
+                app.clone_source = Some([vp.x, vp.y]);
+                app.clone_picking = false;
+                app.status = "Origem do carimbo marcada. Agora pinte onde quer copiar.".into();
+                return;
+            }
             let Some(mut session) = artapp_core::mix::MixSession::begin(
                 &mut app.doc,
                 app.mix_kind,
@@ -546,6 +573,9 @@ fn tool_down(
                 app.status = "A camada ativa está oculta.".into();
                 return;
             };
+            if let Some(src) = app.clone_source.filter(|_| clone) {
+                session = session.with_source(src);
+            }
             let dirty = session.add(&mut app.doc, &[pt]);
             app.invalidate(dirty);
             Some(ActiveKind::Mix(Box::new(session)))
@@ -632,6 +662,14 @@ fn tool_down(
                 }
             })
         }
+        Tool::VectorKit => {
+            app.ensure_vector_layer();
+            let style = app.vector_style();
+            app.kit.set_style(&style);
+            let r = kit_pointer(app, PointerKind::Down, vp, pt.pressure);
+            app.invalidate(r);
+            Some(ActiveKind::Kit(vp, pt.pressure))
+        }
         Tool::Bezier => {
             app.ensure_vector_layer();
             let closes = app.bezier.len() >= 2
@@ -674,6 +712,12 @@ fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, t
         | ActiveKind::MoveLayer { to, .. }
         | ActiveKind::Gradient { to, .. } => *to = vp,
         ActiveKind::Freehand(points) | ActiveKind::Lasso(points) => points.push(vp),
+        ActiveKind::Kit(last, pressure) => {
+            *last = vp;
+            *pressure = pt.pressure;
+            let r = kit_pointer(app, PointerKind::Drag, vp, pt.pressure);
+            app.invalidate(r);
+        }
         ActiveKind::BezierHandle => {
             if let Some(a) = app.bezier.last_mut() {
                 *a = if a.p.distance(vp) > min_handle {
@@ -728,6 +772,7 @@ fn end_stroke(app: &mut ArtApp) {
             app.doc.vector_move(id, d.x, d.y)
         }
         ActiveKind::BezierHandle => Rect::EMPTY,
+        ActiveKind::Kit(last, pressure) => kit_pointer(app, PointerKind::Up, last, pressure),
         ActiveKind::Marquee { tool, from, to } => {
             let (w, h) = (app.doc.width, app.doc.height);
             let (a, b) = ([from.x, from.y], [to.x, to.y]);
@@ -790,7 +835,167 @@ fn cancel_stroke(app: &mut ArtApp) {
         ActiveKind::BezierHandle => {
             app.bezier.pop();
         }
+        ActiveKind::Kit(last, pressure) => {
+            let r = kit_pointer(app, PointerKind::Up, last, pressure);
+            app.invalidate(r);
+            app.kit_key(artapp_core::vectorkit::ToolKey::Escape);
+        }
         _ => {}
+    }
+}
+
+/// Um evento do dedo para a ferramenta do VectorCraft.
+fn kit_pointer(app: &mut ArtApp, kind: PointerKind, p: VPoint, pressure: f32) -> Rect {
+    let mods = artapp_core::vectorkit::Mods::default();
+    let r = app
+        .kit
+        .pointer(&mut app.doc, kind, p.x, p.y, pressure, mods);
+    if let Some(msg) = app.kit.status.take() {
+        app.status = msg;
+    }
+    r
+}
+
+/// Desenha as alças, guias e contornos da ferramenta do VectorCraft.
+fn draw_kit_overlays(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
+    use artapp_core::vectorkit::Overlay;
+    let rgb = |c: [u8; 3]| Color32::from_rgb(c[0], c[1], c[2]);
+    let rgba = |c: [u8; 4]| Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
+    let sp = |p: VPoint| to_screen(app, panel, p);
+    let font = egui::FontId::proportional(12.0);
+    for o in &app.kit_overlays {
+        match o {
+            Overlay::Marquee(r) => {
+                let pts = [
+                    VPoint::new(r.x0, r.y0),
+                    VPoint::new(r.x1, r.y0),
+                    VPoint::new(r.x1, r.y1),
+                    VPoint::new(r.x0, r.y1),
+                    VPoint::new(r.x0, r.y0),
+                ]
+                .map(sp);
+                painter.add(egui::Shape::dashed_line(
+                    &pts,
+                    egui::Stroke::new(1.0, Color32::from_rgb(40, 170, 255)),
+                    4.0,
+                    3.0,
+                ));
+            }
+            Overlay::Path {
+                path, color, width, ..
+            } => draw_bez(
+                app,
+                painter,
+                panel,
+                path,
+                egui::Stroke::new(width.max(1.0), rgb(*color)),
+            ),
+            Overlay::Line {
+                a,
+                b,
+                color,
+                dashed,
+            } => {
+                let pts = [sp(*a), sp(*b)];
+                let stroke = egui::Stroke::new(1.0, rgb(*color));
+                if *dashed {
+                    painter.add(egui::Shape::dashed_line(&pts, stroke, 4.0, 3.0));
+                } else {
+                    painter.line_segment(pts, stroke);
+                }
+            }
+            Overlay::Anchor {
+                p,
+                color,
+                filled,
+                size,
+            } => {
+                let r = egui::Rect::from_center_size(sp(*p), egui::Vec2::splat(size.max(7.0)));
+                if *filled {
+                    painter.rect_filled(r, 0.0, rgb(*color));
+                } else {
+                    painter.rect_filled(r, 0.0, Color32::WHITE);
+                    painter.rect_stroke(
+                        r,
+                        0.0,
+                        egui::Stroke::new(1.0, rgb(*color)),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+            }
+            Overlay::CurvePoint {
+                p,
+                color,
+                filled,
+                size,
+            } => {
+                let r = size.max(7.0) / 2.0;
+                if *filled {
+                    painter.circle_filled(sp(*p), r, rgb(*color));
+                } else {
+                    painter.circle(
+                        sp(*p),
+                        r,
+                        Color32::WHITE,
+                        egui::Stroke::new(1.0, rgb(*color)),
+                    );
+                }
+            }
+            Overlay::Handle { p, color } => {
+                painter.circle_filled(sp(*p), 4.0, rgb(*color));
+            }
+            Overlay::Label { p, text, color } => {
+                painter.text(
+                    sp(*p),
+                    egui::Align2::LEFT_BOTTOM,
+                    text,
+                    font.clone(),
+                    rgb(*color),
+                );
+            }
+            Overlay::Measure { p, text } => {
+                painter.text(
+                    sp(*p) + egui::vec2(12.0, 12.0),
+                    egui::Align2::LEFT_TOP,
+                    text,
+                    font.clone(),
+                    Color32::WHITE,
+                );
+            }
+            Overlay::Distance { a, b, text, color } => {
+                let (a, b) = (sp(*a), sp(*b));
+                painter.line_segment([a, b], egui::Stroke::new(1.0, rgb(*color)));
+                painter.text(
+                    a.lerp(b, 0.5),
+                    egui::Align2::CENTER_BOTTOM,
+                    text,
+                    font.clone(),
+                    rgb(*color),
+                );
+            }
+            Overlay::Highlight { quad, color } => {
+                painter.add(egui::Shape::convex_polygon(
+                    quad.map(sp).to_vec(),
+                    rgba(*color),
+                    egui::Stroke::NONE,
+                ));
+            }
+            Overlay::Swatch { p, color, selected } => {
+                let r = egui::Rect::from_center_size(sp(*p), egui::Vec2::splat(12.0));
+                painter.rect_filled(r, 2.0, rgba(*color));
+                if *selected {
+                    painter.rect_stroke(
+                        r.expand(2.0),
+                        2.0,
+                        egui::Stroke::new(1.5, Color32::WHITE),
+                        egui::StrokeKind::Outside,
+                    );
+                }
+            }
+            Overlay::GridLine { a, b, color } => {
+                painter.line_segment([sp(*a), sp(*b)], egui::Stroke::new(1.0, rgba(*color)));
+            }
+        }
     }
 }
 

@@ -19,6 +19,7 @@ pub mod mix;
 pub mod selection;
 pub mod stroke;
 pub mod vector;
+pub mod vectorkit;
 
 pub use document::{Document, Layer};
 pub use photocraft_algo::FilterParams;
