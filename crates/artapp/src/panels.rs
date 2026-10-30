@@ -76,7 +76,9 @@ pub fn top_bar(app: &mut ArtApp, ui: &mut egui::Ui) {
             format!("{:.0}%", app.view.zoom * 100.0)
         } else {
             format!(
-                "Sem título  ·  {} × {}  ·  {:.0}%",
+                "{}{}  ·  {} × {}  ·  {:.0}%",
+                app.projects.name,
+                if app.projects.dirty() { " •" } else { "" },
                 app.doc.width,
                 app.doc.height,
                 app.view.zoom * 100.0
@@ -197,12 +199,32 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.show_new_dialog = true;
         ui.close();
     }
+    if item(ui, icon::FOLDER_OPEN, "Abrir projeto ou PSD…").clicked() {
+        app.open_project_dialog();
+        ui.close();
+    }
+    if item(ui, icon::SAVE, "Salvar projeto").clicked() {
+        app.save_project();
+        ui.close();
+    }
+    if item(ui, icon::SAVE, "Salvar como…").clicked() {
+        app.save_project_as();
+        ui.close();
+    }
+    ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
+        theme::switch(ui, &mut app.projects.autosave, "Salvar automaticamente")
+    });
+    ui.separator();
     if item(ui, icon::IMAGE_DOWN, "Exportar PNG").clicked() {
         app.export_png(true);
         ui.close();
     }
     if item(ui, icon::IMAGE, "Exportar PNG transparente").clicked() {
         app.export_png(false);
+        ui.close();
+    }
+    if item(ui, icon::LAYERS, "Exportar PSD (camadas)…").clicked() {
+        app.export_psd();
         ui.close();
     }
     ui.separator();
@@ -1764,7 +1786,7 @@ pub fn new_canvas_dialog(app: &mut ArtApp, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.label(
                 RichText::new(
-                    "O desenho atual será descartado. Exporte antes se quiser guardá-lo.",
+                    "O desenho atual será descartado. Salve o projeto antes se quiser guardá-lo.",
                 )
                 .color(color::TEXT_MUTED),
             );

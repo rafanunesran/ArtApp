@@ -313,6 +313,8 @@ pub struct ArtApp {
     thumbs_at: f64,
     /// Retângulo da tela que precisa ser recomposto no próximo quadro.
     pending: Rect,
+    /// Arquivo do projeto, salvamento automático e diálogos de abrir/salvar.
+    pub projects: crate::projects::Projects,
 }
 
 impl ArtApp {
@@ -417,6 +419,7 @@ impl ArtApp {
             thumbs_stale: true,
             thumbs_at: 0.0,
             pending: Rect::EMPTY,
+            projects: crate::projects::Projects::default(),
         };
         app.load_prefs();
         app
@@ -482,12 +485,14 @@ impl ArtApp {
     pub fn invalidate(&mut self, r: Rect) {
         if !r.is_empty() {
             self.thumbs_stale = true;
+            self.projects.touch();
         }
         self.pending = self.pending.union(&r);
     }
 
     pub fn invalidate_all(&mut self) {
         self.thumbs_stale = true;
+        self.projects.touch();
         self.pending = self.doc.bounds();
     }
 
@@ -817,6 +822,7 @@ impl ArtApp {
         self.view = CanvasView::default();
         self.selected = None;
         self.invalidate_all();
+        self.forget_project();
     }
 
     pub fn export_png(&mut self, with_paper: bool) {
@@ -966,6 +972,24 @@ impl ArtApp {
                 i.consume_key(egui::Modifiers::NONE, egui::Key::Delete),
             )
         });
+        let (save_as, save, open) = ctx.input_mut(|i| {
+            (
+                i.consume_key(
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                    egui::Key::S,
+                ),
+                i.consume_key(egui::Modifiers::COMMAND, egui::Key::S),
+                i.consume_key(egui::Modifiers::COMMAND, egui::Key::O),
+            )
+        });
+        if save_as {
+            self.save_project_as();
+        } else if save {
+            self.save_project();
+        }
+        if open {
+            self.open_project_dialog();
+        }
         if swap {
             self.swap_colors();
         }
@@ -1110,6 +1134,7 @@ impl eframe::App for ArtApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.shortcuts(&ctx);
+        self.projects_tick(&ctx);
         if self.status != self.last_status {
             self.last_status.clone_from(&self.status);
             self.status_since = ctx.input(|i| i.time);
@@ -1154,6 +1179,7 @@ impl eframe::App for ArtApp {
         }
         panels::toast(self, &ctx, canvas, 0.0);
         crate::dialogs::show(self, &ctx);
+        crate::projects::show(self, &ctx);
         if self.show_new_dialog {
             panels::new_canvas_dialog(self, &ctx);
         }

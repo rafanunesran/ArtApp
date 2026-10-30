@@ -18,6 +18,8 @@ pub mod history;
 pub mod liquify;
 pub mod mask;
 pub mod mix;
+pub mod project;
+pub mod psd;
 pub mod ruler;
 pub mod selection;
 pub mod stroke;
