@@ -1,0 +1,570 @@
+//! Diálogos do menu Editar: transformar, filtros do PhotoCraft e ajustes de cor.
+//!
+//! Os filtros vêm do catálogo do `photocraft-algo`. Cada um é descrito aqui por um modelo JSON
+//! (o mesmo formato do `FilterParams`) e pelos campos que ganham slider, então acrescentar um
+//! filtro é acrescentar uma linha em [`FILTERS`].
+
+use artapp_core::FilterParams;
+use artapp_core::edit::Adjust;
+use eframe::egui::{self, Align2, RichText, Vec2};
+
+use crate::app::{ArtApp, color_to_f32};
+use crate::theme::{color, panel_frame};
+
+/// Um campo numérico de filtro: chave no JSON, rótulo, mínimo e máximo.
+type Field = (&'static str, &'static str, f32, f32);
+
+struct FilterDef {
+    group: &'static str,
+    name: &'static str,
+    template: &'static str,
+    fields: &'static [Field],
+}
+
+const FILTERS: &[FilterDef] = &[
+    FilterDef {
+        group: "Desfoque",
+        name: "Desfoque gaussiano",
+        template: r#"{"filter":"gaussianBlur","radius":4}"#,
+        fields: &[("radius", "Raio (px)", 0.1, 250.0)],
+    },
+    FilterDef {
+        group: "Desfoque",
+        name: "Desfoque de caixa",
+        template: r#"{"filter":"boxBlur","radius":4}"#,
+        fields: &[("radius", "Raio (px)", 1.0, 250.0)],
+    },
+    FilterDef {
+        group: "Desfoque",
+        name: "Desfoque de movimento",
+        template: r#"{"filter":"motionBlur","angle":0,"distance":20}"#,
+        fields: &[
+            ("angle", "Ângulo (°)", -180.0, 180.0),
+            ("distance", "Distância (px)", 1.0, 500.0),
+        ],
+    },
+    FilterDef {
+        group: "Desfoque",
+        name: "Desfoque de superfície",
+        template: r#"{"filter":"surfaceBlur","radius":5,"threshold":15}"#,
+        fields: &[
+            ("radius", "Raio (px)", 1.0, 100.0),
+            ("threshold", "Limiar", 2.0, 255.0),
+        ],
+    },
+    FilterDef {
+        group: "Desfoque",
+        name: "Mediana",
+        template: r#"{"filter":"median","radius":2}"#,
+        fields: &[("radius", "Raio (px)", 1.0, 100.0)],
+    },
+    FilterDef {
+        group: "Nitidez",
+        name: "Máscara de nitidez",
+        template: r#"{"filter":"unsharpMask","amount":100,"radius":2,"threshold":0}"#,
+        fields: &[
+            ("amount", "Intensidade (%)", 1.0, 500.0),
+            ("radius", "Raio (px)", 0.1, 250.0),
+            ("threshold", "Limiar", 0.0, 255.0),
+        ],
+    },
+    FilterDef {
+        group: "Nitidez",
+        name: "Passa-alta",
+        template: r#"{"filter":"highPass","radius":10}"#,
+        fields: &[("radius", "Raio (px)", 0.1, 250.0)],
+    },
+    FilterDef {
+        group: "Ruído",
+        name: "Adicionar ruído",
+        template: r#"{"filter":"addNoise","amount":12,"distribution":"gaussian","monochromatic":true,"seed":1}"#,
+        fields: &[("amount", "Quantidade (%)", 0.1, 400.0)],
+    },
+    FilterDef {
+        group: "Ruído",
+        name: "Poeira e arranhões",
+        template: r#"{"filter":"dustAndScratches","radius":2,"threshold":10}"#,
+        fields: &[
+            ("radius", "Raio (px)", 1.0, 100.0),
+            ("threshold", "Limiar", 0.0, 255.0),
+        ],
+    },
+    FilterDef {
+        group: "Ruído",
+        name: "Mínimo (afinar linhas claras)",
+        template: r#"{"filter":"minimum","radius":1,"preserve":"roundness"}"#,
+        fields: &[("radius", "Raio (px)", 1.0, 50.0)],
+    },
+    FilterDef {
+        group: "Ruído",
+        name: "Máximo (engrossar linhas claras)",
+        template: r#"{"filter":"maximum","radius":1,"preserve":"roundness"}"#,
+        fields: &[("radius", "Raio (px)", 1.0, 50.0)],
+    },
+    FilterDef {
+        group: "Pixelizar",
+        name: "Mosaico",
+        template: r#"{"filter":"mosaic","cellSize":12}"#,
+        fields: &[("cellSize", "Célula (px)", 2.0, 200.0)],
+    },
+    FilterDef {
+        group: "Pixelizar",
+        name: "Cristalizar",
+        template: r#"{"filter":"crystallize","cellSize":12,"seed":1}"#,
+        fields: &[("cellSize", "Célula (px)", 3.0, 300.0)],
+    },
+    FilterDef {
+        group: "Pixelizar",
+        name: "Pontilhar",
+        template: r#"{"filter":"pointillize","cellSize":6,"seed":1,"background":[1,1,1,1]}"#,
+        fields: &[("cellSize", "Célula (px)", 3.0, 300.0)],
+    },
+    FilterDef {
+        group: "Pixelizar",
+        name: "Meio-tom colorido",
+        template: r#"{"filter":"colorHalftone","maxRadius":8,"angles":[108,162,90,45]}"#,
+        fields: &[("maxRadius", "Raio máximo (px)", 4.0, 127.0)],
+    },
+    FilterDef {
+        group: "Estilizar",
+        name: "Relevo",
+        template: r#"{"filter":"emboss","angle":135,"height":3,"amount":100}"#,
+        fields: &[
+            ("angle", "Ângulo (°)", -180.0, 180.0),
+            ("height", "Altura (px)", 1.0, 100.0),
+            ("amount", "Intensidade (%)", 1.0, 500.0),
+        ],
+    },
+    FilterDef {
+        group: "Estilizar",
+        name: "Encontrar bordas",
+        template: r#"{"filter":"findEdges"}"#,
+        fields: &[],
+    },
+    FilterDef {
+        group: "Estilizar",
+        name: "Solarizar",
+        template: r#"{"filter":"solarize"}"#,
+        fields: &[],
+    },
+    FilterDef {
+        group: "Estilizar",
+        name: "Traçar contorno",
+        template: r#"{"filter":"traceContour","level":128,"upper":true}"#,
+        fields: &[("level", "Nível", 0.0, 255.0)],
+    },
+    FilterDef {
+        group: "Estilizar",
+        name: "Pintura a óleo",
+        template: r#"{"filter":"oilPaint","stylization":4,"cleanliness":5,"scale":1,"bristleDetail":3,"lighting":true,"angle":-60,"shine":1}"#,
+        fields: &[
+            ("stylization", "Estilização", 0.1, 10.0),
+            ("cleanliness", "Limpeza", 0.0, 10.0),
+            ("scale", "Escala", 0.1, 10.0),
+            ("bristleDetail", "Detalhe das cerdas", 0.0, 10.0),
+            ("shine", "Brilho", 0.0, 10.0),
+        ],
+    },
+    FilterDef {
+        group: "Distorcer",
+        name: "Torcer",
+        template: r#"{"filter":"twirl","angle":50}"#,
+        fields: &[("angle", "Ângulo (°)", -999.0, 999.0)],
+    },
+    FilterDef {
+        group: "Distorcer",
+        name: "Comprimir",
+        template: r#"{"filter":"pinch","amount":50}"#,
+        fields: &[("amount", "Quantidade (%)", -100.0, 100.0)],
+    },
+    FilterDef {
+        group: "Distorcer",
+        name: "Esferizar",
+        template: r#"{"filter":"spherize","amount":50,"mode":"normal"}"#,
+        fields: &[("amount", "Quantidade (%)", -100.0, 100.0)],
+    },
+    FilterDef {
+        group: "Distorcer",
+        name: "Ondulação",
+        template: r#"{"filter":"ripple","amount":100,"size":"medium"}"#,
+        fields: &[("amount", "Quantidade (%)", -999.0, 999.0)],
+    },
+    FilterDef {
+        group: "Renderizar",
+        name: "Nuvens (cor principal e secundária)",
+        template: r#"{"filter":"clouds","seed":1,"difference":false,"foreground":[0,0,0,1],"background":[1,1,1,1]}"#,
+        fields: &[],
+    },
+    FilterDef {
+        group: "Renderizar",
+        name: "Fibras",
+        template: r#"{"filter":"fibers","variance":16,"strength":4,"seed":1,"foreground":[0,0,0,1],"background":[1,1,1,1]}"#,
+        fields: &[
+            ("variance", "Variação", 1.0, 64.0),
+            ("strength", "Força", 1.0, 64.0),
+        ],
+    },
+    FilterDef {
+        group: "Cor",
+        name: "Inverter",
+        template: r#"{"filter":"invert"}"#,
+        fields: &[],
+    },
+    FilterDef {
+        group: "Cor",
+        name: "Tirar a saturação",
+        template: r#"{"filter":"desaturate"}"#,
+        fields: &[],
+    },
+];
+
+/// Diálogo aberto.
+#[derive(Clone, Debug)]
+pub enum Dialog {
+    Transform {
+        scale_x: f64,
+        scale_y: f64,
+        uniform: bool,
+        angle: f64,
+        dx: f64,
+        dy: f64,
+    },
+    Filter {
+        index: usize,
+        params: serde_json::Value,
+    },
+    Adjust(Adjust),
+}
+
+impl Dialog {
+    pub fn transform() -> Self {
+        Dialog::Transform {
+            scale_x: 100.0,
+            scale_y: 100.0,
+            uniform: true,
+            angle: 0.0,
+            dx: 0.0,
+            dy: 0.0,
+        }
+    }
+
+    pub fn filter(index: usize) -> Self {
+        let params = FILTERS
+            .get(index)
+            .and_then(|f| serde_json::from_str(f.template).ok())
+            .unwrap_or(serde_json::Value::Null);
+        Dialog::Filter { index, params }
+    }
+
+    pub fn adjust() -> Self {
+        Dialog::Adjust(Adjust::HueSatLight {
+            hue: 0.0,
+            sat: 0.0,
+            light: 0.0,
+        })
+    }
+}
+
+/// O que o botão do diálogo pediu.
+enum Outcome {
+    Keep,
+    Close,
+    Apply,
+}
+
+pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
+    let Some(mut dialog) = app.dialog.take() else {
+        return;
+    };
+    let title = match &dialog {
+        Dialog::Transform { .. } => "Transformar",
+        Dialog::Filter { .. } => "Filtro",
+        Dialog::Adjust(_) => "Correção de cor",
+    };
+    let mut outcome = Outcome::Keep;
+    let mut open = true;
+    egui::Window::new(title)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        .frame(panel_frame())
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.set_width(320.0);
+            match &mut dialog {
+                Dialog::Transform { .. } => transform_ui(app, ui, &mut dialog, &mut outcome),
+                Dialog::Filter { index, params } => filter_ui(ui, index, params),
+                Dialog::Adjust(adj) => adjust_ui(ui, adj),
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("Aplicar").strong()).clicked() {
+                    outcome = Outcome::Apply;
+                }
+                if ui.button("Cancelar").clicked() {
+                    outcome = Outcome::Close;
+                }
+            });
+            if app.doc.selection.is_some() {
+                ui.label(
+                    RichText::new("Age só dentro da seleção.")
+                        .size(12.0)
+                        .color(color::TEXT_MUTED),
+                );
+            }
+        });
+    if !open {
+        outcome = Outcome::Close;
+    }
+    match outcome {
+        Outcome::Keep => app.dialog = Some(dialog),
+        Outcome::Close => {}
+        Outcome::Apply => apply(app, &dialog),
+    }
+}
+
+fn apply(app: &mut ArtApp, dialog: &Dialog) {
+    let r = match dialog {
+        Dialog::Transform {
+            scale_x,
+            scale_y,
+            angle,
+            dx,
+            dy,
+            ..
+        } => app
+            .doc
+            .transform_layer(scale_x / 100.0, scale_y / 100.0, *angle, *dx, *dy),
+        Dialog::Filter { params, .. } => {
+            let mut params = params.clone();
+            // Filtros que desenham com duas cores usam a principal e a secundária.
+            if let Some(obj) = params.as_object_mut() {
+                for (key, c) in [("foreground", app.color), ("background", app.sub_color)] {
+                    if obj.contains_key(key) {
+                        obj.insert(key.into(), serde_json::json!(color_to_f32(c)));
+                    }
+                }
+            }
+            match serde_json::from_value::<FilterParams>(params) {
+                Ok(p) => app.doc.apply_filter(&p),
+                Err(e) => {
+                    app.status = format!("Filtro inválido: {e}");
+                    return;
+                }
+            }
+        }
+        Dialog::Adjust(adj) => app.doc.adjust(*adj),
+    };
+    if r.is_empty() {
+        app.status = "Escolha uma camada raster visível com desenho.".into();
+    }
+    app.invalidate_all();
+}
+
+fn transform_ui(app: &mut ArtApp, ui: &mut egui::Ui, dialog: &mut Dialog, outcome: &mut Outcome) {
+    let Dialog::Transform {
+        scale_x,
+        scale_y,
+        uniform,
+        angle,
+        dx,
+        dy,
+    } = dialog
+    else {
+        return;
+    };
+    ui.label(
+        RichText::new("Transforma a camada ativa (ou a seleção) em volta do centro do desenho.")
+            .size(12.5)
+            .color(color::TEXT_MUTED),
+    );
+    ui.checkbox(uniform, "Manter a proporção");
+    if ui
+        .add(
+            egui::Slider::new(scale_x, 1.0..=800.0)
+                .suffix("%")
+                .text("Largura"),
+        )
+        .changed()
+        && *uniform
+    {
+        *scale_y = *scale_x;
+    }
+    if ui
+        .add(
+            egui::Slider::new(scale_y, 1.0..=800.0)
+                .suffix("%")
+                .text("Altura"),
+        )
+        .changed()
+        && *uniform
+    {
+        *scale_x = *scale_y;
+    }
+    ui.add(
+        egui::Slider::new(angle, -180.0..=180.0)
+            .suffix("°")
+            .text("Giro"),
+    );
+    let (w, h) = (app.doc.width as f64, app.doc.height as f64);
+    ui.add(egui::Slider::new(dx, -w..=w).text("Mover X (px)"));
+    ui.add(egui::Slider::new(dy, -h..=h).text("Mover Y (px)"));
+    ui.horizontal_wrapped(|ui| {
+        let mut quick =
+            |ui: &mut egui::Ui, label: &str, f: &dyn Fn(&mut ArtApp) -> artapp_core::Rect| {
+                if ui.button(label).clicked() {
+                    let r = f(app);
+                    app.invalidate(r);
+                    *outcome = Outcome::Close;
+                }
+            };
+        quick(ui, "Espelhar ↔", &|a| a.doc.flip_layer(true));
+        quick(ui, "Espelhar ↕", &|a| a.doc.flip_layer(false));
+        quick(ui, "Girar 90°", &|a| {
+            a.doc.transform_layer(1.0, 1.0, 90.0, 0.0, 0.0)
+        });
+        quick(ui, "Girar -90°", &|a| {
+            a.doc.transform_layer(1.0, 1.0, -90.0, 0.0, 0.0)
+        });
+    });
+}
+
+fn filter_ui(ui: &mut egui::Ui, index: &mut usize, params: &mut serde_json::Value) {
+    let current = FILTERS.get(*index).map_or("", |f| f.name);
+    let mut picked = None;
+    egui::ComboBox::from_id_salt("filter-pick")
+        .selected_text(current)
+        .width(300.0)
+        .height(420.0)
+        .show_ui(ui, |ui| {
+            let mut group = "";
+            for (i, f) in FILTERS.iter().enumerate() {
+                if f.group != group {
+                    group = f.group;
+                    ui.label(
+                        RichText::new(group.to_uppercase())
+                            .size(11.0)
+                            .color(color::TEXT_MUTED),
+                    );
+                }
+                if ui.selectable_label(i == *index, f.name).clicked() {
+                    picked = Some(i);
+                }
+            }
+        });
+    if let Some(i) = picked.filter(|i| i != index)
+        && let Dialog::Filter {
+            index: ni,
+            params: np,
+        } = Dialog::filter(i)
+    {
+        *index = ni;
+        *params = np;
+    }
+    let Some(def) = FILTERS.get(*index) else {
+        return;
+    };
+    if def.fields.is_empty() {
+        ui.label(RichText::new("Sem ajustes.").color(color::TEXT_MUTED));
+    }
+    for (key, label, lo, hi) in def.fields {
+        let Some(v) = params.get_mut(*key) else {
+            continue;
+        };
+        let mut x = v.as_f64().unwrap_or(0.0) as f32;
+        let log = *lo > 0.0 && hi / lo > 100.0;
+        if ui
+            .add(
+                egui::Slider::new(&mut x, *lo..=*hi)
+                    .logarithmic(log)
+                    .text(*label),
+            )
+            .changed()
+        {
+            *v = serde_json::json!(x);
+        }
+    }
+}
+
+fn adjust_ui(ui: &mut egui::Ui, adj: &mut Adjust) {
+    let kinds: [(&str, Adjust); 7] = [
+        (
+            "Matiz/Saturação/Luminosidade",
+            Adjust::HueSatLight {
+                hue: 0.0,
+                sat: 0.0,
+                light: 0.0,
+            },
+        ),
+        (
+            "Brilho/Contraste",
+            Adjust::BrightnessContrast {
+                brightness: 0.0,
+                contrast: 0.0,
+            },
+        ),
+        (
+            "Níveis",
+            Adjust::Levels {
+                black: 0.0,
+                white: 1.0,
+                gamma: 1.0,
+            },
+        ),
+        ("Posterizar", Adjust::Posterize { levels: 4 }),
+        ("Binarizar (limiar)", Adjust::Threshold { level: 0.5 }),
+        ("Inverter cores", Adjust::Invert),
+        ("Tirar a saturação", Adjust::Desaturate),
+    ];
+    let same = |a: &Adjust, b: &Adjust| std::mem::discriminant(a) == std::mem::discriminant(b);
+    let name = kinds
+        .iter()
+        .find(|(_, k)| same(k, adj))
+        .map_or("", |(n, _)| n);
+    egui::ComboBox::from_id_salt("adjust-pick")
+        .selected_text(name)
+        .width(300.0)
+        .show_ui(ui, |ui| {
+            for (n, k) in kinds {
+                if ui.selectable_label(same(&k, adj), n).clicked() && !same(&k, adj) {
+                    *adj = k;
+                }
+            }
+        });
+    match adj {
+        Adjust::HueSatLight { hue, sat, light } => {
+            ui.add(
+                egui::Slider::new(hue, -180.0..=180.0)
+                    .suffix("°")
+                    .text("Matiz"),
+            );
+            ui.add(egui::Slider::new(sat, -1.0..=1.0).text("Saturação"));
+            ui.add(egui::Slider::new(light, -1.0..=1.0).text("Luminosidade"));
+        }
+        Adjust::BrightnessContrast {
+            brightness,
+            contrast,
+        } => {
+            ui.add(egui::Slider::new(brightness, -1.0..=1.0).text("Brilho"));
+            ui.add(egui::Slider::new(contrast, -1.0..=1.0).text("Contraste"));
+        }
+        Adjust::Levels {
+            black,
+            white,
+            gamma,
+        } => {
+            ui.add(egui::Slider::new(black, 0.0..=1.0).text("Preto"));
+            ui.add(egui::Slider::new(white, 0.0..=1.0).text("Branco"));
+            ui.add(egui::Slider::new(gamma, 0.1..=4.0).text("Gama"));
+        }
+        Adjust::Posterize { levels } => {
+            ui.add(egui::Slider::new(levels, 2..=32).text("Níveis"));
+        }
+        Adjust::Threshold { level } => {
+            ui.add(egui::Slider::new(level, 0.0..=1.0).text("Limiar"));
+        }
+        Adjust::Invert | Adjust::Desaturate => {
+            ui.label(RichText::new("Sem ajustes.").color(color::TEXT_MUTED));
+        }
+    }
+}

@@ -16,6 +16,8 @@ pub struct Selection {
     pub bounds: Rect,
     /// Contorno para desenhar na tela (polígono em pixels do documento).
     pub outline: Vec<[f64; 2]>,
+    /// Bordas soltas (seleção automática), em vez de um polígono.
+    pub edges: Vec<[[f64; 2]; 2]>,
     /// A seleção foi invertida (o contorno desenhado é o da área de fora).
     pub inverted: bool,
 }
@@ -75,6 +77,55 @@ impl Selection {
             mask,
             bounds: r,
             outline: points.to_vec(),
+            edges: Vec::new(),
+            inverted: false,
+        })
+    }
+
+    /// Seleção a partir de uma máscara 0..1 que cobre `area` (seleção automática). O contorno
+    /// desenhado são as bordas entre pixels dentro e fora.
+    pub fn from_mask(m: &[f32], area: Rect) -> Option<Self> {
+        let (w, h) = (area.width() as usize, area.height() as usize);
+        if m.len() < w * h || !m.iter().any(|v| *v >= 0.5) {
+            return None;
+        }
+        let at = |x: usize, y: usize| m[y * w + x] >= 0.5;
+        let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0, 0);
+        let mut edges = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                if !at(x, y) {
+                    continue;
+                }
+                (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+                let (fx, fy) = ((area.x0 as usize + x) as f64, (area.y0 as usize + y) as f64);
+                if x == 0 || !at(x - 1, y) {
+                    edges.push([[fx, fy], [fx, fy + 1.0]]);
+                }
+                if x + 1 == w || !at(x + 1, y) {
+                    edges.push([[fx + 1.0, fy], [fx + 1.0, fy + 1.0]]);
+                }
+                if y == 0 || !at(x, y - 1) {
+                    edges.push([[fx, fy], [fx + 1.0, fy]]);
+                }
+                if y + 1 == h || !at(x, y + 1) {
+                    edges.push([[fx, fy + 1.0], [fx + 1.0, fy + 1.0]]);
+                }
+            }
+        }
+        let mut mask = Surface::new(PixelFormat::GRAY8);
+        mask.write_region(area, &m[..w * h]);
+        let bounds = Rect::new(
+            area.x0 + x0 as i32,
+            area.y0 + y0 as i32,
+            area.x0 + x1 as i32 + 1,
+            area.y0 + y1 as i32 + 1,
+        );
+        Some(Self {
+            mask,
+            bounds,
+            outline: Vec::new(),
+            edges,
             inverted: false,
         })
     }
