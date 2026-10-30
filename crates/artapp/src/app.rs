@@ -214,6 +214,18 @@ pub struct ArtApp {
     pub transparent: bool,
     pub recent_colors: Vec<Color32>,
     pub fill_tolerance: f32,
+    /// Balde: fechar lacunas e expandir área, em pixels.
+    pub fill_close_gap: f32,
+    pub fill_expand: f32,
+    /// Como uma seleção nova se junta à atual.
+    pub select_mode: artapp_core::selection::SelectMode,
+    /// Quanto expandir/contrair/suavizar a seleção (px).
+    pub select_amount: f32,
+    /// Área de transferência interna (recortar/copiar/colar).
+    pub clipboard: Option<artapp_core::edit::Clip>,
+    /// Grade por cima da tela (Visualizar › Grade).
+    pub show_grid: bool,
+    pub grid_size: f32,
     /// Degradê: forma e se termina na secundária (senão, em transparente).
     pub gradient_shape: artapp_core::edit::GradientShape,
     pub gradient_to_sub: bool,
@@ -315,6 +327,13 @@ impl ArtApp {
                 Color32::from_rgb(250, 200, 40),
             ],
             fill_tolerance: 0.15,
+            fill_close_gap: 0.0,
+            fill_expand: 0.0,
+            select_mode: artapp_core::selection::SelectMode::New,
+            select_amount: 4.0,
+            clipboard: None,
+            show_grid: false,
+            grid_size: 64.0,
             gradient_shape: artapp_core::edit::GradientShape::Linear,
             gradient_to_sub: true,
             wand_tolerance: 0.1,
@@ -488,6 +507,49 @@ impl ArtApp {
 
     pub fn invert_selection(&mut self) {
         self.doc.invert_selection();
+    }
+
+    pub fn copy(&mut self) {
+        match self.doc.copy_pixels() {
+            Some(c) => {
+                self.clipboard = Some(c);
+                self.status = "Copiado.".into();
+            }
+            None => self.status = "Nada para copiar na camada ativa.".into(),
+        }
+    }
+
+    pub fn cut(&mut self) {
+        match self.doc.cut_pixels() {
+            Some((c, dirty)) => {
+                self.clipboard = Some(c);
+                self.invalidate(dirty);
+            }
+            None => self.status = "Nada para recortar na camada ativa.".into(),
+        }
+    }
+
+    /// Cola numa camada nova e já deixa a ferramenta de mover pronta.
+    pub fn paste(&mut self) {
+        let Some(clip) = self.clipboard.clone() else {
+            self.status = "A área de transferência está vazia.".into();
+            return;
+        };
+        let r = self.doc.paste_layer(&clip);
+        self.invalidate(r);
+        self.set_tool(Tool::MoveLayer);
+    }
+
+    pub fn line_to_color(&mut self) {
+        let [r, g, b, _] = color_to_f32(self.color);
+        let d = self.doc.line_to_color([r, g, b]);
+        self.invalidate(d);
+    }
+
+    pub fn brightness_to_opacity(&mut self) {
+        let [r, g, b, _] = color_to_f32(self.color);
+        let d = self.doc.brightness_to_opacity([r, g, b]);
+        self.invalidate(d);
     }
 
     pub fn clear_selection(&mut self) {
@@ -765,6 +827,24 @@ impl ArtApp {
             )
         });
         // Atalhos do Clip Studio para cor e seleção.
+        // O egui entrega Ctrl+C/X/V como eventos próprios, não como teclas.
+        let (copy, cut, paste) = ctx.input(|i| {
+            let has = |f: fn(&egui::Event) -> bool| i.events.iter().any(f);
+            (
+                has(|e| matches!(e, egui::Event::Copy)),
+                has(|e| matches!(e, egui::Event::Cut)),
+                has(|e| matches!(e, egui::Event::Paste(_))),
+            )
+        });
+        if copy {
+            self.copy();
+        }
+        if cut {
+            self.cut();
+        }
+        if paste {
+            self.paste();
+        }
         let (swap, deselect, invert, all, clear) = ctx.input_mut(|i| {
             (
                 i.consume_key(egui::Modifiers::NONE, egui::Key::X),

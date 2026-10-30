@@ -473,3 +473,125 @@ mod tests {
         assert!(doc.layers[0].surface.rgba(25, 10)[3] > 0.9);
     }
 }
+
+/// O que foi copiado: os pixels e onde estavam.
+#[derive(Clone)]
+pub struct Clip {
+    pub surface: Surface,
+    pub rect: Rect,
+}
+
+impl Document {
+    /// Copia a seleção (ou a camada inteira) da camada ativa raster.
+    pub fn copy_pixels(&self) -> Option<Clip> {
+        let layer = self.active_layer()?;
+        if layer.is_vector() {
+            return None;
+        }
+        let mut r = layer.surface.content_bounds().intersect(&self.bounds());
+        if let Some(sel) = &self.selection {
+            r = r.intersect(&sel.bounds);
+        }
+        if r.is_empty() {
+            return None;
+        }
+        let mut px = vec![[0.0f32; 4]; r.width() as usize * r.height() as usize];
+        layer.surface.read_rgba_into(r, &mut px);
+        if let Some(sel) = &self.selection {
+            for (p, k) in px.iter_mut().zip(sel.mask.read_region(r)) {
+                p[3] *= k;
+            }
+        }
+        let flat: Vec<f32> = px.iter().flatten().copied().collect();
+        let mut surface = Surface::new(PixelFormat::RGBA8);
+        surface.write_region(r, &flat);
+        surface.prune();
+        Some(Clip { surface, rect: r })
+    }
+
+    /// Recorta: copia e apaga o que foi copiado.
+    pub fn cut_pixels(&mut self) -> Option<(Clip, Rect)> {
+        let clip = self.copy_pixels()?;
+        let dirty = if self.selection.is_some() {
+            self.clear_selection()
+        } else {
+            self.clear_layer();
+            self.bounds()
+        };
+        Some((clip, dirty))
+    }
+
+    /// Cola numa camada nova acima da ativa, no mesmo lugar de onde veio.
+    pub fn paste_layer(&mut self, clip: &Clip) -> Rect {
+        self.add_layer();
+        if let Some(l) = self.active_layer_mut() {
+            l.name = l.name.replace("Camada", "Colado");
+            l.surface = clip.surface.clone();
+        }
+        clip.rect.intersect(&self.bounds())
+    }
+
+    /// "Mudar cor da linha para a cor de desenho": pinta tudo da camada (ou da seleção) com
+    /// `color`, mantendo a transparência.
+    pub fn line_to_color(&mut self, color: [f32; 3]) -> Rect {
+        let Some(r) = self.edit_area(false) else {
+            return Rect::EMPTY;
+        };
+        self.map_pixels(r, |_, _, p| [color[0], color[1], color[2], p[3]])
+    }
+
+    /// "Converter brilho em opacidade": o branco some e o escuro vira `color` opaca, como ao
+    /// digitalizar um desenho no papel.
+    pub fn brightness_to_opacity(&mut self, color: [f32; 3]) -> Rect {
+        let Some(r) = self.edit_area(false) else {
+            return Rect::EMPTY;
+        };
+        self.map_pixels(r, |_, _, p| {
+            let l = 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2];
+            [
+                color[0],
+                color[1],
+                color[2],
+                p[3] * (1.0 - l).clamp(0.0, 1.0),
+            ]
+        })
+    }
+}
+
+#[cfg(test)]
+mod clip_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn copy_paste_and_line_colour() {
+        let mut doc = Document::new(30, 30);
+        doc.layers[0]
+            .surface
+            .fill_rect(Rect::new(5, 5, 15, 15), &[0.0, 0.0, 0.0, 1.0]);
+        doc.set_selection(Selection::rect([0.0, 0.0], [10.0, 10.0], 30, 30));
+        let (clip, _) = doc.cut_pixels().unwrap();
+        assert_eq!(doc.layers[0].surface.rgba(7, 7)[3], 0.0);
+        assert_eq!(doc.layers[0].surface.rgba(12, 12)[3], 1.0);
+        doc.set_selection(None);
+        doc.paste_layer(&clip);
+        assert_eq!(doc.layers.len(), 2);
+        assert_eq!(doc.layers[1].surface.rgba(7, 7)[3], 1.0);
+        doc.line_to_color([1.0, 0.0, 0.0]);
+        assert_eq!(doc.layers[1].surface.rgba(7, 7), [1.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn white_becomes_transparent() {
+        let mut doc = Document::new(10, 10);
+        doc.layers[0]
+            .surface
+            .fill_rect(Rect::new(0, 0, 10, 10), &[1.0, 1.0, 1.0, 1.0]);
+        doc.layers[0]
+            .surface
+            .fill_rect(Rect::new(0, 0, 5, 10), &[0.0, 0.0, 0.0, 1.0]);
+        doc.brightness_to_opacity([0.0, 0.0, 0.0]);
+        assert!(doc.layers[0].surface.rgba(8, 5)[3] < 0.01);
+        assert!(doc.layers[0].surface.rgba(2, 5)[3] > 0.99);
+    }
+}

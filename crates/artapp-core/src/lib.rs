@@ -16,6 +16,7 @@ pub mod export;
 pub mod fill;
 pub mod history;
 pub mod liquify;
+pub mod mask;
 pub mod mix;
 pub mod selection;
 pub mod stroke;
