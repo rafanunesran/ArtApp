@@ -69,11 +69,17 @@ cargo test --workspace
 
 No Linux, precisa de `libxkbcommon-x11` e de OpenGL.
 
+## Baixar
+
+Site: **https://rafanunesran.github.io/ArtApp/** (código em `site/`). O APK mais recente fica em
+[Releases](https://github.com/rafanunesran/ArtApp/releases/latest): cada push na `main` que passa
+nos testes publica uma release com `ArtApp.apk`. Instale no celular permitindo "instalar apps
+desconhecidos".
+
 ## Gerar o APK
 
-O jeito mais fácil: cada push roda o GitHub Actions (`.github/workflows/android.yml`) e o APK fica
-em **Actions › CI › Artifacts › artapp-apk**. Baixe, descompacte e instale no celular (permita
-"instalar apps desconhecidos").
+O GitHub Actions (`.github/workflows/android.yml`) gera o APK em cada push; além da release, ele
+fica em **Actions › CI › Artifacts › artapp-apk**.
 
 Localmente, com o Android SDK e o NDK instalados:
 

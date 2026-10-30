@@ -62,3 +62,31 @@ jobs:
           name: artapp-apk
           path: android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+
+  # Cada push na main que passa nos testes vira uma release pública com o APK, para que o
+  # site (GitHub Pages) possa apontar para releases/latest/download/ArtApp.apk.
+  release:
+    name: Release do APK
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, apk]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: artapp-apk
+          path: apk
+      - name: Criar release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' android/app/build.gradle.kts)
+          TAG="v${VERSION}-build.${GITHUB_RUN_NUMBER}"
+          cp apk/*.apk ArtApp.apk
+          gh release create "$TAG" ArtApp.apk \
+            --target "$GITHUB_SHA" \
+            --title "ArtApp ${VERSION} (build ${GITHUB_RUN_NUMBER})" \
+            --notes "APK gerado automaticamente a partir de ${GITHUB_SHA::7}: $(git log -1 --format=%s)" \
+            --latest
