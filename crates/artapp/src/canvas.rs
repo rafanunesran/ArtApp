@@ -35,6 +35,19 @@ enum ActiveKind {
     },
     /// Puxando as alças do último ponto Bézier.
     BezierHandle,
+    /// Seleção retangular ou elíptica: do ponto inicial ao atual.
+    Marquee {
+        tool: Tool,
+        from: VPoint,
+        to: VPoint,
+    },
+    /// Laço: os pontos do contorno.
+    Lasso(Vec<VPoint>),
+    /// Mover camada: aplicado ao soltar.
+    MoveLayer {
+        from: VPoint,
+        to: VPoint,
+    },
 }
 
 struct ActiveStroke {
@@ -49,6 +62,10 @@ pub struct CanvasView {
     pub offset: Vec2,
     /// Pontos de tela por pixel do documento.
     pub zoom: f32,
+    /// Giro da vista em radianos (só a visualização; o desenho não muda).
+    pub rotation: f32,
+    /// Espelha a vista na horizontal (para conferir a proporção, como no Clip Studio).
+    pub flip: bool,
     fitted: bool,
     /// Tamanho do painel no último encaixe.
     fitted_for: Vec2,
@@ -70,7 +87,10 @@ impl CanvasView {
         if !self.zoom.is_finite() || self.zoom <= 0.0 {
             self.zoom = 1.0;
         }
-        self.offset = (panel.size() - egui::vec2(w, h) * self.zoom) / 2.0;
+        self.rotation = 0.0;
+        // Com o espelho, a origem fica no canto direito (o desenho continua no mesmo lugar).
+        let x0 = if self.flip { w * self.zoom } else { 0.0 };
+        self.offset = (panel.size() - egui::vec2(w, h) * self.zoom) / 2.0 + egui::vec2(x0, 0.0);
         self.fitted = true;
         self.fitted_for = panel.size();
     }
@@ -79,9 +99,32 @@ impl CanvasView {
         self.fitted = false;
     }
 
+    /// Espelho e giro aplicados a um vetor em pixels da tela (já com o zoom).
+    fn orient(&self, v: Vec2) -> Vec2 {
+        let v = if self.flip { egui::vec2(-v.x, v.y) } else { v };
+        let (sin, cos) = self.rotation.sin_cos();
+        egui::vec2(v.x * cos - v.y * sin, v.x * sin + v.y * cos)
+    }
+
+    fn unorient(&self, v: Vec2) -> Vec2 {
+        let (sin, cos) = (-self.rotation).sin_cos();
+        let v = egui::vec2(v.x * cos - v.y * sin, v.x * sin + v.y * cos);
+        if self.flip { egui::vec2(-v.x, v.y) } else { v }
+    }
+
+    /// Ponto do documento (pixels) para a tela.
+    pub fn doc_to_screen(&self, panel: egui::Rect, x: f32, y: f32) -> Pos2 {
+        panel.min + self.offset + self.orient(egui::vec2(x, y) * self.zoom)
+    }
+
     fn to_canvas(&self, panel: egui::Rect, p: Pos2) -> (f64, f64) {
-        let v = (p - panel.min - self.offset) / self.zoom;
+        let v = self.unorient(p - panel.min - self.offset) / self.zoom;
         (v.x as f64, v.y as f64)
+    }
+
+    /// Ajusta o deslocamento para que o ponto do documento `d` fique sob o ponto de tela `p`.
+    fn pin(&mut self, panel: egui::Rect, d: (f64, f64), p: Pos2) {
+        self.offset = (p - panel.min) - self.orient(egui::vec2(d.0 as f32, d.1 as f32) * self.zoom);
     }
 
     fn zoom_at(&mut self, panel: egui::Rect, p: Pos2, factor: f32) {
@@ -89,9 +132,43 @@ impl CanvasView {
         if !new.is_finite() {
             return;
         }
-        let anchor = p - panel.min;
-        self.offset = anchor - (anchor - self.offset) * (new / self.zoom);
+        let d = self.to_canvas(panel, p);
         self.zoom = new;
+        self.pin(panel, d, p);
+    }
+
+    /// Gira a vista em volta do ponto de tela `p`.
+    pub fn rotate_at(&mut self, panel: egui::Rect, p: Pos2, radians: f32) {
+        let d = self.to_canvas(panel, p);
+        self.rotation = (self.rotation + radians).rem_euclid(std::f32::consts::TAU);
+        // Perto de reto, encaixa no ângulo reto (fica fácil voltar ao normal).
+        let quarter = std::f32::consts::FRAC_PI_2;
+        let snapped = (self.rotation / quarter).round() * quarter;
+        if (self.rotation - snapped).abs() < 0.03 {
+            self.rotation = snapped.rem_euclid(std::f32::consts::TAU);
+        }
+        self.pin(panel, d, p);
+    }
+
+    /// Liga/desliga o espelho, mantendo o centro da vista no mesmo ponto do desenho.
+    pub fn toggle_flip(&mut self, panel: egui::Rect) {
+        let c = panel.center();
+        let d = self.to_canvas(panel, c);
+        self.flip = !self.flip;
+        // Espelhar inverte o sentido do giro, como num espelho de verdade.
+        self.rotation = (-self.rotation).rem_euclid(std::f32::consts::TAU);
+        self.pin(panel, d, c);
+    }
+
+    /// Os quatro cantos da tela de desenho na tela (no sentido horário a partir da origem).
+    fn corners(&self, panel: egui::Rect, w: u32, h: u32) -> [Pos2; 4] {
+        let (w, h) = (w as f32, h as f32);
+        [
+            self.doc_to_screen(panel, 0.0, 0.0),
+            self.doc_to_screen(panel, w, 0.0),
+            self.doc_to_screen(panel, w, h),
+            self.doc_to_screen(panel, 0.0, h),
+        ]
     }
 }
 
@@ -111,19 +188,45 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
 
     let painter = ui.painter_at(panel);
     painter.rect_filled(panel, 0.0, crate::theme::color::BACKDROP);
-    let size = egui::vec2(app.doc.width as f32, app.doc.height as f32) * app.view.zoom;
-    let canvas = egui::Rect::from_min_size(panel.min + app.view.offset, size);
-    painter.rect_filled(
-        canvas.translate(egui::vec2(3.0, 4.0)),
-        0.0,
+    let corners = app.view.corners(panel, app.doc.width, app.doc.height);
+    let straight = app.view.rotation == 0.0 && !app.view.flip;
+    let quad = |tex: egui::TextureId, pts: [Pos2; 4], tint: Color32| {
+        let mut mesh = egui::Mesh::with_texture(tex);
+        let uvs = [
+            Pos2::new(0.0, 0.0),
+            Pos2::new(1.0, 0.0),
+            Pos2::new(1.0, 1.0),
+            Pos2::new(0.0, 1.0),
+        ];
+        let plain = tex == egui::TextureId::default();
+        for (p, uv) in pts.into_iter().zip(uvs) {
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: p,
+                // Sem textura: o canto branco do atlas de fontes, que só tinge.
+                uv: if plain { egui::epaint::WHITE_UV } else { uv },
+                color: tint,
+            });
+        }
+        mesh.add_triangle(0, 1, 2);
+        mesh.add_triangle(0, 2, 3);
+        painter.add(egui::Shape::mesh(mesh));
+    };
+    let shadow = corners.map(|p| p + egui::vec2(3.0, 4.0));
+    quad(
+        egui::TextureId::default(),
+        shadow,
         Color32::from_black_alpha(90),
     );
     if app.doc.paper[3] < 1.0 {
-        checkerboard(&painter, canvas.intersect(panel));
+        if straight {
+            let canvas = egui::Rect::from_two_pos(corners[0], corners[2]);
+            checkerboard(&painter, canvas.intersect(panel));
+        } else {
+            quad(egui::TextureId::default(), corners, Color32::from_gray(185));
+        }
     }
     if let Some((tex, _)) = &app.view.texture {
-        let uv = egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
-        painter.image(tex.id(), canvas, uv, Color32::WHITE);
+        quad(tex.id(), corners, Color32::WHITE);
     }
 
     draw_overlay(app, &painter, panel);
@@ -320,6 +423,9 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
         if let Some(mt) = multi {
             app.view.offset += mt.translation_delta;
             app.view.zoom_at(panel, mt.center_pos, mt.zoom_delta);
+            if app.gesture_rotate && mt.rotation_delta.abs() > 0.0 {
+                app.view.rotate_at(panel, mt.center_pos, mt.rotation_delta);
+            }
         }
     } else if hovered {
         // Roda do mouse: zoom em volta do cursor. Pinça de touchpad / Ctrl+roda chega como zoom_delta.
@@ -429,6 +535,20 @@ fn tool_down(
             None
         }
         Tool::Hand => None,
+        Tool::MoveLayer => {
+            if vector_layer {
+                app.status = "Em camada vetorial, mova os objetos com Selecionar.".into();
+                None
+            } else {
+                Some(ActiveKind::MoveLayer { from: vp, to: vp })
+            }
+        }
+        Tool::SelectRect | Tool::SelectEllipse => Some(ActiveKind::Marquee {
+            tool: app.tool,
+            from: vp,
+            to: vp,
+        }),
+        Tool::Lasso => Some(ActiveKind::Lasso(vec![vp])),
         Tool::Select => {
             app.selected = app.doc.vector_hit(vp.x, vp.y, tol);
             if !vector_layer {
@@ -484,8 +604,11 @@ fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, t
             let dirty = session.add(&mut app.doc, &[pt]);
             app.invalidate(dirty);
         }
-        ActiveKind::Shape { to, .. } | ActiveKind::Move { to, .. } => *to = vp,
-        ActiveKind::Freehand(points) => points.push(vp),
+        ActiveKind::Shape { to, .. }
+        | ActiveKind::Move { to, .. }
+        | ActiveKind::Marquee { to, .. }
+        | ActiveKind::MoveLayer { to, .. } => *to = vp,
+        ActiveKind::Freehand(points) | ActiveKind::Lasso(points) => points.push(vp),
         ActiveKind::BezierHandle => {
             if let Some(a) = app.bezier.last_mut() {
                 *a = if a.p.distance(vp) > min_handle {
@@ -539,6 +662,34 @@ fn end_stroke(app: &mut ArtApp) {
             app.doc.vector_move(id, d.x, d.y)
         }
         ActiveKind::BezierHandle => Rect::EMPTY,
+        ActiveKind::Marquee { tool, from, to } => {
+            let (w, h) = (app.doc.width, app.doc.height);
+            let (a, b) = ([from.x, from.y], [to.x, to.y]);
+            // Um toque sem arrastar desmarca, como no Clip Studio.
+            let sel = if from.distance(to) < 2.0 {
+                None
+            } else if tool == Tool::SelectEllipse {
+                artapp_core::Selection::ellipse(a, b, w, h)
+            } else {
+                artapp_core::Selection::rect(a, b, w, h)
+            };
+            app.doc.set_selection(sel);
+            Rect::EMPTY
+        }
+        ActiveKind::Lasso(points) => {
+            let pts: Vec<[f64; 2]> = points.iter().map(|p| [p.x, p.y]).collect();
+            app.doc.set_selection(artapp_core::Selection::polygon(
+                &pts,
+                app.doc.width,
+                app.doc.height,
+            ));
+            Rect::EMPTY
+        }
+        ActiveKind::MoveLayer { from, to } => {
+            let d = to - from;
+            app.doc
+                .move_layer_by(d.x.round() as i32, d.y.round() as i32)
+        }
     };
     app.invalidate(dirty);
 }
@@ -561,7 +712,7 @@ fn cancel_stroke(app: &mut ArtApp) {
 
 /// Converte um ponto do documento para a tela.
 fn to_screen(app: &ArtApp, panel: egui::Rect, p: VPoint) -> Pos2 {
-    panel.min + app.view.offset + egui::vec2(p.x as f32, p.y as f32) * app.view.zoom
+    app.view.doc_to_screen(panel, p.x as f32, p.y as f32)
 }
 
 /// Desenha um caminho Bézier (achatado em segmentos) na tela.
@@ -619,6 +770,56 @@ fn draw_overlay(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
                 let line: Vec<Pos2> = points.iter().map(|p| to_screen(app, panel, *p)).collect();
                 painter.add(egui::Shape::line(line, preview));
             }
+            ActiveKind::Marquee { tool, from, to } => {
+                let pts: Vec<Pos2> = if *tool == Tool::SelectEllipse {
+                    let (c, r) = (from.midpoint(*to), (*to - *from) / 2.0);
+                    (0..=64)
+                        .map(|i| {
+                            let t = i as f64 / 64.0 * std::f64::consts::TAU;
+                            to_screen(
+                                app,
+                                panel,
+                                VPoint::new(c.x + r.x * t.cos(), c.y + r.y * t.sin()),
+                            )
+                        })
+                        .collect()
+                } else {
+                    [
+                        (from.x, from.y),
+                        (to.x, from.y),
+                        (to.x, to.y),
+                        (from.x, to.y),
+                        (from.x, from.y),
+                    ]
+                    .into_iter()
+                    .map(|(x, y)| to_screen(app, panel, VPoint::new(x, y)))
+                    .collect()
+                };
+                ants(painter, &pts);
+            }
+            ActiveKind::Lasso(points) => {
+                let pts: Vec<Pos2> = points.iter().map(|p| to_screen(app, panel, *p)).collect();
+                ants(painter, &pts);
+            }
+            ActiveKind::MoveLayer { from, to } => {
+                if let Some(l) = app.doc.active_layer() {
+                    let c = l.surface.content_bounds().intersect(&app.doc.bounds());
+                    let d = *to - *from;
+                    let pts: Vec<Pos2> = [
+                        (c.x0, c.y0),
+                        (c.x1, c.y0),
+                        (c.x1, c.y1),
+                        (c.x0, c.y1),
+                        (c.x0, c.y0),
+                    ]
+                    .into_iter()
+                    .map(|(x, y)| {
+                        to_screen(app, panel, VPoint::new(x as f64 + d.x, y as f64 + d.y))
+                    })
+                    .collect();
+                    painter.add(egui::Shape::line(pts, guide));
+                }
+            }
             ActiveKind::Move { id, from, to } => {
                 if let Some(mut path) = app.doc.vector_outline(*id) {
                     path.apply_affine(kurbo::Affine::translate(*to - *from));
@@ -626,6 +827,25 @@ fn draw_overlay(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
                 }
             }
             _ => {}
+        }
+    }
+    if let Some(sel) = &app.doc.selection {
+        let mut pts: Vec<Pos2> = sel
+            .outline
+            .iter()
+            .map(|p| to_screen(app, panel, VPoint::new(p[0], p[1])))
+            .collect();
+        if let Some(first) = pts.first().copied() {
+            pts.push(first);
+        }
+        ants(painter, &pts);
+        if sel.inverted {
+            let (w, h) = (app.doc.width as f64, app.doc.height as f64);
+            let border: Vec<Pos2> = [(0.0, 0.0), (w, 0.0), (w, h), (0.0, h), (0.0, 0.0)]
+                .into_iter()
+                .map(|(x, y)| to_screen(app, panel, VPoint::new(x, y)))
+                .collect();
+            ants(painter, &border);
         }
     }
     if let Some(path) = app.selected.and_then(|id| app.doc.vector_outline(id)) {
@@ -660,4 +880,21 @@ fn draw_overlay(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
             );
         }
     }
+}
+
+/// Contorno tracejado preto e branco (as "formigas" da seleção).
+fn ants(painter: &egui::Painter, pts: &[Pos2]) {
+    if pts.len() < 2 {
+        return;
+    }
+    painter.add(egui::Shape::line(
+        pts.to_vec(),
+        egui::Stroke::new(1.0, Color32::WHITE),
+    ));
+    painter.extend(egui::Shape::dashed_line(
+        pts,
+        egui::Stroke::new(1.0, Color32::BLACK),
+        5.0,
+        5.0,
+    ));
 }

@@ -30,6 +30,16 @@ que sobem de baixo.
   mover/recolorir/apagar objetos, balde que pinta o preenchimento da forma e borracha que apaga o
   objeto tocado. Usar uma ferramenta vetorial numa camada raster cria uma camada vetorial; dá para
   rasterizar uma camada vetorial para pintar por cima.
+- **Recursos de camada do Clip Studio**: recortar na camada abaixo (clipping), camada de referência
+  (o balde olha só ela, por exemplo o lineart) e camada de rascunho (aparece na tela, mas fica fora
+  da exportação e do balde).
+- **Seleção** retangular, elíptica e laço: pincel, balde e limpar só agem dentro dela. O lançador
+  embaixo da seleção desmarca, inverte, limpa, preenche e chama Mover camada (atalhos Ctrl+D,
+  Ctrl+Shift+I, Ctrl+A, Delete).
+- **Mover camada** arrastando o conteúdo.
+- **Cores principal e secundária** (X troca) e **cor transparente** (pincel e balde apagam), no pé
+  do trilho de ferramentas.
+- **Girar e espelhar a vista** pela barra de cima ou com dois dedos; Encaixar desfaz o giro.
 - **Desfazer/refazer** (100 passos).
 - **Zoom e pan**: pinça com dois dedos no Android; roda do mouse e botão do meio/direito no desktop;
   ferramenta Mão.
@@ -40,7 +50,7 @@ que sobem de baixo.
 
 1. Editar pontos Bézier de objetos existentes (seleção direta) e espessura variável pela pressão.
 2. Salvar/abrir projeto com camadas (e salvamento automático no Android).
-3. Seleção (laço, retângulo), transformar, réguas e simetria.
+3. Transformar (escala/giro), seleção automática, réguas e simetria, pastas e máscaras de camada.
 4. Compartilhar a imagem pelo menu do Android e importar fotos.
 
 ## Arquitetura

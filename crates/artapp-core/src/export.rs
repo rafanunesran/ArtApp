@@ -1,11 +1,11 @@
 //! Exportação PNG.
 
-use crate::composite::composite_rgba8;
+use crate::composite::{Pass, composite_pass};
 use crate::document::Document;
 
-/// Codifica a tela inteira como PNG RGBA.
+/// Codifica a tela inteira como PNG RGBA (sem as camadas de rascunho).
 pub fn png(doc: &Document, with_paper: bool) -> Result<Vec<u8>, String> {
-    let (r, px) = composite_rgba8(doc, doc.bounds(), with_paper);
+    let (r, px) = composite_pass(doc, doc.bounds(), with_paper, Pass::Final);
     encode_png(r.width(), r.height(), &px)
 }
 

@@ -20,6 +20,13 @@ pub struct Layer {
     pub blend: BlendMode,
     /// Pinta só onde já há tinta (o "bloquear pixels transparentes").
     pub lock_alpha: bool,
+    /// "Recortar na camada abaixo": só aparece onde a camada base (a primeira sem recorte
+    /// embaixo) tem tinta.
+    pub clip: bool,
+    /// Camada de referência: o balde olha só as camadas marcadas assim (ex.: o lineart).
+    pub reference: bool,
+    /// Camada de rascunho: aparece na tela, mas fica fora da exportação e do balde.
+    pub draft: bool,
     /// Camadas vetoriais: a arte editável. `surface` guarda a cópia rasterizada dela.
     pub vector: Option<crate::vector::VectorArt>,
     pub surface: Surface,
@@ -34,6 +41,9 @@ impl Layer {
             opacity: 1.0,
             blend: BlendMode::Normal,
             lock_alpha: false,
+            clip: false,
+            reference: false,
+            draft: false,
             vector: None,
             surface: Surface::new(PixelFormat::RGBA8),
         }
@@ -48,6 +58,9 @@ pub struct Document {
     pub layers: Vec<Layer>,
     /// Índice da camada ativa em `layers` (0 = a de baixo).
     pub active: usize,
+    /// Área selecionada (máscara de 8 bits, 1 = selecionado). `None` = nada selecionado, tudo
+    /// pode ser pintado.
+    pub selection: Option<crate::selection::Selection>,
     pub(crate) history: History,
     next_id: u64,
 }
@@ -61,6 +74,7 @@ impl Document {
             paper: [1.0, 1.0, 1.0, 1.0],
             layers: Vec::new(),
             active: 0,
+            selection: None,
             history: History::default(),
             next_id: 1,
         };
@@ -107,6 +121,8 @@ impl Document {
         copy.surface = src.surface;
         copy.opacity = src.opacity;
         copy.blend = src.blend;
+        copy.clip = src.clip;
+        copy.draft = src.draft;
         copy.vector = src.vector;
         let at = self.active + 1;
         self.layers.insert(at, copy);

@@ -12,6 +12,8 @@ pub struct PaintSession {
     pre: Surface,
     layer_id: u64,
     lock_alpha: bool,
+    /// Máscara da seleção no começo do traço (o traço só pinta dentro dela).
+    selection: Option<Surface>,
     points: usize,
 }
 
@@ -24,6 +26,7 @@ impl PaintSession {
             return None;
         }
         let (pre, layer_id, lock_alpha) = (layer.surface.clone(), layer.id, layer.lock_alpha);
+        let selection = doc.selection.as_ref().map(|s| s.mask.clone());
         let renderer = StrokeRenderer::new(&brush.bounded_for_render(), Some(pre.format()), zoom);
         doc.checkpoint();
         Some(Self {
@@ -31,6 +34,7 @@ impl PaintSession {
             pre,
             layer_id,
             lock_alpha,
+            selection,
             points: 0,
         })
     }
@@ -78,9 +82,13 @@ impl PaintSession {
         let Some(layer) = doc.layers.iter_mut().find(|l| l.id == id) else {
             return Rect::EMPTY;
         };
-        let r =
-            self.renderer
-                .composite(&self.pre, &mut layer.surface, None, self.lock_alpha, false);
+        let r = self.renderer.composite(
+            &self.pre,
+            &mut layer.surface,
+            self.selection.as_ref(),
+            self.lock_alpha,
+            false,
+        );
         r.intersect(&canvas)
     }
 }

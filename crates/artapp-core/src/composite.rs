@@ -6,10 +6,31 @@ use photocraft_raster::Surface;
 
 use crate::document::{Document, Layer};
 
+/// Quais camadas entram na composição.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pass {
+    /// Tudo que está visível (a tela de desenho, o conta-gotas).
+    Display,
+    /// Sem as camadas de rascunho (exportar, balde olhando todas as camadas).
+    Final,
+    /// Só as camadas de referência (balde quando alguma camada é de referência).
+    Reference,
+}
+
 /// Compõe `r` (recortado à tela) em RGBA 8 bits não pré-multiplicado, linha a linha.
 /// Com `with_paper = false` o papel fica transparente (exportar com fundo transparente).
 /// Devolve o retângulo efetivamente composto e os pixels.
 pub fn composite_rgba8(doc: &Document, r: Rect, with_paper: bool) -> (Rect, Vec<[u8; 4]>) {
+    composite_pass(doc, r, with_paper, Pass::Display)
+}
+
+/// Como [`composite_rgba8`], escolhendo as camadas pelo `pass`.
+pub fn composite_pass(
+    doc: &Document,
+    r: Rect,
+    with_paper: bool,
+    pass: Pass,
+) -> (Rect, Vec<[u8; 4]>) {
     let r = r.intersect(&doc.bounds());
     if r.is_empty() {
         return (r, Vec::new());
@@ -18,11 +39,44 @@ pub fn composite_rgba8(doc: &Document, r: Rect, with_paper: bool) -> (Rect, Vec<
     let base = if with_paper { doc.paper } else { [0.0; 4] };
     let mut acc = vec![base; n];
     let mut row = vec![[0.0f32; 4]; n];
-    for layer in doc.layers.iter().filter(|l| l.visible && l.opacity > 0.0) {
-        if !layer.surface.has_tiles_in(r) {
+    // Alfa da camada base do grupo de recorte atual (`None` = a base não aparece).
+    let mut clip_base: Option<Vec<f32>> = None;
+    for layer in &doc.layers {
+        let included = match pass {
+            Pass::Display => true,
+            Pass::Final => !layer.draft,
+            Pass::Reference => layer.reference,
+        };
+        let shown = included && layer.visible && layer.opacity > 0.0;
+        if !layer.clip {
+            clip_base = None;
+        }
+        if !shown || !layer.surface.has_tiles_in(r) {
+            if !layer.clip && shown {
+                // Base vazia neste trecho: as camadas recortadas nela também somem aqui.
+                clip_base = Some(vec![0.0; n]);
+            }
             continue;
         }
         layer.surface.read_rgba_into(r, &mut row);
+        if layer.clip {
+            let Some(mask) = &clip_base else {
+                continue;
+            };
+            for ((dst, src), m) in acc.iter_mut().zip(&row).zip(mask) {
+                let a = src[3] * m;
+                if a > 0.0 {
+                    *dst = blend::composite(
+                        layer.blend,
+                        *dst,
+                        [src[0], src[1], src[2], a],
+                        layer.opacity,
+                    );
+                }
+            }
+            continue;
+        }
+        clip_base = Some(row.iter().map(|p| p[3]).collect());
         for (dst, src) in acc.iter_mut().zip(&row) {
             if src[3] > 0.0 {
                 *dst = blend::composite(layer.blend, *dst, *src, layer.opacity);
@@ -70,8 +124,14 @@ pub fn merge_into(dst: &mut Surface, top: &Layer, width: u32, height: u32) {
     top.surface.read_rgba_into(r, &mut b);
     let mut out = Vec::with_capacity(n * 4);
     for (d, s) in a.iter().zip(&b) {
+        // Uma camada recortada mesclada na base só fica onde a base tem tinta.
+        let s = if top.clip {
+            [s[0], s[1], s[2], s[3] * d[3]]
+        } else {
+            *s
+        };
         let p = if s[3] > 0.0 {
-            blend::composite(top.blend, *d, *s, top.opacity)
+            blend::composite(top.blend, *d, s, top.opacity)
         } else {
             *d
         };
@@ -117,6 +177,40 @@ mod tests {
         doc.layers[1].opacity = 0.5;
         let p = composite_rgba8(&doc, doc.bounds(), true).1[0];
         assert!((p[0] as i32 - 128).abs() <= 1 && p[1] == 255, "{p:?}");
+    }
+
+    #[test]
+    fn clipped_layer_shows_only_over_its_base() {
+        let mut doc = Document::new(4, 1);
+        paint(&mut doc, 0, Rect::new(0, 0, 2, 1), [0.0, 0.0, 1.0, 1.0]);
+        doc.add_layer();
+        paint(&mut doc, 1, Rect::new(0, 0, 4, 1), [1.0, 0.0, 0.0, 1.0]);
+        doc.layers[1].clip = true;
+        let px = composite_rgba8(&doc, doc.bounds(), true).1;
+        assert_eq!(px[0], [255, 0, 0, 255]);
+        assert_eq!(px[3], [255, 255, 255, 255]);
+        // Base oculta: o recorte some junto.
+        doc.layers[0].visible = false;
+        assert_eq!(
+            composite_rgba8(&doc, doc.bounds(), true).1[0],
+            [255, 255, 255, 255]
+        );
+    }
+
+    #[test]
+    fn drafts_stay_out_of_the_final_image() {
+        let mut doc = Document::new(2, 1);
+        let b = doc.bounds();
+        paint(&mut doc, 0, b, [0.0, 0.0, 0.0, 1.0]);
+        doc.layers[0].draft = true;
+        assert_eq!(
+            composite_rgba8(&doc, doc.bounds(), true).1[0],
+            [0, 0, 0, 255]
+        );
+        assert_eq!(
+            composite_pass(&doc, doc.bounds(), true, Pass::Final).1[0],
+            [255, 255, 255, 255]
+        );
     }
 
     #[test]
