@@ -205,6 +205,8 @@ pub mod stylus {
         pub eraser: bool,
         /// O botão lateral da caneta estava apertado.
         pub button: bool,
+        /// O sistema reconheceu o toque como palma da mão (deve ser ignorado).
+        pub palm: bool,
     }
 
     static POINTERS: Mutex<Option<HashMap<u64, PointerInfo>>> = Mutex::new(None);

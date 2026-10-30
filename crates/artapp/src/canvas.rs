@@ -114,6 +114,10 @@ pub struct CanvasView {
     /// a ferramenta a que volta quando ele sair da tela.
     pen_swap: Option<(u64, Tool)>,
     tap: TapGesture,
+    /// A caneta já tocou a tela nesta sessão (modo automático de rejeição de palma).
+    pen_seen: bool,
+    /// O toque da caneta encostada agora: dedos que chegam enquanto ela está na tela são palma.
+    pen_touch: Option<u64>,
 }
 
 impl CanvasView {
@@ -398,8 +402,29 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
                 let id = id.0;
                 match phase {
                     TouchPhase::Start => {
+                        let pen = crate::platform::pen_info(id);
+                        if pen.palm {
+                            continue;
+                        }
+                        if pen.stylus {
+                            app.view.pen_seen = true;
+                        }
+                        let finger_blocked = !pen.stylus && fingers_blocked(app);
+                        // Palma: com a caneta encostada, outros toques não contam.
+                        if finger_blocked && app.view.pen_touch.is_some() {
+                            continue;
+                        }
                         if app.view.touches.is_empty() && !on_canvas(*pos) {
                             continue;
+                        }
+                        if pen.stylus && fingers_blocked(app) && !app.view.touches.is_empty() {
+                            // A mão já estava apoiada quando a caneta encostou: esquece os dedos.
+                            cancel_stroke(app);
+                            app.view.touches.clear();
+                            app.view.gesturing = false;
+                        }
+                        if pen.stylus {
+                            app.view.pen_touch = Some(id);
                         }
                         if app.view.touches.is_empty() {
                             app.view.tap = TapGesture {
@@ -413,15 +438,17 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
                         tap.fingers = tap.fingers.max(app.view.touches.len());
                         if app.view.touches.len() >= 2 {
                             start_gesture(app, time);
-                        } else if !app.view.gesturing {
+                        } else if !app.view.gesturing && !finger_blocked {
                             pen_swap(app, id);
                             tool_down(app, panel, *pos, *force, Some(id), time);
                         }
                     }
                     TouchPhase::Move => {
-                        let Some(prev) = app.view.touches.insert(id, *pos) else {
+                        // Toques ignorados (palma) nunca entram em `touches`.
+                        let Some(prev) = app.view.touches.get(&id).copied() else {
                             continue;
                         };
+                        app.view.touches.insert(id, *pos);
                         let tap = &mut app.view.tap;
                         if let Some(o) = tap.origins.get(&id) {
                             tap.moved = tap.moved.max(o.distance(*pos));
@@ -442,7 +469,12 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
                         }
                     }
                     TouchPhase::End | TouchPhase::Cancel => {
-                        app.view.touches.remove(&id);
+                        if app.view.pen_touch == Some(id) {
+                            app.view.pen_touch = None;
+                        }
+                        if app.view.touches.remove(&id).is_none() {
+                            continue;
+                        }
                         if app
                             .view
                             .stroke
@@ -529,6 +561,15 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
         if factor != 1.0 {
             app.view.zoom_at(panel, hover, factor);
         }
+    }
+}
+
+/// Se os dedos só mexem na vista (rejeição de palma), conforme o ajuste e se já houve caneta.
+fn fingers_blocked(app: &ArtApp) -> bool {
+    match app.finger_mode {
+        crate::app::FingerMode::Draw => false,
+        crate::app::FingerMode::PenOnly => true,
+        crate::app::FingerMode::Auto => app.view.pen_seen,
     }
 }
 

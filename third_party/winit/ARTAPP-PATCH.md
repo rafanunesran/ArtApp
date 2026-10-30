@@ -9,7 +9,8 @@ de ferramenta e os botões, então o app não tinha como saber do botão lateral
 borracha da caneta.
 
 - `src/platform/android.rs`: módulo `stylus` com `pointer_info(id)`, que diz se o toque com aquele
-  id veio de caneta, da ponta de borracha e se o botão lateral estava apertado.
+  id veio de caneta, da ponta de borracha, se o botão lateral estava apertado e se o sistema
+  marcou o toque como palma.
 - `src/platform_impl/android/mod.rs`: grava essas informações a cada `MotionEvent` e trata as
   ações 211/212/213 que aparelhos Samsung antigos usam para a S Pen com o botão apertado.
 
