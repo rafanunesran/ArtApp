@@ -20,6 +20,8 @@ const MAX_ZOOM: f32 = 64.0;
 /// O que o dedo/mouse está fazendo desde que encostou.
 enum ActiveKind {
     Paint(Box<PaintSession>),
+    /// Ferramenta Misturar.
+    Mix(Box<artapp_core::mix::MixSession>),
     /// Linha, retângulo ou elipse: do ponto inicial ao atual (pixels da tela de desenho).
     Shape {
         tool: Tool,
@@ -235,10 +237,15 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
     let hover = ui
         .input(|i| i.pointer.hover_pos())
         .filter(|p| panel.contains(*p));
-    if let Some(p) =
-        hover.filter(|_| !app.view.saw_touch && matches!(app.tool, Tool::Brush | Tool::Eraser))
-    {
-        let r = app.stroke_brush().size * 0.5 * app.view.zoom;
+    if let Some(p) = hover.filter(|_| {
+        !app.view.saw_touch && matches!(app.tool, Tool::Brush | Tool::Eraser | Tool::Blend)
+    }) {
+        let size = if app.tool == Tool::Blend {
+            app.mix_brush.size
+        } else {
+            app.stroke_brush().size
+        };
+        let r = size * 0.5 * app.view.zoom;
         painter.circle_stroke(
             p,
             r.max(1.5),
@@ -498,7 +505,14 @@ fn tool_down(
                 return;
             }
             let brush = app.stroke_brush();
-            let Some(mut session) = PaintSession::begin(&mut app.doc, &brush, app.view.zoom) else {
+            let taper = if app.tool == Tool::Brush {
+                app.taper
+            } else {
+                artapp_core::Taper::default()
+            };
+            let Some(mut session) =
+                PaintSession::begin_tapered(&mut app.doc, &brush, app.view.zoom, taper)
+            else {
                 app.status = "A camada ativa está oculta.".into();
                 return;
             };
@@ -508,6 +522,24 @@ fn tool_down(
                 app.remember_color();
             }
             Some(ActiveKind::Paint(Box::new(session)))
+        }
+        Tool::Blend => {
+            if vector_layer {
+                app.status = "Misturar funciona em camadas raster.".into();
+                return;
+            }
+            let Some(mut session) = artapp_core::mix::MixSession::begin(
+                &mut app.doc,
+                app.mix_kind,
+                &app.mix_brush,
+                app.mix_strength,
+            ) else {
+                app.status = "A camada ativa está oculta.".into();
+                return;
+            };
+            let dirty = session.add(&mut app.doc, &[pt]);
+            app.invalidate(dirty);
+            Some(ActiveKind::Mix(Box::new(session)))
         }
         Tool::Fill => {
             let r = if vector_layer {
@@ -604,6 +636,10 @@ fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, t
             let dirty = session.add(&mut app.doc, &[pt]);
             app.invalidate(dirty);
         }
+        ActiveKind::Mix(session) => {
+            let dirty = session.add(&mut app.doc, &[pt]);
+            app.invalidate(dirty);
+        }
         ActiveKind::Shape { to, .. }
         | ActiveKind::Move { to, .. }
         | ActiveKind::Marquee { to, .. }
@@ -628,6 +664,7 @@ fn end_stroke(app: &mut ArtApp) {
     let style = app.vector_style();
     let dirty = match s.kind {
         ActiveKind::Paint(session) => session.end(&mut app.doc),
+        ActiveKind::Mix(session) => session.end(),
         ActiveKind::Shape { tool, from, to } => {
             if from.distance(to) < 1.0 {
                 return;
@@ -700,6 +737,10 @@ fn cancel_stroke(app: &mut ArtApp) {
     };
     match s.kind {
         ActiveKind::Paint(session) => {
+            let dirty = session.cancel(&mut app.doc);
+            app.invalidate(dirty);
+        }
+        ActiveKind::Mix(session) => {
             let dirty = session.cancel(&mut app.doc);
             app.invalidate(dirty);
         }

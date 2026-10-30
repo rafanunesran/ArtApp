@@ -3,6 +3,7 @@
 //! `android/`).
 
 mod app;
+mod brush_editor;
 mod canvas;
 mod panels;
 pub mod platform;

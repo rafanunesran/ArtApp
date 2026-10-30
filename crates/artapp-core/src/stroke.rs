@@ -6,8 +6,36 @@ use photocraft_raster::Surface;
 
 use crate::document::Document;
 
+/// Afinar o começo e o fim do traço, em pixels do documento (o "início e fim" do Clip Studio).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Taper {
+    pub start: f32,
+    pub end: f32,
+}
+
+impl Taper {
+    /// Fator 0..1 da pressão a `d` pixels do começo e `rest` pixels do fim.
+    fn factor(&self, d: f64, rest: Option<f64>) -> f32 {
+        let ramp = |len: f32, x: f64| {
+            if len > 0.0 {
+                ((x / f64::from(len)).clamp(0.0, 1.0) as f32).max(0.05)
+            } else {
+                1.0
+            }
+        };
+        ramp(self.start, d) * rest.map_or(1.0, |r| ramp(self.end, r))
+    }
+}
+
 pub struct PaintSession {
     renderer: StrokeRenderer,
+    brush: BrushSettings,
+    zoom: f32,
+    taper: Taper,
+    /// Pontos recebidos (sem o afinamento), para refazer o traço com o fim afinado.
+    raw: Vec<StrokePoint>,
+    /// Distância percorrida até o último ponto.
+    travelled: f64,
     /// A camada como estava antes do traço (o renderizador compõe sempre a partir dela).
     pre: Surface,
     layer_id: u64,
@@ -21,6 +49,16 @@ impl PaintSession {
     /// Começa um traço na camada ativa. `zoom` é o zoom da vista (a suavização usa).
     /// Devolve `None` se a camada ativa estiver oculta, for vetorial ou não existir.
     pub fn begin(doc: &mut Document, brush: &BrushSettings, zoom: f32) -> Option<Self> {
+        Self::begin_tapered(doc, brush, zoom, Taper::default())
+    }
+
+    /// Como [`Self::begin`], afinando o começo e o fim do traço.
+    pub fn begin_tapered(
+        doc: &mut Document,
+        brush: &BrushSettings,
+        zoom: f32,
+        taper: Taper,
+    ) -> Option<Self> {
         let layer = doc.active_layer()?;
         if !layer.visible || layer.is_vector() {
             return None;
@@ -31,6 +69,11 @@ impl PaintSession {
         doc.checkpoint();
         Some(Self {
             renderer,
+            brush: brush.clone(),
+            zoom,
+            taper,
+            raw: Vec::new(),
+            travelled: 0.0,
             pre,
             layer_id,
             lock_alpha,
@@ -55,14 +98,71 @@ impl PaintSession {
             return Rect::EMPTY;
         }
         self.points += pts.len();
-        self.renderer.push(&pts);
+        let mut live = Vec::with_capacity(pts.len());
+        for p in pts {
+            if let Some(last) = self.raw.last() {
+                self.travelled += (p.x - last.x).hypot(p.y - last.y);
+            }
+            self.raw.push(p);
+            live.push(StrokePoint {
+                pressure: p.pressure * self.taper.factor(self.travelled, None),
+                ..p
+            });
+        }
+        self.renderer.push(&live);
         self.composite(doc)
     }
 
     /// Termina o traço. Devolve o retângulo alterado.
     pub fn end(mut self, doc: &mut Document) -> Rect {
+        if self.taper.end > 0.0 && self.raw.len() > 1 {
+            return self.redo_with_end_taper(doc);
+        }
         self.renderer.finish();
         self.composite(doc)
+    }
+
+    /// Refaz o traço inteiro com o fim afinado (só dá para saber onde é o fim quando ele acaba).
+    fn redo_with_end_taper(mut self, doc: &mut Document) -> Rect {
+        let before = self.renderer.bounds();
+        let total = self.travelled;
+        let mut d = 0.0;
+        let pts: Vec<StrokePoint> = self
+            .raw
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                if i > 0 {
+                    let q = self.raw[i - 1];
+                    d += (p.x - q.x).hypot(p.y - q.y);
+                }
+                StrokePoint {
+                    pressure: p.pressure * self.taper.factor(d, Some(total - d)),
+                    ..*p
+                }
+            })
+            .collect();
+        self.renderer = StrokeRenderer::new(
+            &self.brush.bounded_for_render(),
+            Some(self.pre.format()),
+            self.zoom,
+        );
+        self.renderer.push(&pts);
+        self.renderer.finish();
+        let canvas = doc.bounds();
+        let id = self.layer_id;
+        let Some(layer) = doc.layers.iter_mut().find(|l| l.id == id) else {
+            return Rect::EMPTY;
+        };
+        layer.surface = self.pre.clone();
+        let r = self.renderer.composite(
+            &self.pre,
+            &mut layer.surface,
+            self.selection.as_ref(),
+            self.lock_alpha,
+            true,
+        );
+        r.union(&before.inflate(2)).intersect(&canvas)
     }
 
     /// Desfaz o traço inteiro (ex.: o segundo dedo encostou, era um gesto de zoom).
@@ -119,6 +219,30 @@ mod tests {
         assert_eq!(doc.layers[0].surface.rgba(80, 100)[3], 0.0);
         assert!(doc.redo());
         assert!(doc.layers[0].surface.rgba(80, 100)[3] > 0.9);
+    }
+
+    #[test]
+    fn tapered_stroke_is_thin_at_both_ends() {
+        let mut doc = Document::new(300, 100);
+        let brush = BrushSettings {
+            size: 20.0,
+            ..Default::default()
+        };
+        let taper = Taper {
+            start: 80.0,
+            end: 80.0,
+        };
+        let mut s = PaintSession::begin_tapered(&mut doc, &brush, 1.0, taper).unwrap();
+        let pts: Vec<_> = (0..=100)
+            .map(|i| StrokePoint::new(50.0 + i as f64 * 2.0, 50.0, 1.0))
+            .collect();
+        s.add(&mut doc, &pts);
+        s.end(&mut doc);
+        let surf = &doc.layers[0].surface;
+        // No meio o traço tem a largura toda; perto das pontas, bem menos.
+        assert!(surf.rgba(150, 57)[3] > 0.5);
+        assert!(surf.rgba(54, 57)[3] < 0.1);
+        assert!(surf.rgba(246, 57)[3] < 0.1);
     }
 
     #[test]

@@ -10,7 +10,7 @@ use photocraft_paint::{
 };
 
 /// Um pincel da paleta: nome mostrado e configurações.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct BrushEntry {
     pub name: String,
     pub group: String,
@@ -123,9 +123,46 @@ pub fn all() -> Vec<BrushEntry> {
     v
 }
 
+/// Grupo dos pincéis criados pelo usuário.
+pub const CUSTOM_GROUP: &str = "Meus pincéis";
+
+/// Lê os pincéis salvos pelo usuário (lista vazia se o arquivo não existe ou não abre).
+pub fn load_custom(path: &std::path::Path) -> Vec<BrushEntry> {
+    std::fs::read(path)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Vec<BrushEntry>>(&b).ok())
+        .unwrap_or_default()
+}
+
+/// Grava os pincéis do usuário.
+pub fn save_custom(path: &std::path::Path, brushes: &[BrushEntry]) -> Result<(), String> {
+    let custom: Vec<&BrushEntry> = brushes.iter().filter(|b| b.group == CUSTOM_GROUP).collect();
+    let json = serde_json::to_vec_pretty(&custom).map_err(|e| e.to_string())?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, json).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_brushes_round_trip() {
+        let dir = std::env::temp_dir().join(format!("artapp-test-{}", std::process::id()));
+        let path = dir.join("brushes.json");
+        let mut b = drawing();
+        b[0].group = CUSTOM_GROUP.into();
+        b[0].name = "Meu".into();
+        b[0].settings.size = 33.0;
+        save_custom(&path, &b).unwrap_or_default();
+        let back = load_custom(&path);
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].name, "Meu");
+        assert_eq!(back[0].settings.size, 33.0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn has_drawing_and_photocraft_brushes() {

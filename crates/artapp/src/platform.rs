@@ -6,6 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Pastas candidatas para salvar, em ordem de preferência.
 static SAVE_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+/// Pasta privada do app (pincéis do usuário, ajustes).
+static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// `true` no Android: a interface usa controles maiores para o dedo.
 pub const TOUCH_FIRST: bool = cfg!(target_os = "android");
@@ -17,7 +19,22 @@ pub fn init_android(app: &winit::platform::android::activity::AndroidApp) {
     let mut dirs = vec![PathBuf::from("/storage/emulated/0/Pictures/ArtApp")];
     dirs.extend(app.external_data_path());
     dirs.extend(app.internal_data_path());
+    if let Some(d) = app.internal_data_path() {
+        let _ = DATA_DIR.set(d);
+    }
     let _ = SAVE_DIRS.set(dirs);
+}
+
+/// Onde ficam os dados do app (no desktop, `~/.config/artapp`).
+pub fn data_dir() -> PathBuf {
+    if let Some(d) = DATA_DIR.get() {
+        return d.clone();
+    }
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default()
+        .join(".config")
+        .join("artapp")
 }
 
 fn save_dirs() -> Vec<PathBuf> {

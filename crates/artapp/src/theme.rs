@@ -34,6 +34,8 @@ pub const RADIUS: u8 = 12;
 pub const TOUCH: f32 = 44.0;
 
 /// Ícones (pontos de código da fonte Lucide incluída em `assets/fonts/lucide-artapp.ttf`).
+/// Alguns ficam reservados para as próximas ferramentas.
+#[allow(dead_code)]
 pub mod icon {
     pub const MENU: char = '\u{e119}';
     pub const UNDO: char = '\u{e2a1}';
@@ -84,6 +86,32 @@ pub mod icon {
     pub const INVERT: char = '\u{e3db}';
     pub const DESELECT: char = '\u{e175}';
     pub const SCISSORS: char = '\u{e14e}';
+    pub const DROPLET: char = '\u{e0b4}';
+    pub const DROPLETS: char = '\u{e0b5}';
+    pub const WAND_SPARKLES: char = '\u{e357}';
+    pub const SCALING: char = '\u{e2ec}';
+    pub const SYMMETRY: char = '\u{e3b6}';
+    pub const TYPE: char = '\u{e198}';
+    pub const MOUSE_POINTER: char = '\u{e11f}';
+    pub const GRADIENT: char = '\u{e59c}';
+    pub const SUN_DIM: char = '\u{e299}';
+    pub const STAMP: char = '\u{e3bb}';
+    pub const CROP: char = '\u{e0ab}';
+    pub const CONTRAST: char = '\u{e09d}';
+    pub const HEXAGON: char = '\u{e0f3}';
+    pub const TRIANGLE: char = '\u{e192}';
+    pub const GRID_3X3: char = '\u{e0e9}';
+    pub const COMBINE: char = '\u{e44c}';
+    pub const ROTATE_3D: char = '\u{e2ea}';
+    pub const RULER: char = '\u{e14b}';
+    pub const SAVE: char = '\u{e14d}';
+    pub const FOLDER_OPEN: char = '\u{e247}';
+    pub const SPLINE_POINTER: char = '\u{e64f}';
+    pub const SPARKLES: char = '\u{e412}';
+    pub const PAINT_ROLLER: char = '\u{e59e}';
+    pub const FLIP_H_SIMPLE: char = '\u{e35d}';
+    pub const SCISSORS_DASHED: char = '\u{e4e9}';
+    pub const SPLINE: char = '\u{e38b}';
 }
 
 const ICON_FONT: &[u8] = include_bytes!("../../../assets/fonts/lucide-artapp.ttf");

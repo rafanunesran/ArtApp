@@ -16,6 +16,8 @@ pub enum Tool {
     Eraser,
     Fill,
     Eyedropper,
+    /// Misturar: desfocar ou dedo.
+    Blend,
     Hand,
     /// Move o conteúdo da camada ativa.
     MoveLayer,
@@ -36,9 +38,10 @@ pub enum Tool {
 
 impl Tool {
     /// Ferramentas raster, sempre visíveis na barra.
-    pub const RASTER: [Tool; 5] = [
+    pub const RASTER: [Tool; 6] = [
         Tool::Brush,
         Tool::Eraser,
+        Tool::Blend,
         Tool::Fill,
         Tool::Eyedropper,
         Tool::Hand,
@@ -66,6 +69,7 @@ impl Tool {
             Tool::Eraser => "Borracha",
             Tool::Fill => "Balde",
             Tool::Eyedropper => "Conta-gotas",
+            Tool::Blend => "Misturar",
             Tool::Hand => "Mão",
             Tool::MoveLayer => "Mover camada",
             Tool::SelectRect => "Seleção retangular",
@@ -87,6 +91,7 @@ impl Tool {
             Tool::Eraser => icon::ERASER,
             Tool::Fill => icon::BUCKET,
             Tool::Eyedropper => icon::PIPETTE,
+            Tool::Blend => icon::DROPLETS,
             Tool::Hand => icon::HAND,
             Tool::MoveLayer => icon::MOVE,
             Tool::SelectRect => icon::SQUARE_DASHED,
@@ -125,6 +130,7 @@ impl Tool {
             Tool::Eraser => egui::Key::E,
             Tool::Fill => egui::Key::G,
             Tool::Eyedropper => egui::Key::I,
+            Tool::Blend => egui::Key::J,
             Tool::Hand => egui::Key::H,
             Tool::MoveLayer => egui::Key::K,
             Tool::SelectRect => egui::Key::S,
@@ -158,7 +164,15 @@ pub struct ArtApp {
     pub brushes: Vec<BrushEntry>,
     pub brush_index: usize,
     pub brush: BrushSettings,
+    /// Afinar o começo e o fim dos traços do pincel.
+    pub taper: artapp_core::Taper,
+    /// Nome para "Salvar como pincel".
+    pub new_brush_name: String,
     pub eraser: BrushSettings,
+    /// Ferramenta Misturar: modo, ponta e força.
+    pub mix_kind: artapp_core::mix::MixKind,
+    pub mix_brush: BrushSettings,
+    pub mix_strength: f32,
     /// Cor principal (a de pintar).
     pub color: Color32,
     /// Cor secundária (troca com a principal pelo X ou tocando nela).
@@ -203,7 +217,8 @@ pub struct ArtApp {
 impl ArtApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         crate::theme::install(&cc.egui_ctx, platform::TOUCH_FIRST);
-        let brushes = brushes::all();
+        let mut brushes = brushes::all();
+        brushes.extend(brushes::load_custom(&brushes_path()));
         let brush = brushes
             .first()
             .map(|b| b.settings.clone())
@@ -217,6 +232,16 @@ impl ArtApp {
             brushes,
             brush_index: 0,
             brush,
+            taper: artapp_core::Taper::default(),
+            new_brush_name: String::new(),
+            mix_kind: artapp_core::mix::MixKind::Smudge,
+            mix_brush: BrushSettings {
+                size: 40.0,
+                hardness: 0.4,
+                spacing: 0.08,
+                ..Default::default()
+            },
+            mix_strength: 0.6,
             eraser: BrushSettings {
                 size: 30.0,
                 hardness: 0.8,
@@ -407,6 +432,67 @@ impl ArtApp {
         self.invalidate(r);
     }
 
+    /// Guarda o pincel atual (com todos os ajustes) em "Meus pincéis".
+    pub fn save_brush(&mut self) {
+        let name = self.new_brush_name.trim();
+        let name = if name.is_empty() {
+            format!("Pincel {}", self.brushes.len() + 1)
+        } else {
+            name.to_string()
+        };
+        let entry = BrushEntry {
+            name: name.clone(),
+            group: brushes::CUSTOM_GROUP.into(),
+            settings: self.brush.clone(),
+        };
+        match self
+            .brushes
+            .iter()
+            .position(|b| b.group == brushes::CUSTOM_GROUP && b.name == name)
+        {
+            Some(i) => {
+                if let Some(b) = self.brushes.get_mut(i) {
+                    *b = entry;
+                }
+                self.brush_index = i;
+            }
+            None => {
+                self.brushes.push(entry);
+                self.brush_index = self.brushes.len() - 1;
+            }
+        }
+        self.brush_previews.clear();
+        self.new_brush_name.clear();
+        self.status = match brushes::save_custom(&brushes_path(), &self.brushes) {
+            Ok(()) => format!("Pincel \"{name}\" salvo."),
+            Err(e) => format!("Pincel criado, mas não foi possível gravar: {e}"),
+        };
+    }
+
+    /// Apaga um pincel de "Meus pincéis".
+    pub fn delete_brush(&mut self, i: usize) {
+        if self
+            .brushes
+            .get(i)
+            .is_none_or(|b| b.group != brushes::CUSTOM_GROUP)
+        {
+            return;
+        }
+        self.brushes.remove(i);
+        self.brush_index = self.brush_index.min(self.brushes.len().saturating_sub(1));
+        self.brush_previews.clear();
+        if let Err(e) = brushes::save_custom(&brushes_path(), &self.brushes) {
+            self.status = format!("Não foi possível gravar: {e}");
+        }
+    }
+
+    /// Volta o pincel atual para os ajustes do preset.
+    pub fn reset_brush(&mut self) {
+        if let Some(entry) = self.brushes.get(self.brush_index) {
+            self.brush = entry.settings.clone();
+        }
+    }
+
     pub fn set_tool(&mut self, t: Tool) {
         if t == Tool::Eyedropper && self.tool != Tool::Eyedropper {
             self.previous_tool = self.tool;
@@ -558,10 +644,10 @@ impl ArtApp {
         if let Some(t) = tool {
             self.set_tool(t);
         }
-        let target = if self.tool == Tool::Eraser {
-            &mut self.eraser
-        } else {
-            &mut self.brush
+        let target = match self.tool {
+            Tool::Eraser => &mut self.eraser,
+            Tool::Blend => &mut self.mix_brush,
+            _ => &mut self.brush,
         };
         if bigger {
             target.size = (target.size * 1.2).min(photocraft_max_size());
@@ -570,6 +656,10 @@ impl ArtApp {
             target.size = (target.size / 1.2).max(1.0);
         }
     }
+}
+
+fn brushes_path() -> std::path::PathBuf {
+    platform::data_dir().join("brushes.json")
 }
 
 /// Tamanho da miniatura (cabe em 80×80 mantendo a proporção da tela).
