@@ -49,6 +49,48 @@ pub enum Adjust {
     },
     Invert,
     Desaturate,
+    /// Curvas: a saída em cinco entradas fixas (0, ¼, ½, ¾, 1), para o RGB junto e cada canal.
+    Curves {
+        /// `[rgb, r, g, b]`, cada um com as cinco alturas 0..1.
+        ys: [[f32; 5]; 4],
+    },
+    /// Mapa de gradiente: o brilho vira uma cor entre `dark` e `light`.
+    GradientMap {
+        dark: [f32; 3],
+        light: [f32; 3],
+    },
+    /// Equilíbrio de cores: desvio RGB (-1..1) nas sombras, meios-tons e realces.
+    ColorBalance {
+        tones: [[f32; 3]; 3],
+    },
+}
+
+/// Curvas sem mudança nenhuma.
+pub const CURVE_IDENTITY: [f32; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
+
+/// A curva por cinco pontos igualmente espaçados (Catmull-Rom, presa a 0..1).
+pub fn curve_eval(ys: &[f32; 5], x: f32) -> f32 {
+    let t = x.clamp(0.0, 1.0) * 4.0;
+    let i = (t.floor() as usize).min(3);
+    let f = t - i as f32;
+    // Fora das pontas, continua em reta (assim a curva identidade fica reta de verdade).
+    let y = |k: isize| match k {
+        -1 => 2.0 * ys[0] - ys[1],
+        5 => 2.0 * ys[4] - ys[3],
+        k => ys[k as usize],
+    };
+    let (p0, p1, p2, p3) = (
+        y(i as isize - 1),
+        y(i as isize),
+        y(i as isize + 1),
+        y(i as isize + 2),
+    );
+    let v = 0.5
+        * (2.0 * p1
+            + (p2 - p0) * f
+            + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * f * f
+            + (3.0 * p1 - p0 - 3.0 * p2 + p3) * f * f * f);
+    v.clamp(0.0, 1.0)
 }
 
 impl Document {
@@ -165,6 +207,23 @@ impl Document {
             true,
         );
         Selection::from_mask(&m, area)
+    }
+
+    /// Borracha mágica (do PhotoCraft): apaga da camada ativa a área de cor parecida com a do
+    /// ponto tocado, respeitando a seleção.
+    pub fn magic_erase(&mut self, x: i32, y: i32, tolerance: f32, contiguous: bool) -> Rect {
+        let Some(wand) = self.magic_wand(x, y, tolerance, false, contiguous) else {
+            return Rect::EMPTY;
+        };
+        let Some(r) = self.edit_area(false) else {
+            return Rect::EMPTY;
+        };
+        self.map_pixels(
+            r,
+            move |px, py, p| {
+                if wand.contains(px, py) { [0.0; 4] } else { p }
+            },
+        )
     }
 
     /// Aplica um filtro do PhotoCraft na camada ativa (dentro da seleção, se houver).
@@ -402,6 +461,26 @@ pub fn adjust_pixel(adj: Adjust, p: [f32; 4]) -> [f32; 4] {
             let v = if luma(p) >= level { 1.0 } else { 0.0 };
             [v, v, v, p[3]]
         }
+        Adjust::Curves { ys } => {
+            let c = |ch: usize, v: f32| curve_eval(&ys[0], curve_eval(&ys[ch + 1], v));
+            [c(0, p[0]), c(1, p[1]), c(2, p[2]), p[3]]
+        }
+        Adjust::GradientMap { dark, light } => {
+            let l = luma(p).clamp(0.0, 1.0);
+            let m = |i: usize| dark[i] + (light[i] - dark[i]) * l;
+            [m(0), m(1), m(2), p[3]]
+        }
+        Adjust::ColorBalance { tones } => {
+            let l = luma(p).clamp(0.0, 1.0);
+            // Pesos suaves de cada faixa de tom.
+            let w = [
+                (1.0 - l * 2.0).clamp(0.0, 1.0),
+                1.0 - (l * 2.0 - 1.0).abs(),
+                (l * 2.0 - 1.0).clamp(0.0, 1.0),
+            ];
+            let shift = |c: usize| (0..3).map(|t| tones[t][c] * w[t]).sum::<f32>() * 0.5;
+            [p[0] + shift(0), p[1] + shift(1), p[2] + shift(2), p[3]]
+        }
         Adjust::Invert => rgb(&|v| 1.0 - v),
         Adjust::Desaturate => {
             let l = luma(p);
@@ -415,6 +494,44 @@ pub fn adjust_pixel(adj: Adjust, p: [f32; 4]) -> [f32; 4] {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+
+    #[test]
+    fn magic_erase_removes_the_touched_colour_only() {
+        let mut doc = Document::new(40, 20);
+        doc.layers[0]
+            .surface
+            .fill_rect(Rect::new(0, 0, 20, 20), &[1.0, 0.0, 0.0, 1.0]);
+        doc.layers[0]
+            .surface
+            .fill_rect(Rect::new(20, 0, 40, 20), &[0.0, 0.0, 1.0, 1.0]);
+        doc.magic_erase(5, 5, 0.1, true);
+        assert_eq!(doc.layers[0].surface.rgba(5, 5)[3], 0.0);
+        assert_eq!(doc.layers[0].surface.rgba(30, 5)[3], 1.0);
+        let c = |x| doc.layers[0].surface.rgba(x, 5);
+        assert!(c(30)[2] > 0.9);
+    }
+
+    #[test]
+    fn curves_identity_and_gradient_map() {
+        let p = [0.3, 0.6, 0.9, 1.0];
+        let id = adjust_pixel(
+            Adjust::Curves {
+                ys: [CURVE_IDENTITY; 4],
+            },
+            p,
+        );
+        for c in 0..3 {
+            assert!((id[c] - p[c]).abs() < 1e-4);
+        }
+        let g = adjust_pixel(
+            Adjust::GradientMap {
+                dark: [0.0, 0.0, 0.0],
+                light: [1.0, 0.0, 0.0],
+            },
+            [1.0, 1.0, 1.0, 1.0],
+        );
+        assert!(g[0] > 0.99 && g[1] < 0.01);
+    }
 
     #[test]
     fn linear_gradient_goes_from_one_color_to_the_other() {

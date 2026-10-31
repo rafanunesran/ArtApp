@@ -654,6 +654,7 @@ fn mix_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             (MixKind::Saturate, "Saturar"),
             (MixKind::Desaturate, "Dessaturar"),
             (MixKind::Clone, "Carimbo"),
+            (MixKind::Heal, "Corretivo"),
         ] {
             ui.selectable_value(&mut app.mix_kind, kind, name);
         }
@@ -668,6 +669,9 @@ fn mix_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             MixKind::Saturate => "Deixa as cores mais vivas (esponja).",
             MixKind::Desaturate => "Puxa as cores para o cinza (esponja).",
             MixKind::Clone => "Toque para marcar a origem; depois pinte para copiar dela.",
+            MixKind::Heal => {
+                "Pinte por cima da mancha; ao soltar, ela some, refeita com a textura em volta."
+            }
         })
         .size(12.5)
         .color(color::TEXT_MUTED),
@@ -1142,6 +1146,21 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             .logarithmic(true)
             .text("Tamanho"),
     );
+    // Tamanhos prontos, como a paleta "Tamanho do pincel" do Clip Studio.
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::splat(3.0);
+        for s in [
+            1.0, 2.0, 3.0, 5.0, 8.0, 12.0, 20.0, 30.0, 50.0, 80.0, 120.0, 200.0,
+        ] {
+            if s <= max
+                && ui
+                    .selectable_label((b.size - s).abs() < 0.5, format!("{s}"))
+                    .clicked()
+            {
+                b.size = s;
+            }
+        }
+    });
     ui.add(egui::Slider::new(&mut b.opacity, 0.01..=1.0).text("Opacidade"));
     ui.add(egui::Slider::new(&mut b.flow, 0.01..=1.0).text("Fluxo"));
     ui.add(egui::Slider::new(&mut b.hardness, 0.0..=1.0).text("Dureza"));
@@ -1159,6 +1178,12 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
     ui.add_space(4.0);
     symmetry_settings(app, ui);
     if app.tool == Tool::Eraser {
+        section(ui, "Borracha mágica");
+        theme::switch(ui, &mut app.eraser_magic, "Toque apaga a cor parecida");
+        if app.eraser_magic {
+            ui.add(egui::Slider::new(&mut app.wand_tolerance, 0.0..=1.0).text("Tolerância"));
+            ui.checkbox(&mut app.wand_contiguous, "Só a área contígua");
+        }
         let mut none = artapp_core::Taper::default();
         crate::brush_editor::show(ui, &mut app.eraser, &mut none);
         return;

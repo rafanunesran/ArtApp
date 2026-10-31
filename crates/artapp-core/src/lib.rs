@@ -14,6 +14,7 @@ pub mod document;
 pub mod edit;
 pub mod export;
 pub mod fill;
+pub mod heal;
 pub mod history;
 pub mod liquify;
 pub mod mask;

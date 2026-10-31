@@ -217,12 +217,16 @@ impl Tool {
 }
 
 /// Tamanhos de tela oferecidos em "Nova tela".
-pub const CANVAS_PRESETS: [(&str, u32, u32); 5] = [
+pub const CANVAS_PRESETS: [(&str, u32, u32); 9] = [
     ("Retrato 1536×2048", 1536, 2048),
     ("Quadrado 2048×2048", 2048, 2048),
     ("Celular 1080×1920", 1080, 1920),
     ("Paisagem 1920×1080", 1920, 1080),
     ("A4 150 dpi", 1240, 1754),
+    ("A4 300 dpi (impressão)", 2480, 3508),
+    ("Página de quadrinho 1988×3075", 1988, 3075),
+    ("Ilustração 3000×3000", 3000, 3000),
+    ("4K 3840×2160", 3840, 2160),
 ];
 
 pub struct ArtApp {
@@ -239,6 +243,8 @@ pub struct ArtApp {
     /// Nome para "Salvar como pincel".
     pub new_brush_name: String,
     pub eraser: BrushSettings,
+    /// Borracha mágica: um toque apaga a área de cor parecida.
+    pub eraser_magic: bool,
     /// Ferramenta Misturar: modo, ponta e força.
     pub mix_kind: artapp_core::mix::MixKind,
     pub mix_brush: BrushSettings,
@@ -406,6 +412,7 @@ impl ArtApp {
             color_state: Default::default(),
             grid_size: 64.0,
             ruler: None,
+            eraser_magic: false,
             ruler_kind: 0,
             ruler_snap: true,
             ruler_live: None,
