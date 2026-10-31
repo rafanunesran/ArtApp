@@ -446,6 +446,16 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.dialog = Some(crate::dialogs::Dialog::filter(0));
         ui.close();
     }
+    if item(ui, icon::SUN_DIM, "Efeitos (brilho, falha, aberração)…").clicked() {
+        app.dialog = Some(crate::dialogs::Dialog::Effect(
+            artapp_core::effects::Effect::Bloom {
+                radius: 24.0,
+                intensity: 1.0,
+                threshold: 0.6,
+            },
+        ));
+        ui.close();
+    }
     if item(ui, icon::CONTRAST, "Correção de cor…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::adjust());
         ui.close();

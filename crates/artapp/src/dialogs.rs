@@ -45,6 +45,26 @@ const FILTERS: &[FilterDef] = &[
     },
     FilterDef {
         group: "Desfoque",
+        name: "Desfoque de perspectiva (zoom)",
+        template: r#"{"filter":"radialBlur","amount":20,"method":"zoom","quality":"good","centerX":0.5,"centerY":0.5}"#,
+        fields: &[
+            ("amount", "Quantidade", 1.0, 100.0),
+            ("centerX", "Centro X (0 a 1)", 0.0, 1.0),
+            ("centerY", "Centro Y (0 a 1)", 0.0, 1.0),
+        ],
+    },
+    FilterDef {
+        group: "Desfoque",
+        name: "Desfoque radial (giro)",
+        template: r#"{"filter":"radialBlur","amount":10,"method":"spin","quality":"good","centerX":0.5,"centerY":0.5}"#,
+        fields: &[
+            ("amount", "Quantidade", 1.0, 100.0),
+            ("centerX", "Centro X (0 a 1)", 0.0, 1.0),
+            ("centerY", "Centro Y (0 a 1)", 0.0, 1.0),
+        ],
+    },
+    FilterDef {
+        group: "Desfoque",
         name: "Desfoque de superfície",
         template: r#"{"filter":"surfaceBlur","radius":5,"threshold":15}"#,
         fields: &[
@@ -246,6 +266,8 @@ pub enum Dialog {
     },
     /// Linhas de concentração ou de velocidade (quadrinho) numa camada vetorial nova.
     MangaLines(artapp_core::manga_lines::MangaLines),
+    /// Brilho difuso, falha digital ou aberração cromática na camada ativa.
+    Effect(artapp_core::effects::Effect),
     /// Requadros de quadrinho numa camada vetorial nova.
     Frames(artapp_core::frames::Frames),
     /// Tamanho da tela: `scale` escala o desenho; senão só a área muda, presa em `anchor`
@@ -323,6 +345,7 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
         Dialog::LineWidth { .. } => "Ajustar largura da linha",
         Dialog::MangaLines(_) => "Linhas de efeito",
         Dialog::Frames(_) => "Requadros",
+        Dialog::Effect(_) => "Efeitos",
     };
     let mut outcome = Outcome::Keep;
     let mut open = true;
@@ -359,6 +382,7 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
                 }
                 Dialog::MangaLines(p) => manga_lines_ui(ui, p),
                 Dialog::Frames(p) => frames_ui(ui, p),
+                Dialog::Effect(e) => effect_ui(ui, e),
                 Dialog::Text {
                     text,
                     size,
@@ -547,6 +571,7 @@ fn apply(app: &mut ArtApp, dialog: &Dialog) {
             }
         }
         Dialog::Adjust(adj) => app.doc.adjust(*adj),
+        Dialog::Effect(e) => app.doc.apply_effect(e),
         Dialog::CanvasSize { .. }
         | Dialog::Text { .. }
         | Dialog::LineWidth { .. }
@@ -557,6 +582,76 @@ fn apply(app: &mut ArtApp, dialog: &Dialog) {
         app.status = "Escolha uma camada raster visível com desenho.".into();
     }
     app.invalidate_all();
+}
+
+fn effect_ui(ui: &mut egui::Ui, e: &mut artapp_core::effects::Effect) {
+    use artapp_core::effects::Effect;
+    let kinds = [
+        (
+            "Brilho difuso",
+            Effect::Bloom {
+                radius: 24.0,
+                intensity: 1.0,
+                threshold: 0.6,
+            },
+        ),
+        (
+            "Falha",
+            Effect::Glitch {
+                amount: 0.4,
+                block: 24.0,
+                seed: 1,
+            },
+        ),
+        ("Aberração cromática", Effect::Aberration { amount: 8.0 }),
+    ];
+    ui.horizontal_wrapped(|ui| {
+        for (name, preset) in kinds {
+            let on = std::mem::discriminant(e) == std::mem::discriminant(&preset);
+            if ui.selectable_label(on, name).clicked() && !on {
+                *e = preset;
+            }
+        }
+    });
+    match e {
+        Effect::Bloom {
+            radius,
+            intensity,
+            threshold,
+        } => {
+            ui.add(
+                egui::Slider::new(radius, 1.0..=300.0)
+                    .logarithmic(true)
+                    .suffix(" px")
+                    .text("Espalhar"),
+            );
+            ui.add(egui::Slider::new(intensity, 0.0..=4.0).text("Força"));
+            ui.add(egui::Slider::new(threshold, 0.0..=0.95).text("A partir do brilho"));
+        }
+        Effect::Glitch {
+            amount,
+            block,
+            seed,
+        } => {
+            ui.add(egui::Slider::new(amount, 0.0..=1.0).text("Quantidade"));
+            ui.add(
+                egui::Slider::new(block, 2.0..=300.0)
+                    .logarithmic(true)
+                    .suffix(" px")
+                    .text("Altura das faixas"),
+            );
+            if ui.button("Sortear de novo").clicked() {
+                *seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345) | 1;
+            }
+        }
+        Effect::Aberration { amount } => {
+            ui.add(
+                egui::Slider::new(amount, 0.0..=100.0)
+                    .suffix(" px")
+                    .text("Afastamento na borda"),
+            );
+        }
+    }
 }
 
 fn frames_ui(ui: &mut egui::Ui, p: &mut artapp_core::frames::Frames) {
