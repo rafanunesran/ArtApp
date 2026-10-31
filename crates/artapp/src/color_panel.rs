@@ -2,7 +2,7 @@
 //! de saturação e valor), barras RGB/HSV com hexadecimal, conjuntos de cores salvos e cor intermediária
 //! (mistura entre quatro cantos).
 
-use eframe::egui::{self, Color32, CornerRadius, Pos2, Sense, Stroke, Vec2, ecolor::Hsva};
+use eframe::egui::{self, Color32, CornerRadius, Pos2, Sense, Stroke, Vec2, ecolor};
 use serde::{Deserialize, Serialize};
 
 use crate::app::ArtApp;
@@ -116,13 +116,18 @@ fn default_sets() -> Vec<ColorSet> {
     ]
 }
 
+// HSV calculado direto sobre o RGB da tela (sRGB), como nos programas de desenho. Fazer em RGB
+// linear deixa os degradês do círculo lavados, com pouca cor escura.
 fn hsv_of(c: Color32) -> [f32; 3] {
-    let h = Hsva::from(c);
-    [h.h, h.s, h.v]
+    let f = |v: u8| v as f32 / 255.0;
+    let (h, s, v) = ecolor::hsv_from_rgb([f(c.r()), f(c.g()), f(c.b())]);
+    [h, s, v]
 }
 
 fn color_of(hsv: [f32; 3]) -> Color32 {
-    Hsva::new(hsv[0], hsv[1], hsv[2], 1.0).into()
+    let [r, g, b] = ecolor::rgb_from_hsv((hsv[0], hsv[1], hsv[2]));
+    let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    Color32::from_rgb(q(r), q(g), q(b))
 }
 
 fn rgba(c: [u8; 4]) -> Color32 {
@@ -252,7 +257,7 @@ fn wheel(ui: &mut egui::Ui, st: &mut ColorState, max: f32) -> Option<Color32> {
     let mut mesh = egui::Mesh::default();
     for i in 0..=n {
         let t = i as f32 / n as f32;
-        let a = t * std::f32::consts::TAU;
+        let a = hue_angle(t);
         let dir = Vec2::new(a.cos(), a.sin());
         let col = color_of([t, 1.0, 1.0]);
         mesh.colored_vertex(c + dir * inner, col);
@@ -272,7 +277,7 @@ fn wheel(ui: &mut egui::Ui, st: &mut ColorState, max: f32) -> Option<Color32> {
     };
     painter.add(egui::Shape::mesh(shape.mesh(st.hsv[0])));
     // Marcadores.
-    let a = st.hsv[0] * std::f32::consts::TAU;
+    let a = hue_angle(st.hsv[0]);
     let hm = c + Vec2::new(a.cos(), a.sin()) * (inner + outer) / 2.0;
     painter.circle_stroke(hm, ring_w * 0.4, Stroke::new(2.0, Color32::WHITE));
     let sm = shape.pos(st.hsv[1], st.hsv[2]);
@@ -293,13 +298,21 @@ fn wheel(ui: &mut egui::Ui, st: &mut ColorState, max: f32) -> Option<Color32> {
     let on_ring = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
     if on_ring {
         let d = p - c;
-        st.hsv[0] = (d.y.atan2(d.x) / std::f32::consts::TAU).rem_euclid(1.0);
+        st.hsv[0] = ((d.y.atan2(d.x) - HUE_OFFSET) / std::f32::consts::TAU).rem_euclid(1.0);
     } else {
         let (s, v) = shape.sv(p, st.hsv[1]);
         st.hsv[1] = s;
         st.hsv[2] = v;
     }
     Some(color_of(st.hsv))
+}
+
+/// Onde fica o vermelho no anel (ângulo de tela, y para baixo): em cima à esquerda, com o
+/// amarelo no topo e o azul embaixo, como no Clip Studio.
+const HUE_OFFSET: f32 = -150.0 * std::f32::consts::PI / 180.0;
+
+fn hue_angle(hue: f32) -> f32 {
+    hue * std::f32::consts::TAU + HUE_OFFSET
 }
 
 /// O meio do círculo de cores.
