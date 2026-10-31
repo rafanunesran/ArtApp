@@ -41,10 +41,13 @@ impl Document {
         let Some(layer) = self.layers.get(i) else {
             return Surface::new(photocraft_color::PixelFormat::RGBA8);
         };
-        let surface = match &layer.border {
+        let mut surface = match &layer.border {
             Some(b) => crate::border::bake(&layer.surface, b, self.bounds()),
             None => layer.surface.clone(),
         };
+        if let Some(t) = &layer.tone {
+            surface = crate::tone::bake(&surface, t, self.bounds());
+        }
         let Some(m) = self.mask_above(i) else {
             return surface;
         };
@@ -107,8 +110,9 @@ impl Document {
         let baked = self.masked_surface(o);
         self.layers[o].surface = baked;
         self.layers[o].vector = None;
-        // A borda foi junto para a tinta.
+        // A borda e a retícula foram junto para a tinta.
         self.layers[o].border = None;
+        self.layers[o].tone = None;
         self.layers.remove(end);
         self.active = o;
         true

@@ -110,6 +110,11 @@ struct LayerEntry {
     border_width: f32,
     #[serde(default)]
     border_color: [f32; 3],
+    /// Retícula: espaço entre os pontos (0 = sem) e ângulo.
+    #[serde(default)]
+    tone_period: f32,
+    #[serde(default)]
+    tone_angle: f32,
     /// Pixels: o retângulo pintado e o PNG dele. `None` = camada vazia.
     #[serde(default)]
     pixels: Option<Pixels>,
@@ -193,6 +198,8 @@ pub fn save(doc: &Document) -> Result<Vec<u8>, String> {
             parent: l.parent,
             border_width: l.border.map_or(0.0, |b| b.width),
             border_color: l.border.map_or([0.0; 3], |b| b.color),
+            tone_period: l.tone.map_or(0.0, |t| t.period),
+            tone_angle: l.tone.map_or(0.0, |t| t.angle),
             pixels,
             vector,
         });
@@ -288,6 +295,12 @@ pub fn load(bytes: &[u8]) -> Result<Document, String> {
         layer.folder = e.folder;
         layer.collapsed = e.collapsed;
         layer.parent = e.parent;
+        layer.tone = (e.tone_period > 0.0).then(|| crate::tone::Tone {
+            period: e
+                .tone_period
+                .clamp(crate::tone::MIN_PERIOD, crate::tone::MAX_PERIOD),
+            angle: e.tone_angle,
+        });
         layer.border = (e.border_width > 0.0).then(|| crate::border::Border {
             width: e.border_width.min(crate::border::MAX_WIDTH),
             color: e.border_color.map(|c| c.clamp(0.0, 1.0)),
