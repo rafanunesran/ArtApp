@@ -1056,8 +1056,10 @@ pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
                 wand_settings(app, ui);
             } else if app.tool.is_selection() || app.tool == Tool::MoveLayer {
                 selection_settings(app, ui);
-            } else if matches!(app.tool, Tool::Eyedropper | Tool::Hand) {
-                ui.label(RichText::new(if app.tool == Tool::Hand { "Arraste para mover a tela. Dois dedos: zoom e mover em qualquer ferramenta." } else { "Toque na tela para pegar a cor." }).color(color::TEXT_MUTED));
+            } else if app.tool == Tool::Eyedropper {
+                eyedropper_settings(app, ui);
+            } else if app.tool == Tool::Hand {
+                ui.label(RichText::new("Arraste para mover a tela. Dois dedos: zoom e mover em qualquer ferramenta.").color(color::TEXT_MUTED));
             } else {
                 brush_settings(app, ui);
             }
@@ -1065,6 +1067,35 @@ pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
     );
     if close {
         app.show_tools_panel = false;
+    }
+}
+
+/// Opções do conta-gotas (valem também para segurar o dedo parado na tela).
+fn eyedropper_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
+    use artapp_core::composite::SampleFrom;
+    ui.label(RichText::new("Toque na tela para pegar a cor.").color(color::TEXT_MUTED));
+    section(ui, "Pegar a cor de");
+    let before = (app.eyedropper_from, app.eyedropper_erase);
+    ui.horizontal_wrapped(|ui| {
+        for (m, name) in [
+            (SampleFrom::All, "Todas as camadas"),
+            (SampleFrom::NoReference, "Sem as de referência"),
+            (SampleFrom::Active, "Só a camada atual"),
+        ] {
+            ui.selectable_value(&mut app.eyedropper_from, m, name);
+        }
+    });
+    ui.checkbox(
+        &mut app.eyedropper_erase,
+        "Lugar transparente escolhe a cor transparente (apagar)",
+    );
+    ui.label(
+        RichText::new("As cores pegas entram no histórico, que fica salvo junto com o desenho.")
+            .size(12.0)
+            .color(color::TEXT_MUTED),
+    );
+    if before != (app.eyedropper_from, app.eyedropper_erase) {
+        app.save_prefs();
     }
 }
 

@@ -936,10 +936,8 @@ fn check_holds(app: &mut ArtApp, ctx: &egui::Context, panel: egui::Rect) {
         // Segurou sem desenhar: pega a cor do desenho naquele ponto.
         cancel_stroke(app);
         let (x, y) = app.view.to_canvas(panel, at);
-        if let Some(c) = composite::sample(&app.doc, x.floor() as i32, y.floor() as i32) {
-            app.color = color_from_f32(c);
-            app.remember_color();
-            app.status = "Cor pega".into();
+        if let Some(msg) = app.pick_color_at(x.floor() as i32, y.floor() as i32) {
+            app.status = msg.into();
         }
         return;
     }
@@ -1204,9 +1202,8 @@ fn tool_down(
             None
         }
         Tool::Eyedropper => {
-            if let Some(c) = composite::sample(&app.doc, x, y) {
-                app.color = color_from_f32(c);
-                app.remember_color();
+            if let Some(msg) = app.pick_color_at(x, y) {
+                app.status = msg.into();
                 app.tool = app.previous_tool;
             }
             None

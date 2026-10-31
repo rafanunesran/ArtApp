@@ -70,7 +70,13 @@ struct Manifest {
     /// Modelo 3D (OBJ) pintado com o desenho como textura.
     #[serde(default)]
     model_obj: Option<Blob>,
+    /// Histórico de cores do desenho (RGBA 8 bits, a mais recente primeiro).
+    #[serde(default)]
+    colors: Vec<[u8; 4]>,
 }
+
+/// Quantas cores do histórico o projeto guarda.
+pub const MAX_COLORS: usize = 24;
 
 fn default_dpi() -> f32 {
     crate::document::DEFAULT_DPI
@@ -228,6 +234,7 @@ pub fn save(doc: &Document) -> Result<Vec<u8>, String> {
         timelapse: doc.timelapse.clone(),
         timelapse_frames: doc.timelapse.frames.iter().map(|f| blobs.push(f)).collect(),
         model_obj: doc.model.as_ref().map(|m| blobs.push(m.as_bytes())),
+        colors: doc.colors.clone(),
     };
     let json = serde_json::to_vec(&manifest).map_err(|e| e.to_string())?;
     let mut out = Vec::with_capacity(HEADER_LEN + json.len() + blobs.0.len());
@@ -356,6 +363,7 @@ pub fn load(bytes: &[u8]) -> Result<Document, String> {
     if m.dpi.is_finite() && m.dpi > 0.0 {
         doc.dpi = m.dpi.clamp(1.0, 10_000.0);
     }
+    doc.colors = m.colors.iter().take(MAX_COLORS).copied().collect();
     Ok(doc)
 }
 
@@ -489,11 +497,13 @@ mod tests {
     fn round_trips_layers() {
         let mut doc = painted();
         doc.dpi = 350.0;
+        doc.colors = vec![[10, 20, 30, 255], [200, 100, 0, 255]];
         let bytes = save(&doc).unwrap();
         assert!(sniff(&bytes));
         let back = load(&bytes).unwrap();
         assert_eq!((back.width, back.height), (64, 48));
         assert_eq!(back.dpi, 350.0);
+        assert_eq!(back.colors, vec![[10, 20, 30, 255], [200, 100, 0, 255]]);
         assert_eq!(back.paper, doc.paper);
         assert_eq!(back.layers.len(), doc.layers.len());
         assert_eq!(back.active, doc.active);
