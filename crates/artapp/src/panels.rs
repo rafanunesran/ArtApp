@@ -61,7 +61,7 @@ pub fn top_bar(app: &mut ArtApp, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing.x = 2.0;
         // Clicar dentro não fecha o menu (os itens fecham sozinhos): assim as chaves e as setas
         // das preferências podem ser tocadas várias vezes seguidas.
-        egui::containers::menu::MenuButton::new(
+        let (menu_btn, _) = egui::containers::menu::MenuButton::new(
             RichText::new(icon::MENU.to_string()).font(theme::icon_font(20.0)),
         )
         .config(
@@ -69,6 +69,10 @@ pub fn top_bar(app: &mut ArtApp, ui: &mut egui::Ui) {
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
         )
         .ui(ui, |ui| file_menu(app, ui));
+        // Cada vez que o menu abre, ele começa na lista de grupos.
+        if menu_btn.clicked() {
+            reset_menu_group(ui.ctx());
+        }
         ui.add_enabled_ui(app.doc.can_undo(), |ui| {
             if icon_button(ui, icon::UNDO, false, "Desfazer (Ctrl+Z)").clicked() {
                 app.undo();
@@ -148,12 +152,6 @@ fn view_buttons(app: &mut ArtApp, ui: &mut egui::Ui) {
 
 /// Ajustes de caneta e gestos (gravados entre as sessões).
 fn pen_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
-    ui.separator();
-    ui.label(
-        RichText::new("Caneta e gestos")
-            .size(13.0)
-            .color(color::TEXT_MUTED),
-    );
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.label("Botão da caneta");
@@ -214,12 +212,6 @@ fn pen_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
 
 /// Preferências gerais: interface, desfazer e papel.
 fn app_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
-    ui.separator();
-    ui.label(
-        RichText::new("Preferências")
-            .size(13.0)
-            .color(color::TEXT_MUTED),
-    );
     let mut changed = false;
     ui.label("Tamanho da interface");
     ui.horizontal_wrapped(|ui| {
@@ -272,33 +264,146 @@ fn file_menu(app: &mut ArtApp, ui: &mut egui::Ui) {
         .show(ui, |ui| file_menu_items(app, ui));
 }
 
+/// Grupos do menu principal. O menu abre na lista de grupos; tocar num grupo mostra os itens
+/// dele com um "Voltar" no topo (navegação em níveis, melhor que submenus de passar o mouse
+/// para quem usa o dedo ou a caneta).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MenuGroup {
+    File,
+    Edit,
+    Canvas,
+    Layer,
+    Selection,
+    Filters,
+    Comic,
+    View,
+    Pen,
+    Prefs,
+}
+
+impl MenuGroup {
+    const ALL: [MenuGroup; 10] = [
+        MenuGroup::File,
+        MenuGroup::Edit,
+        MenuGroup::Canvas,
+        MenuGroup::Layer,
+        MenuGroup::Selection,
+        MenuGroup::Filters,
+        MenuGroup::Comic,
+        MenuGroup::View,
+        MenuGroup::Pen,
+        MenuGroup::Prefs,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            MenuGroup::File => "Arquivo",
+            MenuGroup::Edit => "Editar",
+            MenuGroup::Canvas => "Tela",
+            MenuGroup::Layer => "Camada",
+            MenuGroup::Selection => "Seleção",
+            MenuGroup::Filters => "Filtros e efeitos",
+            MenuGroup::Comic => "Quadrinho",
+            MenuGroup::View => "Visualização",
+            MenuGroup::Pen => "Caneta e gestos",
+            MenuGroup::Prefs => "Preferências",
+        }
+    }
+
+    fn icon(self) -> char {
+        match self {
+            MenuGroup::File => icon::FOLDER_OPEN,
+            MenuGroup::Edit => icon::SCISSORS,
+            MenuGroup::Canvas => icon::CROP,
+            MenuGroup::Layer => icon::LAYERS,
+            MenuGroup::Selection => icon::SQUARE_DASHED,
+            MenuGroup::Filters => icon::SPARKLES,
+            MenuGroup::Comic => icon::GRID_3X3,
+            MenuGroup::View => icon::EYE,
+            MenuGroup::Pen => icon::PEN_TOOL,
+            MenuGroup::Prefs => icon::SLIDERS,
+        }
+    }
+}
+
+fn menu_group_id() -> Id {
+    Id::unique("main_menu_group")
+}
+
+/// Volta o menu para a lista de grupos (chamado quando o menu é aberto).
+fn reset_menu_group(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove::<MenuGroup>(menu_group_id()));
+}
+
+fn menu_item(ui: &mut egui::Ui, glyph: char, text: &str) -> egui::Response {
+    ui.add(
+        egui::Button::new(RichText::new(format!("{glyph}   {text}")).size(15.0))
+            .frame(false)
+            .min_size(Vec2::new(210.0, 36.0)),
+    )
+}
+
 fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
     ui.set_min_width(220.0);
-    let item = |ui: &mut egui::Ui, glyph: char, text: &str| {
-        ui.add(
-            egui::Button::new(RichText::new(format!("{glyph}   {text}")).size(15.0))
+    let group = ui.data(|d| d.get_temp::<MenuGroup>(menu_group_id()));
+    let Some(group) = group else {
+        for g in MenuGroup::ALL {
+            let resp = ui.add(
+                egui::Button::new(
+                    RichText::new(format!("{}   {}", g.icon(), g.label())).size(15.0),
+                )
+                .right_text(RichText::new("›").size(18.0).color(color::TEXT_MUTED))
                 .frame(false)
-                .min_size(Vec2::new(210.0, 36.0)),
-        )
+                .min_size(Vec2::new(210.0, 40.0)),
+            );
+            if resp.clicked() {
+                ui.data_mut(|d| d.insert_temp(menu_group_id(), g));
+            }
+        }
+        return;
     };
+    ui.horizontal(|ui| {
+        if ui
+            .add(
+                egui::Button::new(RichText::new("‹  Voltar").size(15.0))
+                    .frame(false)
+                    .min_size(Vec2::new(90.0, 36.0)),
+            )
+            .clicked()
+        {
+            reset_menu_group(ui.ctx());
+        }
+        ui.label(
+            RichText::new(group.label())
+                .size(15.0)
+                .strong()
+                .color(color::ACCENT),
+        );
+    });
+    ui.separator();
+    match group {
+        MenuGroup::File => file_group(app, ui),
+        MenuGroup::Edit => edit_group(app, ui),
+        MenuGroup::Canvas => canvas_group(app, ui),
+        MenuGroup::Layer => layer_group(app, ui),
+        MenuGroup::Selection => selection_group(app, ui),
+        MenuGroup::Filters => filters_group(app, ui),
+        MenuGroup::Comic => comic_group(app, ui),
+        MenuGroup::View => view_group(app, ui),
+        MenuGroup::Pen => pen_settings(app, ui),
+        MenuGroup::Prefs => prefs_group(app, ui),
+    }
+}
+
+/// Arquivo: abrir, salvar, importar e exportar.
+fn file_group(app: &mut ArtApp, ui: &mut egui::Ui) {
+    let item = menu_item;
     if item(ui, icon::FILE_PLUS, "Nova tela…").clicked() {
         app.show_new_dialog = true;
         ui.close();
     }
     if item(ui, icon::FOLDER_OPEN, "Abrir projeto ou PSD…").clicked() {
         app.open_project_dialog();
-        ui.close();
-    }
-    if item(ui, icon::IMAGE, "Importar imagem como camada…").clicked() {
-        app.import_image_dialog();
-        ui.close();
-    }
-    if item(ui, icon::IMAGE, "Janela de referência").clicked() {
-        app.reference_open = true;
-        ui.close();
-    }
-    if item(ui, icon::PALETTE, "Paleta de uma imagem…").clicked() {
-        app.pick_image_for(crate::projects::ImageUse::Palette);
         ui.close();
     }
     if item(ui, icon::SAVE, "Salvar projeto").clicked() {
@@ -312,6 +417,15 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
     ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
         theme::switch(ui, &mut app.projects.autosave, "Salvar automaticamente")
     });
+    ui.separator();
+    if item(ui, icon::IMAGE, "Importar imagem como camada…").clicked() {
+        app.import_image_dialog();
+        ui.close();
+    }
+    if item(ui, icon::PALETTE, "Paleta de uma imagem…").clicked() {
+        app.pick_image_for(crate::projects::ImageUse::Palette);
+        ui.close();
+    }
     ui.separator();
     if item(ui, icon::IMAGE_DOWN, "Exportar PNG").clicked() {
         app.export_png(true);
@@ -329,66 +443,14 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.export_psd();
         ui.close();
     }
-    if crate::platform::update::SUPPORTED {
-        if item(ui, icon::ROTATE_CW, "Atualizar app").clicked() {
-            app.check_update();
-            ui.close();
-        }
-        ui.label(
-            RichText::new(format!("Build instalado: {}", app.updater.installed()))
-                .size(12.0)
-                .color(crate::theme::color::TEXT_MUTED),
-        );
-    }
-    ui.separator();
-    let canvas = app.canvas_rect;
-    let step = 15f32.to_radians();
-    if item(ui, icon::ROTATE_CCW, "Girar vista à esquerda").clicked() {
-        app.view.rotate_at(canvas, canvas.center(), -step);
-    }
-    if item(ui, icon::ROTATE_CW, "Girar vista à direita").clicked() {
-        app.view.rotate_at(canvas, canvas.center(), step);
-    }
-    if item(ui, icon::FLIP_H, "Espelhar vista").clicked() {
-        app.view.toggle_flip(canvas);
+}
+
+/// Editar: área de transferência, transformar e histórico.
+fn edit_group(app: &mut ArtApp, ui: &mut egui::Ui) {
+    let item = menu_item;
+    if item(ui, icon::UNDO, "Histórico").clicked() {
+        app.history_open = true;
         ui.close();
-    }
-    ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
-        theme::switch(ui, &mut app.show_navigator, "Navegador")
-    });
-    ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
-        theme::switch(ui, &mut app.show_grid, "Grade")
-    });
-    if app.show_grid {
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut app.grid_iso, false, "Quadrada");
-            ui.selectable_value(&mut app.grid_iso, true, "Isométrica");
-        });
-    }
-    if app.show_grid {
-        ui.add(
-            egui::Slider::new(&mut app.grid_size, 8.0..=512.0)
-                .logarithmic(true)
-                .suffix(" px")
-                .text("Grade"),
-        );
-    }
-    pen_settings(app, ui);
-    app_settings(app, ui);
-    ui.separator();
-    if item(ui, icon::SQUARE_DASHED, "Selecionar tudo").clicked() {
-        app.select_all();
-        ui.close();
-    }
-    if app.doc.selection.is_some() {
-        if item(ui, icon::DESELECT, "Desmarcar").clicked() {
-            app.deselect();
-            ui.close();
-        }
-        if item(ui, icon::INVERT, "Inverter seleção").clicked() {
-            app.invert_selection();
-            ui.close();
-        }
     }
     ui.separator();
     if item(ui, icon::SCISSORS, "Recortar (Ctrl+X)").clicked() {
@@ -403,14 +465,6 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.paste();
         ui.close();
     }
-    if item(ui, icon::PALETTE, "Mudar cor da linha para a principal").clicked() {
-        app.line_to_color();
-        ui.close();
-    }
-    if item(ui, icon::SUN_DIM, "Converter brilho em opacidade").clicked() {
-        app.brightness_to_opacity();
-        ui.close();
-    }
     ui.separator();
     if item(ui, icon::SCALING, "Transformar (Ctrl+T)").clicked() {
         app.start_transform();
@@ -420,14 +474,11 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.dialog = Some(crate::dialogs::Dialog::transform());
         ui.close();
     }
-    if item(ui, icon::SQUARE_PEN, "Texto…").clicked() {
-        app.dialog = Some(crate::dialogs::Dialog::Text {
-            text: String::new(),
-            size: 64.0,
-            editable: false,
-        });
-        ui.close();
-    }
+}
+
+/// Tela: tamanho e corte do documento.
+fn canvas_group(app: &mut ArtApp, ui: &mut egui::Ui) {
+    let item = menu_item;
     if item(ui, icon::SCALING, "Tamanho da tela…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::canvas_size(
             app.doc.width,
@@ -442,26 +493,66 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.persp_crop = Some([[mx, my], [w - mx, my], [w - mx, h - my], [mx, h - my]]);
         ui.close();
     }
-    if app.doc.selection.is_some() && item(ui, icon::CROP, "Cortar na seleção").clicked() {
+    let has_sel = app.doc.selection.is_some();
+    if ui
+        .add_enabled_ui(has_sel, |ui| item(ui, icon::CROP, "Cortar na seleção"))
+        .inner
+        .on_disabled_hover_text("Faça uma seleção primeiro")
+        .clicked()
+    {
         app.crop_to_selection();
+        ui.close();
+    }
+}
+
+/// Camada: operações sobre a camada atual (texto, linha, cor).
+fn layer_group(app: &mut ArtApp, ui: &mut egui::Ui) {
+    let item = menu_item;
+    if item(ui, icon::SQUARE_PEN, "Texto…").clicked() {
+        app.dialog = Some(crate::dialogs::Dialog::Text {
+            text: String::new(),
+            size: 64.0,
+            editable: false,
+        });
         ui.close();
     }
     if item(ui, icon::PEN_LINE, "Ajustar largura da linha…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::LineWidth { delta: 1.0 });
         ui.close();
     }
-    if item(ui, icon::GRID_3X3, "Requadros…").clicked() {
-        app.dialog = Some(crate::dialogs::Dialog::Frames(Default::default()));
+    if item(ui, icon::PALETTE, "Mudar cor da linha para a principal").clicked() {
+        app.line_to_color();
         ui.close();
     }
-    if item(ui, icon::SUN_DIM, "Linhas de efeito…").clicked() {
-        app.dialog = Some(crate::dialogs::Dialog::MangaLines(Default::default()));
+    if item(ui, icon::SUN_DIM, "Converter brilho em opacidade").clicked() {
+        app.brightness_to_opacity();
         ui.close();
     }
-    if item(ui, icon::UNDO, "Histórico").clicked() {
-        app.history_open = true;
+}
+
+/// Seleção: selecionar tudo, desmarcar e inverter.
+fn selection_group(app: &mut ArtApp, ui: &mut egui::Ui) {
+    let item = menu_item;
+    if item(ui, icon::SQUARE_DASHED, "Selecionar tudo").clicked() {
+        app.select_all();
         ui.close();
     }
+    let has_sel = app.doc.selection.is_some();
+    ui.add_enabled_ui(has_sel, |ui| {
+        if item(ui, icon::DESELECT, "Desmarcar").clicked() {
+            app.deselect();
+            ui.close();
+        }
+        if item(ui, icon::INVERT, "Inverter seleção").clicked() {
+            app.invert_selection();
+            ui.close();
+        }
+    });
+}
+
+/// Filtros, efeitos e correção de cor.
+fn filters_group(app: &mut ArtApp, ui: &mut egui::Ui) {
+    let item = menu_item;
     if item(ui, icon::SPARKLES, "Filtros…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::filter(0));
         ui.close();
@@ -479,6 +570,76 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
     if item(ui, icon::CONTRAST, "Correção de cor…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::adjust());
         ui.close();
+    }
+}
+
+/// Quadrinho: requadros e linhas de efeito.
+fn comic_group(app: &mut ArtApp, ui: &mut egui::Ui) {
+    let item = menu_item;
+    if item(ui, icon::GRID_3X3, "Requadros…").clicked() {
+        app.dialog = Some(crate::dialogs::Dialog::Frames(Default::default()));
+        ui.close();
+    }
+    if item(ui, icon::SUN_DIM, "Linhas de efeito…").clicked() {
+        app.dialog = Some(crate::dialogs::Dialog::MangaLines(Default::default()));
+        ui.close();
+    }
+}
+
+/// Visualização: girar/espelhar a vista, navegador, grade e referência.
+fn view_group(app: &mut ArtApp, ui: &mut egui::Ui) {
+    let item = menu_item;
+    let canvas = app.canvas_rect;
+    let step = 15f32.to_radians();
+    if item(ui, icon::ROTATE_CCW, "Girar vista à esquerda").clicked() {
+        app.view.rotate_at(canvas, canvas.center(), -step);
+    }
+    if item(ui, icon::ROTATE_CW, "Girar vista à direita").clicked() {
+        app.view.rotate_at(canvas, canvas.center(), step);
+    }
+    if item(ui, icon::FLIP_H, "Espelhar vista").clicked() {
+        app.view.toggle_flip(canvas);
+        ui.close();
+    }
+    if item(ui, icon::IMAGE, "Janela de referência").clicked() {
+        app.reference_open = true;
+        ui.close();
+    }
+    ui.separator();
+    ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
+        theme::switch(ui, &mut app.show_navigator, "Navegador")
+    });
+    ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
+        theme::switch(ui, &mut app.show_grid, "Grade")
+    });
+    if app.show_grid {
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut app.grid_iso, false, "Quadrada");
+            ui.selectable_value(&mut app.grid_iso, true, "Isométrica");
+        });
+        ui.add(
+            egui::Slider::new(&mut app.grid_size, 8.0..=512.0)
+                .logarithmic(true)
+                .suffix(" px")
+                .text("Grade"),
+        );
+    }
+}
+
+/// Preferências gerais e atualização do app.
+fn prefs_group(app: &mut ArtApp, ui: &mut egui::Ui) {
+    app_settings(app, ui);
+    if crate::platform::update::SUPPORTED {
+        ui.separator();
+        if menu_item(ui, icon::ROTATE_CW, "Atualizar app").clicked() {
+            app.check_update();
+            ui.close();
+        }
+        ui.label(
+            RichText::new(format!("Build instalado: {}", app.updater.installed()))
+                .size(12.0)
+                .color(crate::theme::color::TEXT_MUTED),
+        );
     }
 }
 
