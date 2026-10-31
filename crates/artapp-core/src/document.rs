@@ -228,26 +228,39 @@ impl Document {
 
     /// Guarda o estado atual no histórico antes de uma alteração.
     pub fn checkpoint(&mut self) {
-        self.history.push(self.layers.clone(), self.active);
+        self.history
+            .push((self.layers.clone(), self.active, (self.width, self.height)));
     }
 
     /// Desfaz o último passo. Devolve `true` se algo mudou.
     pub fn undo(&mut self) -> bool {
-        let Some((layers, active)) = self.history.undo(self.layers.clone(), self.active) else {
+        let current = (self.layers.clone(), self.active, (self.width, self.height));
+        let Some((layers, active, (w, h))) = self.history.undo(current) else {
             return false;
         };
         self.layers = layers;
         self.active = active;
+        if (w, h) != (self.width, self.height) {
+            self.width = w;
+            self.height = h;
+            self.selection = None;
+        }
         true
     }
 
     /// Refaz o último passo desfeito. Devolve `true` se algo mudou.
     pub fn redo(&mut self) -> bool {
-        let Some((layers, active)) = self.history.redo(self.layers.clone(), self.active) else {
+        let current = (self.layers.clone(), self.active, (self.width, self.height));
+        let Some((layers, active, (w, h))) = self.history.redo(current) else {
             return false;
         };
         self.layers = layers;
         self.active = active;
+        if (w, h) != (self.width, self.height) {
+            self.width = w;
+            self.height = h;
+            self.selection = None;
+        }
         true
     }
 

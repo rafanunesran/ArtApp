@@ -247,6 +247,10 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.export_png(false);
         ui.close();
     }
+    if item(ui, icon::IMAGE_DOWN, "Exportar JPEG").clicked() {
+        app.export_jpeg();
+        ui.close();
+    }
     if item(ui, icon::LAYERS, "Exportar PSD (camadas)…").clicked() {
         app.export_psd();
         ui.close();
@@ -333,6 +337,17 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
     }
     if item(ui, icon::SCALING, "Transformar por valores…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::transform());
+        ui.close();
+    }
+    if item(ui, icon::SCALING, "Tamanho da tela…").clicked() {
+        app.dialog = Some(crate::dialogs::Dialog::canvas_size(
+            app.doc.width,
+            app.doc.height,
+        ));
+        ui.close();
+    }
+    if app.doc.selection.is_some() && item(ui, icon::CROP, "Cortar na seleção").clicked() {
+        app.crop_to_selection();
         ui.close();
     }
     if item(ui, icon::SPARKLES, "Filtros…").clicked() {

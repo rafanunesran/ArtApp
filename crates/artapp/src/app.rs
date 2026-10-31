@@ -907,12 +907,33 @@ impl ArtApp {
         self.recent_colors.truncate(12);
     }
 
+    /// A tela mudou de tamanho: recompõe tudo e reencaixa a vista.
+    pub fn canvas_resized(&mut self) {
+        self.invalidate_all();
+        self.view.request_fit();
+        self.status = format!("Tela: {} × {} px", self.doc.width, self.doc.height);
+    }
+
+    /// Corta a tela no retângulo da seleção.
+    pub fn crop_to_selection(&mut self) {
+        self.commit_transform();
+        if self.doc.crop_to_selection() {
+            self.canvas_resized();
+        } else {
+            self.status = "Selecione a área que quer manter.".into();
+        }
+    }
+
     pub fn undo(&mut self) {
         if self.transform.is_some() {
             self.cancel_transform();
             return;
         }
+        let size = (self.doc.width, self.doc.height);
         if self.doc.undo() {
+            if size != (self.doc.width, self.doc.height) {
+                self.view.request_fit();
+            }
             self.invalidate_all();
         }
     }
@@ -921,7 +942,11 @@ impl ArtApp {
         if self.transform.is_some() {
             return;
         }
+        let size = (self.doc.width, self.doc.height);
         if self.doc.redo() {
+            if size != (self.doc.width, self.doc.height) {
+                self.view.request_fit();
+            }
             self.invalidate_all();
         }
     }
@@ -932,6 +957,16 @@ impl ArtApp {
         self.selected = None;
         self.invalidate_all();
         self.forget_project();
+    }
+
+    pub fn export_jpeg(&mut self) {
+        self.commit_transform();
+        self.status = match artapp_core::export::jpeg(&self.doc, 92)
+            .and_then(|bytes| platform::save_file("jpg", &bytes))
+        {
+            Ok(path) => format!("Imagem salva em {}", path.display()),
+            Err(e) => format!("Não foi possível salvar: {e}"),
+        };
     }
 
     pub fn export_png(&mut self, with_paper: bool) {
