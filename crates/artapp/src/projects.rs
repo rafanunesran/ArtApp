@@ -161,6 +161,8 @@ pub enum ImageUse {
     Palette,
     /// Arquivo de amostras (ASE ou ACO).
     Swatches,
+    /// Pincéis: `.abr` ou uma imagem para ponta.
+    Brushes,
 }
 
 struct Entry {
@@ -203,6 +205,11 @@ impl Browser {
             let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
             let wanted = if self.import && self.image_use == ImageUse::Swatches {
                 is_swatches(&path)
+            } else if self.import && self.image_use == ImageUse::Brushes {
+                is_image(&path)
+                    || path
+                        .extension()
+                        .is_some_and(|e| e.eq_ignore_ascii_case("abr"))
             } else if self.import {
                 is_image(&path)
             } else {
@@ -373,6 +380,34 @@ impl ArtApp {
                     .file_stem()
                     .map_or("Amostras".into(), |s| s.to_string_lossy().into_owned());
                 self.add_color_set(name, &colors);
+            }
+            Err(e) => self.status = format!("Não foi possível importar: {e}"),
+        }
+    }
+
+    /// Importa pincéis de um `.abr` ou de uma imagem para "Meus pincéis".
+    pub fn import_brushes(&mut self, path: &Path) {
+        let name = path
+            .file_name()
+            .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+        let res = std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|b| artapp_core::brushes::import(&name, &b));
+        match res {
+            Ok(list) => {
+                let n = list.len();
+                let first = self.brushes.len();
+                self.brushes.extend(list);
+                self.brush_previews.clear();
+                self.select_brush(first);
+                self.status = match artapp_core::brushes::save_custom(
+                    &crate::app::brushes_path(),
+                    &self.brushes,
+                ) {
+                    Ok(()) if n == 1 => "1 pincel importado para Meus pincéis.".into(),
+                    Ok(()) => format!("{n} pincéis importados para Meus pincéis."),
+                    Err(e) => format!("Pincéis importados, mas não foi possível gravar: {e}"),
+                };
             }
             Err(e) => self.status = format!("Não foi possível importar: {e}"),
         }
@@ -774,6 +809,7 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
         (true, ImageUse::Reference) => "Imagem de referência",
         (true, ImageUse::Palette) => "Paleta de uma imagem",
         (true, ImageUse::Swatches) => "Importar amostras",
+        (true, ImageUse::Brushes) => "Importar pincéis",
     };
     window(title).open(&mut open).show(ctx, |ui| {
         ui.set_width(w);
@@ -820,6 +856,8 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
             if b.entries.is_empty() {
                 ui.label(muted(if b.import && b.image_use == ImageUse::Swatches {
                     "Nenhum arquivo de amostras (ASE, ACO) nesta pasta."
+                } else if b.import && b.image_use == ImageUse::Brushes {
+                    "Nenhum pincel (.abr) nem imagem nesta pasta."
                 } else if b.import {
                     "Nenhuma imagem (PNG, JPEG, WebP, GIF, BMP) nesta pasta."
                 } else {
@@ -899,6 +937,7 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
                 ImageUse::Reference => app.open_reference(&path),
                 ImageUse::Palette => app.palette_from_image(&path),
                 ImageUse::Swatches => app.import_swatches(&path),
+                ImageUse::Brushes => app.import_brushes(&path),
             }
         } else {
             app.open_path(path);

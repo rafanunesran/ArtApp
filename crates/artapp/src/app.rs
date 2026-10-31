@@ -401,7 +401,7 @@ pub struct ArtApp {
     last_status: String,
     /// Área da tela de desenho (os painéis flutuam por cima dela).
     pub canvas_rect: egui::Rect,
-    brush_previews: Vec<TextureHandle>,
+    pub(crate) brush_previews: Vec<TextureHandle>,
     thumbs: HashMap<u64, TextureHandle>,
     thumbs_stale: bool,
     thumbs_at: f64,
@@ -1391,7 +1391,7 @@ fn prefs_path() -> std::path::PathBuf {
     platform::data_dir().join("prefs.json")
 }
 
-fn brushes_path() -> std::path::PathBuf {
+pub(crate) fn brushes_path() -> std::path::PathBuf {
     platform::data_dir().join("brushes.json")
 }
 
