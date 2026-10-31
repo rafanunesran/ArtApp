@@ -920,6 +920,16 @@ impl ArtApp {
         }
     }
 
+    /// O pincel atual mistura com a tela (categoria Mistura, ferramenta Pincel, cor não transparente).
+    pub fn brush_mixes(&self) -> bool {
+        self.tool == Tool::Brush
+            && !self.transparent
+            && self
+                .brushes
+                .get(self.brush_index)
+                .is_some_and(|b| b.group == brushes::MIX_GROUP)
+    }
+
     /// Põe ou tira a estrela do pincel `i`.
     pub fn toggle_favorite(&mut self, i: usize) {
         let Some(entry) = self.brushes.get(i) else {

@@ -6,8 +6,8 @@
 pub const MAX_SIZE: f32 = photocraft_paint::MAX_BRUSH_SIZE;
 
 use photocraft_paint::{
-    BrushPreset, BrushSettings, Control, Dynamic, Pattern, PatternStyle, ShapeDynamics, Smoothing,
-    Texture, Transfer, presets,
+    BrushPreset, BrushSettings, Control, Dynamic, MixerSettings, Pattern, PatternStyle,
+    ShapeDynamics, Smoothing, Texture, Transfer, presets,
 };
 
 /// Um pincel da paleta: nome mostrado e configurações.
@@ -378,6 +378,59 @@ pub fn extra() -> Vec<BrushEntry> {
                 ..base.clone()
             },
         ),
+        // Mistura: pintam com a cor escolhida e misturam com a tinta que já está na tela.
+        ours(
+            "Óleo que mistura",
+            MIX_GROUP,
+            BrushSettings {
+                size: 30.0,
+                hardness: 0.7,
+                spacing: 0.08,
+                shape_dynamics: pressure_size(0.4),
+                mixer: MixerSettings {
+                    wet: 0.6,
+                    load: 0.6,
+                    mix: 0.5,
+                    flow: 1.0,
+                    ..Default::default()
+                },
+                ..base.clone()
+            },
+        ),
+        ours(
+            "Pincel úmido",
+            MIX_GROUP,
+            BrushSettings {
+                size: 40.0,
+                hardness: 0.3,
+                spacing: 0.08,
+                mixer: MixerSettings {
+                    wet: 0.9,
+                    load: 0.3,
+                    mix: 0.8,
+                    flow: 0.8,
+                    ..Default::default()
+                },
+                ..base.clone()
+            },
+        ),
+        ours(
+            "Esfumar com cor",
+            MIX_GROUP,
+            BrushSettings {
+                size: 36.0,
+                hardness: 0.0,
+                spacing: 0.08,
+                mixer: MixerSettings {
+                    wet: 1.0,
+                    load: 0.0,
+                    mix: 0.95,
+                    flow: 0.6,
+                    ..Default::default()
+                },
+                ..base.clone()
+            },
+        ),
         // Borrachas
         ours(
             "Borracha dura",
@@ -442,6 +495,10 @@ pub fn all() -> Vec<BrushEntry> {
     v.sort_by_key(|b| category_order(&b.group));
     v
 }
+
+/// Categoria dos pincéis que misturam com a tela: com a ferramenta Pincel eles usam os ajustes de
+/// `BrushSettings::mixer` (molhado, carga, mistura, fluxo) em vez de só depositar tinta.
+pub const MIX_GROUP: &str = "Mistura";
 
 /// Grupo dos pincéis criados pelo usuário.
 pub const CUSTOM_GROUP: &str = "Meus pincéis";

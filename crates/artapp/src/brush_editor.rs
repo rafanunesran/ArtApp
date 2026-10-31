@@ -485,4 +485,15 @@ fn advanced_tab(ui: &mut egui::Ui, b: &mut BrushSettings) {
             slider(ui, &mut b.build_up_rate, 1.0..=100.0, "Marcas por segundo");
         }
     });
+    section(ui, "Mistura com a tela", None, |ui| {
+        hint(
+            ui,
+            "Vale para os pincéis da categoria Mistura: a tinta do pincel mistura com a da tela.",
+        );
+        let m = &mut b.mixer;
+        pct(ui, &mut m.wet, "Molhado (quanto pega da tela)");
+        pct(ui, &mut m.load, "Carga (quanto a tinta dura)");
+        pct(ui, &mut m.mix, "Mistura");
+        pct(ui, &mut m.flow, "Fluxo");
+    });
 }

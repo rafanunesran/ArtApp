@@ -1117,16 +1117,35 @@ fn tool_down(
                         .into();
                 return;
             }
-            let Some(mut session) = begin_paint(app) else {
-                app.status = "A camada ativa está oculta.".into();
-                return;
-            };
-            let dirty = session.add(&mut app.doc, &[pt]);
-            app.invalidate(dirty);
-            if app.tool == Tool::Brush {
+            if app.brush_mixes() {
+                // Pincel da categoria Mistura: a tinta mistura com a que já está na tela.
+                let b = app.stroke_brush();
+                let Some(session) = artapp_core::mix::MixSession::begin(
+                    &mut app.doc,
+                    artapp_core::mix::MixKind::Paint,
+                    &b,
+                    1.0,
+                ) else {
+                    app.status = "A camada ativa está oculta.".into();
+                    return;
+                };
+                let mut session = session.with_paint(color_to_f32(app.color), b.mixer.clone());
+                let dirty = session.add(&mut app.doc, &[pt]);
+                app.invalidate(dirty);
                 app.remember_color();
+                Some(ActiveKind::Mix(Box::new(session)))
+            } else {
+                let Some(mut session) = begin_paint(app) else {
+                    app.status = "A camada ativa está oculta.".into();
+                    return;
+                };
+                let dirty = session.add(&mut app.doc, &[pt]);
+                app.invalidate(dirty);
+                if app.tool == Tool::Brush {
+                    app.remember_color();
+                }
+                Some(ActiveKind::Paint(Box::new(session)))
             }
-            Some(ActiveKind::Paint(Box::new(session)))
         }
         Tool::Blend => {
             if vector_layer {

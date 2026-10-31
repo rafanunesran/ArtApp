@@ -1156,6 +1156,7 @@ fn mix_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             MixKind::History => {
                 "Pinta de volta a camada como ela estava no passo escolhido do histórico, só onde você passar."
             }
+            MixKind::Paint => "Pinta com a cor escolhida misturando com a tinta da tela.",
         })
         .size(12.5)
         .color(color::TEXT_MUTED),

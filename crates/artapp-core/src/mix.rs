@@ -4,6 +4,7 @@
 
 use photocraft_algo::retouch;
 use photocraft_geom::Rect;
+use photocraft_paint::mixer::{MixerSettings, MixerState, apply_mixer_dab_region};
 use photocraft_paint::retouch::{Region, Smudge, alpha_index};
 use photocraft_paint::{BrushContext, BrushSettings, Stroke, StrokePoint, dabs};
 use photocraft_raster::Surface;
@@ -36,6 +37,9 @@ pub enum MixKind {
     /// Pincel histórico: pinta de volta a camada como ela estava num passo do histórico (a
     /// origem fica em `MixSession::with_history`).
     History,
+    /// Tinta que mistura: o pincel sai com a cor escolhida e vai pegando e misturando a cor que
+    /// já está na tela (pincéis da categoria Mistura; a carga fica em `MixSession::with_paint`).
+    Paint,
 }
 
 type DabEffect = Box<dyn FnMut(&mut Region, &photocraft_paint::retouch::Footprint)>;
@@ -60,6 +64,8 @@ pub struct MixSession {
     bg: Option<DabEffect>,
     /// Pincel histórico: a camada no passo escolhido.
     history: Option<Surface>,
+    /// Tinta que mistura: ajustes e a tinta no pincel (reservatório e o que pegou da tela).
+    mixer: Option<(MixerSettings, MixerState)>,
 }
 
 impl MixSession {
@@ -72,6 +78,14 @@ impl MixSession {
     /// Pincel histórico: pinta a partir de `surface` (a camada num passo anterior).
     pub fn with_history(mut self, surface: Surface) -> Self {
         self.history = Some(surface);
+        self
+    }
+
+    /// Tinta que mistura: carrega o pincel com `color` (RGBA 0..1) e mistura com `settings`.
+    pub fn with_paint(mut self, color: [f32; 4], settings: MixerSettings) -> Self {
+        let mut state = MixerState::default();
+        state.begin_stroke(color);
+        self.mixer = Some((settings, state));
         self
     }
 
@@ -121,6 +135,7 @@ impl MixSession {
             source: None,
             offset: None,
             history: None,
+            mixer: None,
         })
     }
 
@@ -154,6 +169,7 @@ impl MixSession {
             return Rect::EMPTY;
         };
         let mut dirty = Rect::EMPTY;
+        let fmt = layer.surface.format();
         let halo = (self.brush.size / 2.0).ceil() as i32 + 3;
         for (i, d) in all.iter().enumerate().skip(self.done) {
             let fp = ctx.footprint(d, i);
@@ -193,6 +209,19 @@ impl MixSession {
                 MixKind::Clone => {
                     let (dx, dy) = self.offset.unwrap_or_default();
                     clone_dab(&mut work, &self.pre, &fp, k, dx, dy)
+                }
+                MixKind::Paint => {
+                    if let Some((m, state)) = &mut self.mixer {
+                        apply_mixer_dab_region(
+                            &mut work,
+                            &fp,
+                            fmt,
+                            None,
+                            m,
+                            state,
+                            self.lock_alpha,
+                        );
+                    }
                 }
             }
             // Devolve só o retângulo da marca, respeitando seleção e bloqueio de transparência.
@@ -385,6 +414,43 @@ mod tests {
             assert!(doc.undo());
             assert_eq!(doc.layers[0].surface.rgba(52, 20)[3], 0.0);
         }
+    }
+
+    #[test]
+    fn paint_mixes_the_loaded_color_with_the_canvas() {
+        let run = |wet: f32| {
+            let mut doc = Document::new(80, 40);
+            let all = doc.bounds();
+            doc.layers[0].surface.fill_rect(all, &[1.0, 0.0, 0.0, 1.0]);
+            let brush = BrushSettings {
+                size: 12.0,
+                ..Default::default()
+            };
+            let m = MixerSettings {
+                wet,
+                mix: 0.8,
+                ..Default::default()
+            };
+            let mut s = MixSession::begin(&mut doc, MixKind::Paint, &brush, 1.0)
+                .unwrap()
+                .with_paint([0.0, 0.0, 1.0, 1.0], m);
+            let pts: Vec<_> = (0..40)
+                .map(|i| StrokePoint::new(10.0 + i as f64, 20.0, 1.0))
+                .collect();
+            s.add(&mut doc, &pts);
+            s.end();
+            doc.layers[0].surface.rgba(45, 20)
+        };
+        let dry = run(0.0);
+        assert!(
+            dry[2] > 0.9 && dry[0] < 0.1,
+            "seco pinta só a cor do pincel: {dry:?}"
+        );
+        let wet = run(1.0);
+        assert!(
+            wet[0] > 0.15 && wet[2] > 0.15,
+            "molhado mistura com o vermelho: {wet:?}"
+        );
     }
 
     #[test]
