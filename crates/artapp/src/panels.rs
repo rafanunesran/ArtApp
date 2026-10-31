@@ -634,7 +634,7 @@ fn filters_group(app: &mut ArtApp, ui: &mut egui::Ui) {
     }
 }
 
-/// Quadrinho: requadros e linhas de efeito.
+/// Quadrinho: requadros, linhas de efeito e balões.
 fn comic_group(app: &mut ArtApp, ui: &mut egui::Ui) {
     let item = menu_item;
     if item(ui, icon::GRID_3X3, "Requadros…").clicked() {
@@ -643,6 +643,10 @@ fn comic_group(app: &mut ArtApp, ui: &mut egui::Ui) {
     }
     if item(ui, icon::SUN_DIM, "Linhas de efeito…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::MangaLines(Default::default()));
+        ui.close();
+    }
+    if item(ui, icon::MESSAGE_CIRCLE, "Balão de fala").clicked() {
+        app.set_tool(Tool::Balloon);
         ui.close();
     }
 }
@@ -2211,6 +2215,24 @@ fn vector_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
                 ui,
                 "Desenhe à mão livre: o traço vira curvas editáveis, com a largura da pressão.",
             );
+        }
+        Tool::Balloon => {
+            section(ui, "Balão");
+            ui.horizontal_wrapped(|ui| {
+                for shape in artapp_core::balloon::BalloonShape::ALL {
+                    ui.selectable_value(&mut app.balloon_shape, shape, shape.label());
+                }
+            });
+            hint(
+                ui,
+                "Arraste para desenhar o balão; depois toque onde o rabicho aponta. O traço usa \
+                 a espessura acima e o balão fica branco por dentro.",
+            );
+            if app.balloon_pending.is_some()
+                && ui.button(format!("{}  Sem rabicho", icon::CHECK)).clicked()
+            {
+                app.finish_balloon(None);
+            }
         }
         _ => hint(ui, "Arraste na tela para desenhar a forma."),
     }
