@@ -2287,10 +2287,20 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
     use crate::brush_editor::{self, BrushTab};
     let eraser = app.tool == Tool::Eraser;
     let tab = if eraser {
-        brush_editor::tab_bar(ui, "eraser", &BrushTab::SETTINGS)
-    } else {
         const TABS: [BrushTab; 7] = [
+            BrushTab::Quick,
+            BrushTab::General,
+            BrushTab::Shape,
+            BrushTab::Grain,
+            BrushTab::Dynamics,
+            BrushTab::Smoothing,
+            BrushTab::Advanced,
+        ];
+        brush_editor::tab_bar(ui, "eraser", &TABS)
+    } else {
+        const TABS: [BrushTab; 8] = [
             BrushTab::Library,
+            BrushTab::Quick,
             BrushTab::General,
             BrushTab::Shape,
             BrushTab::Grain,
@@ -2307,6 +2317,18 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
     match tab {
         BrushTab::Library => brush_library(app, ui),
         BrushTab::General => brush_general(app, ui),
+        BrushTab::Quick => {
+            let max = photocraft_max_size().min(1000.0);
+            let mut none = artapp_core::Taper::default();
+            let (b, taper) = if eraser {
+                (&mut app.eraser, &mut none)
+            } else {
+                (&mut app.brush, &mut app.taper)
+            };
+            if brush_editor::quick_tab(ui, b, taper, max, &mut app.brush_quick) {
+                app.save_prefs();
+            }
+        }
         BrushTab::Advanced => {
             let b = if eraser {
                 &mut app.eraser

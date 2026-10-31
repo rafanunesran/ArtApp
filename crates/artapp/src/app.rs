@@ -269,6 +269,9 @@ pub struct ArtApp {
     pub brush_favorites: Vec<String>,
     /// Pasta aberta em "Meus pincéis" (vazio = todas); pincel salvo ou duplicado entra nela.
     pub brush_folder: String,
+    /// Ajustes que aparecem na aba Rápido (chaves de `brush_editor::QUICK_ITEMS`), escolhidos
+    /// pelo olho, como o "Propriedades da ferramenta" do Clip Studio.
+    pub brush_quick: Vec<String>,
     pub brush: BrushSettings,
     /// Afinar o começo e o fim dos traços do pincel.
     pub taper: artapp_core::Taper,
@@ -614,6 +617,10 @@ impl ArtApp {
             spring: None,
             brush_favorites: Vec::new(),
             brush_folder: String::new(),
+            brush_quick: crate::brush_editor::QUICK_DEFAULT
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             eyedropper_erase: false,
             finger_mode: FingerMode::Auto,
             show_tools_panel: wide,
@@ -730,6 +737,9 @@ impl ArtApp {
         if let Some(l) = names("brush_favorites") {
             self.brush_favorites = l;
         }
+        if let Some(l) = names("brush_quick") {
+            self.brush_quick = l;
+        }
         if let Some(b) = flag("eyedropper_erase") {
             self.eyedropper_erase = b;
         }
@@ -843,6 +853,7 @@ impl ArtApp {
             "eyedropper_erase": self.eyedropper_erase,
             "brush_recent": self.brush_recent,
             "brush_favorites": self.brush_favorites,
+            "brush_quick": self.brush_quick,
             "gesture_rotate": self.gesture_rotate,
             "autoclose_panels": self.autoclose_panels,
             "workspace": self.workspace,
