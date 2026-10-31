@@ -326,6 +326,8 @@ pub struct ArtApp {
     pub hold_eyedropper: bool,
     /// Segurar o dedo abre o QuickMenu (no lugar do conta-gotas).
     pub hold_quickmenu: bool,
+    /// As seis ações do QuickMenu, em sentido horário a partir de cima.
+    pub quick_actions: [crate::quick_menu::Action; 6],
     /// QuickMenu aberto, centrado neste ponto da tela.
     pub quick_menu: Option<Pos2>,
     /// Painel de histórico aberto.
@@ -470,6 +472,7 @@ impl ArtApp {
             quick_shape: true,
             hold_eyedropper: true,
             hold_quickmenu: false,
+            quick_actions: crate::quick_menu::DEFAULT,
             quick_menu: None,
             history_open: false,
             copy_menu: None,
@@ -541,6 +544,13 @@ impl ArtApp {
         if let Some(b) = flag("hold_eyedropper") {
             self.hold_eyedropper = b;
         }
+        if let Some(list) = v.get("quick_actions").and_then(serde_json::Value::as_array) {
+            for (slot, name) in self.quick_actions.iter_mut().zip(list) {
+                if let Some(a) = name.as_str().and_then(crate::quick_menu::Action::from_name) {
+                    *slot = a;
+                }
+            }
+        }
         if let Some(b) = flag("hold_quickmenu") {
             self.hold_quickmenu = b;
         }
@@ -589,6 +599,7 @@ impl ArtApp {
             "quick_shape": self.quick_shape,
             "hold_eyedropper": self.hold_eyedropper,
             "hold_quickmenu": self.hold_quickmenu,
+            "quick_actions": self.quick_actions.map(|a| format!("{a:?}")),
             "finger_mode": format!("{:?}", self.finger_mode),
             "pen_button_tool": self.pen_button_tool.map(|t| format!("{t:?}")),
             "color_triangle": self.color_state.triangle,

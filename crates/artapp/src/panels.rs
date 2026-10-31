@@ -56,10 +56,16 @@ pub fn is_compact(ctx: &egui::Context) -> bool {
 pub fn top_bar(app: &mut ArtApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        ui.menu_button(
+        // Clicar dentro não fecha o menu (os itens fecham sozinhos): assim as chaves e as setas
+        // das preferências podem ser tocadas várias vezes seguidas.
+        egui::containers::menu::MenuButton::new(
             RichText::new(icon::MENU.to_string()).font(theme::icon_font(20.0)),
-            |ui| file_menu(app, ui),
-        );
+        )
+        .config(
+            egui::containers::menu::MenuConfig::new()
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+        )
+        .ui(ui, |ui| file_menu(app, ui));
         ui.add_enabled_ui(app.doc.can_undo(), |ui| {
             if icon_button(ui, icon::UNDO, false, "Desfazer (Ctrl+Z)").clicked() {
                 app.undo();
@@ -197,6 +203,7 @@ fn pen_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             })
             .changed();
     }
+    changed |= crate::quick_menu::settings(app, ui);
     if changed {
         app.save_prefs();
     }
