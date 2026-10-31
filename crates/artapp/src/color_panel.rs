@@ -237,8 +237,8 @@ fn wheel_options(app: &mut ArtApp, ui: &mut egui::Ui) {
     }
 }
 
-/// Anel de matiz em volta de um quadrado de saturação (x) e valor (y), ou de um triângulo com a
-/// matiz pura em cima, o branco embaixo à esquerda e o preto embaixo à direita.
+/// Anel de matiz em volta de um quadrado de saturação (x) e valor (y), ou de um triângulo com o
+/// branco em cima à esquerda, o preto embaixo à esquerda e a matiz pura na ponta da direita.
 fn wheel(ui: &mut egui::Ui, st: &mut ColorState, max: f32) -> Option<Color32> {
     let size = ui.available_width().min(max);
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::click_and_drag());
@@ -315,7 +315,8 @@ impl Inner {
             let a = deg.to_radians();
             c + Vec2::new(a.cos(), a.sin()) * r
         };
-        Self::Triangle([at(-90.0), at(150.0), at(30.0)])
+        // Lado vertical à esquerda (branco em cima, preto embaixo), cor pura na ponta direita.
+        Self::Triangle([at(0.0), at(-120.0), at(120.0)])
     }
 
     /// Onde fica a saturação `s` e o valor `v`.
