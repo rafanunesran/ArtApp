@@ -15,6 +15,7 @@ pub mod border;
 pub mod brushes;
 pub mod canvas_size;
 pub mod composite;
+pub mod decoration;
 pub mod document;
 pub mod edit;
 pub mod effects;

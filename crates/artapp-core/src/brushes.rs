@@ -143,7 +143,7 @@ pub fn describe(name: &str) -> Option<&'static str> {
         "Borracha macia" => "Apaga suave, para clarear áreas.",
         "Borracha de lápis" => "Apaga como borracha de papel, pela pressão.",
         "Borracha de textura" => "Apaga deixando o grão do papel.",
-        _ => return None,
+        _ => return crate::decoration::describe(name),
     })
 }
 
@@ -542,6 +542,7 @@ pub fn extra() -> Vec<BrushEntry> {
 pub fn all() -> Vec<BrushEntry> {
     let mut v = drawing();
     v.extend(extra());
+    v.extend(crate::decoration::brushes());
     v.extend(presets::builtin().into_iter().map(|p: BrushPreset| {
         let (name, group) = localize(&p.name, &p.group);
         BrushEntry {
