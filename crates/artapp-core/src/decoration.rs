@@ -185,6 +185,7 @@ fn entry(name: &str, settings: BrushSettings) -> BrushEntry {
         name: name.into(),
         group: GROUP.into(),
         settings,
+        mixes: false,
     }
 }
 

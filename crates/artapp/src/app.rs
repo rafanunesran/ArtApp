@@ -1002,7 +1002,7 @@ impl ArtApp {
             && self
                 .brushes
                 .get(self.brush_index)
-                .is_some_and(|b| b.group == brushes::MIX_GROUP)
+                .is_some_and(BrushEntry::mixes_paint)
     }
 
     /// Põe ou tira a estrela do pincel `i`.
@@ -1163,6 +1163,7 @@ impl ArtApp {
         self.brushes.push(BrushEntry {
             name: name.clone(),
             group: brushes::CUSTOM_GROUP.into(),
+            mixes: src.mixes_paint(),
             settings: src.settings,
         });
         self.brush_previews.clear();
@@ -1171,6 +1172,45 @@ impl ArtApp {
         self.status = match brushes::save_custom(&brushes_path(), &self.brushes) {
             Ok(()) => format!("\"{name}\" criado em Meus pincéis."),
             Err(e) => format!("Pincel copiado, mas não foi possível gravar: {e}"),
+        };
+    }
+
+    /// Renomeia um pincel de "Meus pincéis" (favorito, recente e curva seguem o nome novo).
+    pub fn rename_brush(&mut self, i: usize, name: String) {
+        let Some(old) = self
+            .brushes
+            .get(i)
+            .filter(|b| b.group == brushes::CUSTOM_GROUP)
+            .map(brush_key)
+        else {
+            return;
+        };
+        if self
+            .brushes
+            .iter()
+            .any(|b| b.group == brushes::CUSTOM_GROUP && b.name == name)
+        {
+            self.status = format!("Já existe um pincel chamado \"{name}\".");
+            return;
+        }
+        self.brushes[i].name = name;
+        let new = brush_key(&self.brushes[i]);
+        for k in self
+            .brush_recent
+            .iter_mut()
+            .chain(self.brush_favorites.iter_mut())
+        {
+            if *k == old {
+                k.clone_from(&new);
+            }
+        }
+        if let Some(c) = self.brush_curves.remove(&old) {
+            self.brush_curves.insert(new, c);
+        }
+        self.save_prefs();
+        self.status = match brushes::save_custom(&brushes_path(), &self.brushes) {
+            Ok(()) => "Pincel renomeado.".into(),
+            Err(e) => format!("Renomeado, mas não foi possível gravar: {e}"),
         };
     }
 
@@ -1185,6 +1225,11 @@ impl ArtApp {
             name: name.clone(),
             group: brushes::CUSTOM_GROUP.into(),
             settings: self.brush.clone(),
+            // Salvar a partir de um pincel de Mistura mantém a mistura com a tela.
+            mixes: self
+                .brushes
+                .get(self.brush_index)
+                .is_some_and(BrushEntry::mixes_paint),
         };
         match self
             .brushes

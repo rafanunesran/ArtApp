@@ -16,6 +16,16 @@ pub struct BrushEntry {
     pub name: String,
     pub group: String,
     pub settings: BrushSettings,
+    /// A tinta mistura com a da tela (os da categoria Mistura e as cópias deles em Meus pincéis).
+    #[serde(default)]
+    pub mixes: bool,
+}
+
+impl BrushEntry {
+    /// Pinta misturando com a tela (ver [`MIX_GROUP`]).
+    pub fn mixes_paint(&self) -> bool {
+        self.mixes || self.group == MIX_GROUP
+    }
 }
 
 fn pressure_size(minimum: f32) -> ShapeDynamics {
@@ -34,6 +44,7 @@ fn ours(name: &str, group: &str, settings: BrushSettings) -> BrushEntry {
         name: name.into(),
         group: group.into(),
         settings,
+        mixes: group == MIX_GROUP,
     }
 }
 
@@ -549,6 +560,7 @@ pub fn all() -> Vec<BrushEntry> {
             name,
             group: group.into(),
             settings: p.brush,
+            mixes: false,
         }
     }));
     // Ordenação estável: dentro da categoria, os nossos vêm antes dos do PhotoCraft.
@@ -639,12 +651,14 @@ mod tests {
         b[1].group = CUSTOM_GROUP.into();
         b[1].name = "Meu lápis".into();
         b[1].settings.size = 12.0;
+        b[1].mixes = true;
         let bytes = export_pack(&b)?;
         let back = import(&format!("x.{PACK_EXT}"), &bytes)?;
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].name, "Meu lápis");
         assert_eq!(back[0].group, CUSTOM_GROUP);
         assert_eq!(back[0].settings.size, 12.0);
+        assert!(back[0].mixes_paint(), "cópia de pincel de Mistura continua misturando");
         assert!(export_pack(&drawing()).is_err());
         assert!(import(&format!("x.{PACK_EXT}"), b"{}").is_err());
         Ok(())
@@ -822,6 +836,7 @@ pub fn import(file_name: &str, bytes: &[u8]) -> Result<Vec<BrushEntry>, String> 
                 name: p.name,
                 group: CUSTOM_GROUP.into(),
                 settings: p.brush,
+                mixes: false,
             })
             .collect());
     }
@@ -831,6 +846,7 @@ pub fn import(file_name: &str, bytes: &[u8]) -> Result<Vec<BrushEntry>, String> 
     Ok(vec![BrushEntry {
         name: stem,
         group: CUSTOM_GROUP.into(),
+        mixes: false,
         settings: BrushSettings {
             tip: photocraft_paint::TipShape::Sampled(tip),
             size,

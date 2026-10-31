@@ -2562,6 +2562,7 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
     let mut remove = None;
     let mut star = None;
     let mut dup = None;
+    let mut rename = None;
     let previews = app.brush_previews(ui.ctx());
     for &i in &shown {
         let entry = &app.brushes[i];
@@ -2592,6 +2593,22 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
             if ui.button(format!("{}  Duplicar", icon::COPY)).clicked() {
                 dup = Some(i);
                 ui.close();
+            }
+            if custom {
+                let id = Id::unique(("brush-rename", i));
+                let mut text: String = ui
+                    .ctx()
+                    .data_mut(|d| d.get_temp(id))
+                    .unwrap_or_else(|| entry.name.clone());
+                ui.horizontal(|ui| {
+                    let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(140.0));
+                    let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if (ui.button("Renomear").clicked() || enter) && !text.trim().is_empty() {
+                        rename = Some((i, text.trim().to_string()));
+                        ui.close();
+                    }
+                });
+                ui.ctx().data_mut(|d| d.insert_temp(id, text));
             }
             if custom
                 && ui
@@ -2629,6 +2646,11 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
     }
     if let Some(i) = dup {
         app.duplicate_brush(i);
+    }
+    if let Some((i, name)) = rename {
+        ui.ctx()
+            .data_mut(|d| d.remove::<String>(Id::unique("brush-rename")));
+        app.rename_brush(i, name);
     }
     if let Some(i) = picked {
         app.select_brush(i);
