@@ -252,6 +252,10 @@ pub struct ArtApp {
     pub previous_tool: Tool,
     pub brushes: Vec<BrushEntry>,
     pub brush_index: usize,
+    /// Pincéis usados por último (chave de [`brush_key`]), o mais recente primeiro.
+    pub brush_recent: Vec<String>,
+    /// Pincéis marcados com estrela (chave de [`brush_key`]).
+    pub brush_favorites: Vec<String>,
     pub brush: BrushSettings,
     /// Afinar o começo e o fim dos traços do pincel.
     pub taper: artapp_core::Taper,
@@ -563,6 +567,8 @@ impl ArtApp {
             drop_fill: None,
             hide_ui: false,
             eyedropper_from: Default::default(),
+            brush_recent: Vec::new(),
+            brush_favorites: Vec::new(),
             eyedropper_erase: false,
             finger_mode: FingerMode::Auto,
             show_tools_panel: wide,
@@ -649,6 +655,16 @@ impl ArtApp {
             .and_then(|m| serde_json::from_value(m.clone()).ok())
         {
             self.eyedropper_from = m;
+        }
+        let names = |k: &str| {
+            v.get(k)
+                .and_then(|m| serde_json::from_value::<Vec<String>>(m.clone()).ok())
+        };
+        if let Some(l) = names("brush_recent") {
+            self.brush_recent = l.into_iter().take(RECENT_BRUSHES).collect();
+        }
+        if let Some(l) = names("brush_favorites") {
+            self.brush_favorites = l;
         }
         if let Some(b) = flag("eyedropper_erase") {
             self.eyedropper_erase = b;
@@ -746,6 +762,8 @@ impl ArtApp {
             "vector_opacity": self.vector_opacity,
             "eyedropper_from": self.eyedropper_from,
             "eyedropper_erase": self.eyedropper_erase,
+            "brush_recent": self.brush_recent,
+            "brush_favorites": self.brush_favorites,
             "gesture_rotate": self.gesture_rotate,
             "autoclose_panels": self.autoclose_panels,
             "tap_undo": self.tap_undo,
@@ -892,7 +910,39 @@ impl ArtApp {
             if self.tool != Tool::Brush {
                 self.tool = Tool::Brush;
             }
+            let key = brush_key(entry);
+            if self.brush_recent.first() != Some(&key) {
+                self.brush_recent.retain(|k| *k != key);
+                self.brush_recent.insert(0, key);
+                self.brush_recent.truncate(RECENT_BRUSHES);
+                self.save_prefs();
+            }
         }
+    }
+
+    /// Põe ou tira a estrela do pincel `i`.
+    pub fn toggle_favorite(&mut self, i: usize) {
+        let Some(entry) = self.brushes.get(i) else {
+            return;
+        };
+        let key = brush_key(entry);
+        if self.brush_favorites.contains(&key) {
+            self.brush_favorites.retain(|k| *k != key);
+        } else {
+            self.brush_favorites.push(key);
+        }
+        self.save_prefs();
+    }
+
+    pub fn is_favorite(&self, entry: &BrushEntry) -> bool {
+        self.brush_favorites.contains(&brush_key(entry))
+    }
+
+    /// Índices em `brushes` das chaves dadas, na mesma ordem (as que sumiram ficam de fora).
+    pub fn brushes_by_keys(&self, keys: &[String]) -> Vec<usize> {
+        keys.iter()
+            .filter_map(|k| self.brushes.iter().position(|b| brush_key(b) == *k))
+            .collect()
     }
 
     /// A cor para o balde e o "preencher seleção" (alfa 0 com a cor transparente).
@@ -1610,6 +1660,14 @@ pub fn color_to_f32(c: Color32) -> [f32; 4] {
         b as f32 / 255.0,
         a as f32 / 255.0,
     ]
+}
+
+/// Quantos pincéis o grupo Recentes guarda (como no Procreate).
+pub const RECENT_BRUSHES: usize = 8;
+
+/// Identifica um pincel entre sessões: categoria e nome.
+pub fn brush_key(e: &BrushEntry) -> String {
+    format!("{}/{}", e.group, e.name)
 }
 
 pub fn color_from_f32(c: [f32; 4]) -> Color32 {

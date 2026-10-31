@@ -2061,10 +2061,18 @@ fn category_icon(group: &str) -> char {
     }
 }
 
-/// Aba Pincéis: categorias em botões grandes (fácil no dedo) e os pincéis da categoria.
+/// Grupos da biblioteca que não são categorias: montados a partir das preferências.
+const RECENT: &str = "Recentes";
+const FAVORITES: &str = "Favoritos";
+/// Estrela dos favoritos (da fonte padrão do egui; a de ícones não tem estrela).
+const STAR: char = '★';
+
+/// Aba Pincéis: busca, categorias em botões grandes (fácil no dedo) e os pincéis da categoria.
+/// No topo ficam Recentes e Favoritos, como no Procreate.
 fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
     use artapp_core::brushes::{CATEGORIES, CUSTOM_GROUP};
     let key = Id::unique("brush-category");
+    let search_key = Id::unique("brush-search");
     let current_group = app
         .brushes
         .get(app.brush_index)
@@ -2074,80 +2082,157 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
         .ctx()
         .data_mut(|d| d.get_persisted::<String>(key))
         .unwrap_or_else(|| current_group.clone());
+    let mut search: String = ui
+        .ctx()
+        .data_mut(|d| d.get_temp::<String>(search_key))
+        .unwrap_or_default();
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(&mut search)
+                .hint_text("Buscar pincel ou categoria")
+                .desired_width(ui.available_width() - 40.0),
+        );
+        if !search.is_empty() && ui.button(icon::X.to_string()).clicked() {
+            search.clear();
+        }
+    });
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(search_key, search.clone()));
+
     // Categorias que existem (as embutidas e as de pincéis importados com outro grupo).
-    let mut cats: Vec<String> = CATEGORIES
-        .iter()
-        .filter(|c| **c == CUSTOM_GROUP || app.brushes.iter().any(|b| b.group == **c))
-        .map(|c| c.to_string())
-        .collect();
+    let mut cats: Vec<String> = Vec::new();
+    if !app.brushes_by_keys(&app.brush_recent).is_empty() {
+        cats.push(RECENT.into());
+    }
+    if !app.brushes_by_keys(&app.brush_favorites).is_empty() {
+        cats.push(FAVORITES.into());
+    }
+    cats.extend(
+        CATEGORIES
+            .iter()
+            .filter(|c| **c == CUSTOM_GROUP || app.brushes.iter().any(|b| b.group == **c))
+            .map(|c| c.to_string()),
+    );
     for b in &app.brushes {
         if !cats.contains(&b.group) {
             cats.push(b.group.clone());
         }
     }
     if !cats.contains(&cat) {
-        cat = cats.first().cloned().unwrap_or_default();
+        cat = if cats.contains(&current_group) {
+            current_group.clone()
+        } else {
+            cats.first().cloned().unwrap_or_default()
+        };
     }
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::splat(4.0);
-        for c in &cats {
-            let on = *c == cat;
-            let mut text = RichText::new(format!("{}  {c}", category_icon(c))).size(13.5);
-            if on {
-                text = text.strong().color(color::ACCENT);
-            } else if *c == current_group {
-                // Mostra onde está o pincel em uso.
-                text = text.color(color::TEXT);
+    let query = search.trim().to_lowercase();
+    if query.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::splat(4.0);
+            for c in &cats {
+                let on = *c == cat;
+                let glyph = match c.as_str() {
+                    RECENT => icon::ROTATE_CCW,
+                    FAVORITES => STAR,
+                    _ => category_icon(c),
+                };
+                let mut text = RichText::new(format!("{glyph}  {c}")).size(13.5);
+                if on {
+                    text = text.strong().color(color::ACCENT);
+                } else if *c == current_group {
+                    // Mostra onde está o pincel em uso.
+                    text = text.color(color::TEXT);
+                }
+                if ui
+                    .add(
+                        egui::Button::new(text)
+                            .selected(on)
+                            .min_size(Vec2::new(0.0, 40.0)),
+                    )
+                    .clicked()
+                {
+                    cat.clone_from(c);
+                }
             }
-            if ui
-                .add(
-                    egui::Button::new(text)
-                        .selected(on)
-                        .min_size(Vec2::new(0.0, 40.0)),
-                )
-                .clicked()
-            {
-                cat.clone_from(c);
-            }
-        }
-    });
-    ui.ctx().data_mut(|d| d.insert_persisted(key, cat.clone()));
+        });
+        ui.ctx().data_mut(|d| d.insert_persisted(key, cat.clone()));
+    }
     ui.separator();
+
+    // Os pincéis mostrados, na ordem certa.
+    let shown: Vec<usize> = if !query.is_empty() {
+        (0..app.brushes.len())
+            .filter(|&i| {
+                let b = &app.brushes[i];
+                b.name.to_lowercase().contains(&query) || b.group.to_lowercase().contains(&query)
+            })
+            .collect()
+    } else if cat == RECENT {
+        app.brushes_by_keys(&app.brush_recent)
+    } else if cat == FAVORITES {
+        app.brushes_by_keys(&app.brush_favorites)
+    } else {
+        (0..app.brushes.len())
+            .filter(|&i| app.brushes[i].group == cat)
+            .collect()
+    };
 
     let mut picked = None;
     let mut remove = None;
+    let mut star = None;
     let previews = app.brush_previews(ui.ctx());
-    let mut any = false;
-    for (i, entry) in app.brushes.iter().enumerate() {
-        if entry.group != cat {
-            continue;
-        }
-        any = true;
+    for &i in &shown {
+        let entry = &app.brushes[i];
+        let fav = app.is_favorite(entry);
+        let label = match (fav, !query.is_empty()) {
+            (true, true) => format!("{STAR}  {}  ·  {}", entry.name, entry.group),
+            (true, false) => format!("{STAR}  {}", entry.name),
+            (false, true) => format!("{}  ·  {}", entry.name, entry.group),
+            (false, false) => entry.name.clone(),
+        };
         let selected = app.brush_index == i;
-        let row = brush_row(ui, &entry.name, previews.get(i), selected);
+        let row = brush_row(ui, &label, previews.get(i), selected);
         if row.clicked() {
             picked = Some(i);
         }
-        if entry.group == CUSTOM_GROUP {
-            row.context_menu(|ui| {
-                if ui
+        let custom = entry.group == CUSTOM_GROUP;
+        // Segurar o dedo (ou botão direito) abre as opções do pincel.
+        row.context_menu(|ui| {
+            let text = if fav {
+                "☆  Tirar dos favoritos".to_string()
+            } else {
+                format!("{STAR}  Favoritar")
+            };
+            if ui.button(text).clicked() {
+                star = Some(i);
+                ui.close();
+            }
+            if custom
+                && ui
                     .button(format!("{}  Apagar pincel", icon::TRASH))
                     .clicked()
-                {
-                    remove = Some(i);
-                    ui.close();
-                }
-            });
-        }
+            {
+                remove = Some(i);
+                ui.close();
+            }
+        });
     }
-    if !any {
+    if shown.is_empty() {
+        let msg = if query.is_empty() {
+            "Nenhum pincel aqui ainda. Ajuste um pincel e toque em Salvar, ou importe pincéis."
+        } else {
+            "Nenhum pincel com esse nome."
+        };
+        ui.label(RichText::new(msg).size(12.0).color(color::TEXT_MUTED));
+    } else if query.is_empty() && cat != FAVORITES {
         ui.label(
-            RichText::new(
-                "Nenhum pincel aqui ainda. Ajuste um pincel e toque em Salvar, ou importe pincéis.",
-            )
-            .size(12.0)
-            .color(color::TEXT_MUTED),
+            RichText::new("Segure um pincel para favoritar.")
+                .size(11.5)
+                .color(color::TEXT_MUTED),
         );
+    }
+    if let Some(i) = star {
+        app.toggle_favorite(i);
     }
     if let Some(i) = picked {
         app.select_brush(i);
