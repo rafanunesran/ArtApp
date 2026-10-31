@@ -33,6 +33,7 @@ pub mod quickshape;
 pub mod ruler;
 pub mod selection;
 pub mod stroke;
+pub mod subject;
 pub mod tone;
 pub mod transform;
 pub mod vector;
