@@ -343,6 +343,8 @@ pub struct ArtApp {
     pub history_open: bool,
     /// Modo lápis nos filtros, ajustes e efeitos.
     pub adjust_pencil: bool,
+    /// Alinhar do Vetor pro em relação à tela inteira (senão, à seleção).
+    pub align_to_canvas: bool,
     /// Recorte com perspectiva em andamento: os quatro cantos (em pixels do documento).
     pub persp_crop: Option<[[f64; 2]; 4]>,
     /// Seleções guardadas para usar de novo (valem para o desenho aberto).
@@ -506,6 +508,7 @@ impl ArtApp {
             quick_menu: None,
             history_open: false,
             adjust_pencil: false,
+            align_to_canvas: false,
             persp_crop: None,
             saved_selections: Vec::new(),
             reference: None,
