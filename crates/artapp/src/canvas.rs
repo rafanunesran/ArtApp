@@ -10,7 +10,7 @@ use artapp_core::{
 };
 use eframe::egui::{self, Color32, Pos2, Sense, TextureHandle, TextureOptions, TouchPhase, Vec2};
 
-use crate::app::{ArtApp, Tool, color_from_f32, color_to_f32};
+use crate::app::{ArtApp, Tool, color_to_f32};
 
 /// Um traço que começou há menos que isto quando o segundo dedo encosta é considerado parte do
 /// gesto de zoom e é desfeito.
