@@ -6,7 +6,8 @@
 pub const MAX_SIZE: f32 = photocraft_paint::MAX_BRUSH_SIZE;
 
 use photocraft_paint::{
-    BrushPreset, BrushSettings, Control, Dynamic, ShapeDynamics, Smoothing, Transfer, presets,
+    BrushPreset, BrushSettings, Control, Dynamic, Pattern, PatternStyle, ShapeDynamics, Smoothing,
+    Texture, Transfer, presets,
 };
 
 /// Um pincel da paleta: nome mostrado e configurações.
@@ -200,10 +201,235 @@ pub fn drawing() -> Vec<BrushEntry> {
     ]
 }
 
+/// Pincel que apaga com a própria forma (categoria Borrachas). Funciona com a ferramenta Pincel,
+/// como no Procreate, onde qualquer pincel pode apagar.
+fn eraser(size: f32, hardness: f32, settings: BrushSettings) -> BrushSettings {
+    BrushSettings {
+        size,
+        hardness,
+        erase: true,
+        ..settings
+    }
+}
+
+fn smooth(amount: f32) -> Smoothing {
+    Smoothing {
+        amount,
+        ..Default::default()
+    }
+}
+
+fn pressure_opacity() -> Transfer {
+    Transfer {
+        enabled: true,
+        opacity: Dynamic::controlled(Control::PenPressure),
+        ..Default::default()
+    }
+}
+
+/// Mais pincéis do conjunto padrão, um por necessidade comum de cada categoria (rodada B2 do
+/// plano de pincéis). Todos feitos aqui, sobre o motor do PhotoCraft.
+pub fn extra() -> Vec<BrushEntry> {
+    let base = BrushSettings::default();
+    let paper = Texture {
+        enabled: true,
+        pattern: Pattern::Procedural {
+            style: PatternStyle::Paper,
+            size: 128,
+            seed: 11,
+        },
+        scale: 1.0,
+        depth: 0.7,
+        ..Default::default()
+    };
+    vec![
+        // Esboço
+        ours(
+            "Lapiseira",
+            "Esboço",
+            BrushSettings {
+                size: 2.0,
+                hardness: 0.85,
+                spacing: 0.08,
+                opacity: 0.9,
+                shape_dynamics: pressure_size(0.6),
+                transfer: pressure_opacity(),
+                noise: true,
+                ..base.clone()
+            },
+        ),
+        ours(
+            "Lápis de cor",
+            "Esboço",
+            BrushSettings {
+                size: 7.0,
+                hardness: 0.5,
+                spacing: 0.08,
+                shape_dynamics: pressure_size(0.5),
+                transfer: pressure_opacity(),
+                texture: paper.clone(),
+                ..base.clone()
+            },
+        ),
+        // Arte-final
+        ours(
+            "Caneta fina",
+            "Arte-final",
+            BrushSettings {
+                size: 3.0,
+                hardness: 1.0,
+                spacing: 0.04,
+                shape_dynamics: pressure_size(0.2),
+                smoothing: smooth(0.4),
+                ..base.clone()
+            },
+        ),
+        ours(
+            "Caneta técnica",
+            "Arte-final",
+            BrushSettings {
+                size: 4.0,
+                hardness: 1.0,
+                spacing: 0.04,
+                shape_dynamics: ShapeDynamics::default(),
+                smoothing: smooth(0.5),
+                ..base.clone()
+            },
+        ),
+        ours(
+            "Pincel de nanquim",
+            "Arte-final",
+            BrushSettings {
+                size: 16.0,
+                hardness: 0.95,
+                spacing: 0.04,
+                roundness: 0.8,
+                angle: 30.0,
+                shape_dynamics: pressure_size(0.02),
+                smoothing: smooth(0.35),
+                ..base.clone()
+            },
+        ),
+        // Marcadores
+        ours(
+            "Marcador de álcool",
+            "Marcadores",
+            BrushSettings {
+                size: 26.0,
+                hardness: 0.85,
+                spacing: 0.04,
+                opacity: 0.45,
+                roundness: 0.6,
+                angle: 30.0,
+                shape_dynamics: ShapeDynamics::default(),
+                ..base.clone()
+            },
+        ),
+        ours(
+            "Marca-texto",
+            "Marcadores",
+            BrushSettings {
+                size: 24.0,
+                hardness: 1.0,
+                spacing: 0.04,
+                opacity: 0.5,
+                roundness: 0.35,
+                mode: photocraft_color::BlendMode::Multiply,
+                shape_dynamics: ShapeDynamics::default(),
+                ..base.clone()
+            },
+        ),
+        ours(
+            "Caneta de feltro",
+            "Marcadores",
+            BrushSettings {
+                size: 6.0,
+                hardness: 0.85,
+                spacing: 0.05,
+                opacity: 0.95,
+                shape_dynamics: pressure_size(0.6),
+                ..base.clone()
+            },
+        ),
+        // Caligrafia
+        ours(
+            "Caneta chanfrada",
+            "Caligrafia",
+            BrushSettings {
+                size: 18.0,
+                hardness: 1.0,
+                spacing: 0.03,
+                roundness: 0.15,
+                angle: 45.0,
+                shape_dynamics: pressure_size(0.5),
+                smoothing: smooth(0.3),
+                ..base.clone()
+            },
+        ),
+        ours(
+            "Monoline",
+            "Caligrafia",
+            BrushSettings {
+                size: 7.0,
+                hardness: 1.0,
+                spacing: 0.04,
+                shape_dynamics: ShapeDynamics::default(),
+                smoothing: smooth(0.6),
+                ..base.clone()
+            },
+        ),
+        // Borrachas
+        ours(
+            "Borracha dura",
+            "Borrachas",
+            eraser(20.0, 1.0, base.clone()),
+        ),
+        ours(
+            "Borracha macia",
+            "Borrachas",
+            eraser(
+                60.0,
+                0.0,
+                BrushSettings {
+                    flow: 0.5,
+                    ..base.clone()
+                },
+            ),
+        ),
+        ours(
+            "Borracha de lápis",
+            "Borrachas",
+            eraser(
+                8.0,
+                0.6,
+                BrushSettings {
+                    noise: true,
+                    transfer: pressure_opacity(),
+                    shape_dynamics: pressure_size(0.5),
+                    ..base.clone()
+                },
+            ),
+        ),
+        ours(
+            "Borracha de textura",
+            "Borrachas",
+            eraser(
+                30.0,
+                0.4,
+                BrushSettings {
+                    texture: paper,
+                    ..base
+                },
+            ),
+        ),
+    ]
+}
+
 /// Todos os pincéis: os de desenho e os presets embutidos do PhotoCraft, com nome em português,
 /// ordenados por categoria ([`CATEGORIES`]).
 pub fn all() -> Vec<BrushEntry> {
     let mut v = drawing();
+    v.extend(extra());
     v.extend(presets::builtin().into_iter().map(|p: BrushPreset| {
         let (name, group) = localize(&p.name, &p.group);
         BrushEntry {
@@ -256,6 +482,37 @@ mod tests {
         assert_eq!(back[0].name, "Meu");
         assert_eq!(back[0].settings.size, 33.0);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn default_set_covers_the_categories_and_names_are_unique() {
+        let all = all();
+        for c in ["Marcadores", "Caligrafia", "Borrachas"] {
+            assert!(all.iter().filter(|b| b.group == c).count() >= 2, "{c}");
+        }
+        assert!(
+            all.iter()
+                .filter(|b| b.group == "Borrachas")
+                .all(|b| b.settings.erase)
+        );
+        let mut keys: Vec<_> = all.iter().map(|b| (&b.group, &b.name)).collect();
+        let n = keys.len();
+        keys.sort();
+        keys.dedup();
+        assert_eq!(
+            keys.len(),
+            n,
+            "dois pincéis com o mesmo nome na mesma categoria"
+        );
+        // Todo pincel deixa marca na prévia (as borrachas apagam, então ficam de fora).
+        for b in all.iter().filter(|b| !b.settings.erase) {
+            let px = preview(&b.settings, 96, 24);
+            assert!(
+                px.iter().any(|p| p[3] > 0),
+                "{} sem tinta na prévia",
+                b.name
+            );
+        }
     }
 
     #[test]
