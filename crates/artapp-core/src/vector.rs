@@ -230,7 +230,11 @@ impl Document {
     }
 
     /// Edita a arte vetorial da camada ativa e refaz a cópia rasterizada. Devolve a área a recompor.
-    fn edit_vector(&mut self, checkpoint: bool, f: impl FnOnce(&mut VectorArt) -> bool) -> Rect {
+    pub(crate) fn edit_vector(
+        &mut self,
+        checkpoint: bool,
+        f: impl FnOnce(&mut VectorArt) -> bool,
+    ) -> Rect {
         if !self.active_is_vector() {
             return Rect::EMPTY;
         }
