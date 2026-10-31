@@ -19,6 +19,10 @@ pub struct BrushEntry {
     /// A tinta mistura com a da tela (os da categoria Mistura e as cópias deles em Meus pincéis).
     #[serde(default)]
     pub mixes: bool,
+    /// Subconjunto dentro de "Meus pincéis" (vazio = fora de pasta), como os conjuntos do
+    /// Procreate e as etiquetas do Krita, para separar "Lineart", "Pintura", "Cliente X"…
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub folder: String,
 }
 
 impl BrushEntry {
@@ -92,6 +96,7 @@ fn ours(name: &str, group: &str, settings: BrushSettings) -> BrushEntry {
         group: group.into(),
         settings,
         mixes: group == MIX_GROUP,
+        folder: String::new(),
     }
 }
 
@@ -621,6 +626,7 @@ pub fn all() -> Vec<BrushEntry> {
             group: group.into(),
             settings: p.brush,
             mixes: false,
+            folder: String::new(),
         }
     }));
     // Ordenação estável: dentro da categoria, os nossos vêm antes dos do PhotoCraft.
@@ -634,6 +640,18 @@ pub const MIX_GROUP: &str = "Mistura";
 
 /// Grupo dos pincéis criados pelo usuário.
 pub const CUSTOM_GROUP: &str = "Meus pincéis";
+
+/// Pastas usadas em "Meus pincéis", em ordem alfabética.
+pub fn folders(brushes: &[BrushEntry]) -> Vec<String> {
+    let mut v: Vec<String> = brushes
+        .iter()
+        .filter(|b| b.group == CUSTOM_GROUP && !b.folder.is_empty())
+        .map(|b| b.folder.clone())
+        .collect();
+    v.sort_by_key(|f| f.to_lowercase());
+    v.dedup();
+    v
+}
 
 /// Lê os pincéis salvos pelo usuário (lista vazia se o arquivo não existe ou não abre).
 pub fn load_custom(path: &std::path::Path) -> Vec<BrushEntry> {
@@ -712,6 +730,7 @@ mod tests {
         b[1].name = "Meu lápis".into();
         b[1].settings.size = 12.0;
         b[1].mixes = true;
+        b[1].folder = "Lineart".into();
         let bytes = export_pack(&b)?;
         let back = import(&format!("x.{PACK_EXT}"), &bytes)?;
         assert_eq!(back.len(), 1);
@@ -722,6 +741,9 @@ mod tests {
             back[0].mixes_paint(),
             "cópia de pincel de Mistura continua misturando"
         );
+        assert_eq!(back[0].folder, "Lineart", "a pasta vai junto no pacote");
+        assert_eq!(folders(&back), vec!["Lineart".to_string()]);
+        assert!(folders(&drawing()).is_empty());
         assert!(export_pack(&drawing()).is_err());
         assert!(import(&format!("x.{PACK_EXT}"), b"{}").is_err());
         Ok(())
@@ -913,6 +935,7 @@ pub fn import(file_name: &str, bytes: &[u8]) -> Result<Vec<BrushEntry>, String> 
                 group: CUSTOM_GROUP.into(),
                 settings: p.brush,
                 mixes: false,
+                folder: String::new(),
             })
             .collect());
     }
@@ -923,6 +946,7 @@ pub fn import(file_name: &str, bytes: &[u8]) -> Result<Vec<BrushEntry>, String> 
         name: stem,
         group: CUSTOM_GROUP.into(),
         mixes: false,
+        folder: String::new(),
         settings: BrushSettings {
             tip: photocraft_paint::TipShape::Sampled(tip),
             size,

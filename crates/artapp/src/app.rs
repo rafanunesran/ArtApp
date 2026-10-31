@@ -267,6 +267,8 @@ pub struct ArtApp {
     spring: Option<(egui::Key, Tool, f64)>,
     /// Pincéis marcados com estrela (chave de [`brush_key`]).
     pub brush_favorites: Vec<String>,
+    /// Pasta aberta em "Meus pincéis" (vazio = todas); pincel salvo ou duplicado entra nela.
+    pub brush_folder: String,
     pub brush: BrushSettings,
     /// Afinar o começo e o fim dos traços do pincel.
     pub taper: artapp_core::Taper,
@@ -611,6 +613,7 @@ impl ArtApp {
             tour_done: false,
             spring: None,
             brush_favorites: Vec::new(),
+            brush_folder: String::new(),
             eyedropper_erase: false,
             finger_mode: FingerMode::Auto,
             show_tools_panel: wide,
@@ -1186,6 +1189,7 @@ impl ArtApp {
             name: name.clone(),
             group: brushes::CUSTOM_GROUP.into(),
             mixes: src.mixes_paint(),
+            folder: self.brush_folder.clone(),
             settings: src.settings,
         });
         self.brush_previews.clear();
@@ -1236,6 +1240,27 @@ impl ArtApp {
         };
     }
 
+    /// Põe um pincel de "Meus pincéis" numa pasta (nome vazio tira da pasta).
+    pub fn move_brush_to_folder(&mut self, i: usize, folder: String) {
+        let Some(b) = self
+            .brushes
+            .get_mut(i)
+            .filter(|b| b.group == brushes::CUSTOM_GROUP)
+        else {
+            return;
+        };
+        b.folder = folder.trim().to_string();
+        let msg = if b.folder.is_empty() {
+            "Pincel tirado da pasta.".to_string()
+        } else {
+            format!("Pincel movido para \"{}\".", b.folder)
+        };
+        self.status = match brushes::save_custom(&brushes_path(), &self.brushes) {
+            Ok(()) => msg,
+            Err(e) => format!("Movido, mas não foi possível gravar: {e}"),
+        };
+    }
+
     pub fn save_brush(&mut self) {
         let name = self.new_brush_name.trim();
         let name = if name.is_empty() {
@@ -1252,6 +1277,7 @@ impl ArtApp {
                 .brushes
                 .get(self.brush_index)
                 .is_some_and(BrushEntry::mixes_paint),
+            folder: self.brush_folder.clone(),
         };
         match self
             .brushes

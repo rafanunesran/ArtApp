@@ -2547,6 +2547,9 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
             }
         });
         ui.ctx().data_mut(|d| d.insert_persisted(key, cat.clone()));
+        if cat == CUSTOM_GROUP {
+            brush_folder_row(app, ui);
+        }
     }
     ui.separator();
 
@@ -2563,8 +2566,12 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
     } else if cat == FAVORITES {
         app.brushes_by_keys(&app.brush_favorites)
     } else {
+        let folder = (cat == CUSTOM_GROUP).then_some(app.brush_folder.as_str());
         (0..app.brushes.len())
-            .filter(|&i| app.brushes[i].group == cat)
+            .filter(|&i| {
+                let b = &app.brushes[i];
+                b.group == cat && folder.is_none_or(|f| f.is_empty() || b.folder == f)
+            })
             .collect()
     };
 
@@ -2573,6 +2580,7 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
     let mut star = None;
     let mut dup = None;
     let mut rename = None;
+    let mut move_to = None;
     let previews = app.brush_previews(ui.ctx());
     for &i in &shown {
         let entry = &app.brushes[i];
@@ -2582,6 +2590,16 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
             (true, false) => format!("{STAR}  {}", entry.name),
             (false, true) => format!("{}  ·  {}", entry.name, entry.group),
             (false, false) => entry.name.clone(),
+        };
+        // Em "Meus pincéis" sem pasta escolhida, mostra a pasta de cada um.
+        let label = if query.is_empty()
+            && cat == CUSTOM_GROUP
+            && app.brush_folder.is_empty()
+            && !entry.folder.is_empty()
+        {
+            format!("{label}  ·  {}", entry.folder)
+        } else {
+            label
         };
         let selected = app.brush_index == i;
         let row = brush_row(ui, &label, previews.get(i), selected);
@@ -2615,6 +2633,29 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
                     let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if (ui.button("Renomear").clicked() || enter) && !text.trim().is_empty() {
                         rename = Some((i, text.trim().to_string()));
+                        ui.close();
+                    }
+                });
+                ui.ctx().data_mut(|d| d.insert_temp(id, text));
+                let id = Id::unique(("brush-folder", i));
+                let mut text: String = ui
+                    .ctx()
+                    .data_mut(|d| d.get_temp(id))
+                    .unwrap_or_else(|| entry.folder.clone());
+                ui.horizontal(|ui| {
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut text)
+                            .hint_text("Pasta")
+                            .desired_width(140.0),
+                    );
+                    let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let label = if text.trim().is_empty() {
+                        "Tirar da pasta"
+                    } else {
+                        "Mover para pasta"
+                    };
+                    if ui.button(label).clicked() || enter {
+                        move_to = Some((i, text.trim().to_string()));
                         ui.close();
                     }
                 });
@@ -2662,6 +2703,9 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
             .data_mut(|d| d.remove::<String>(Id::unique("brush-rename")));
         app.rename_brush(i, name);
     }
+    if let Some((i, folder)) = move_to {
+        app.move_brush_to_folder(i, folder);
+    }
     if let Some(i) = picked {
         app.select_brush(i);
     }
@@ -2670,6 +2714,79 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
     }
     ui.add_space(6.0);
     brush_save_row(app, ui);
+}
+
+/// Pastas de "Meus pincéis": Todas, as que existem e uma nova. Pincel salvo ou duplicado entra
+/// na pasta aberta.
+fn brush_folder_row(app: &mut ArtApp, ui: &mut egui::Ui) {
+    let mut folders = artapp_core::brushes::folders(&app.brushes);
+    if !app.brush_folder.is_empty() && !folders.contains(&app.brush_folder) {
+        // Pasta nova, ainda sem pincel.
+        folders.push(app.brush_folder.clone());
+    }
+    let new_key = Id::unique("brush-new-folder");
+    let mut new_name: Option<String> = ui.ctx().data_mut(|d| d.get_temp(new_key));
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::splat(4.0);
+        ui.label(
+            RichText::new(icon::FOLDER_OPEN.to_string())
+                .size(13.0)
+                .color(color::TEXT_MUTED),
+        );
+        let all = std::iter::once(String::new()).chain(folders);
+        for f in all {
+            let on = app.brush_folder == f;
+            let text = if f.is_empty() { "Todas" } else { f.as_str() };
+            let mut text = RichText::new(text).size(12.5);
+            if on {
+                text = text.strong().color(color::ON_ACCENT);
+            }
+            if ui
+                .add(
+                    egui::Button::new(text)
+                        .selected(on)
+                        .min_size(Vec2::new(0.0, 32.0)),
+                )
+                .clicked()
+            {
+                app.brush_folder = f;
+            }
+        }
+        match &mut new_name {
+            None => {
+                if ui
+                    .add(
+                        egui::Button::new(format!("{}  Pasta", icon::PLUS))
+                            .min_size(Vec2::new(0.0, 32.0)),
+                    )
+                    .on_hover_text("Cria uma pasta; os pincéis que você salvar entram nela.")
+                    .clicked()
+                {
+                    new_name = Some(String::new());
+                }
+            }
+            Some(name) => {
+                let r = ui.add(
+                    egui::TextEdit::singleline(name)
+                        .hint_text("Nome da pasta")
+                        .desired_width(120.0),
+                );
+                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if (ui.button("Criar").clicked() || enter) && !name.trim().is_empty() {
+                    app.brush_folder = name.trim().to_string();
+                    new_name = None;
+                } else if ui.button(icon::X.to_string()).clicked() {
+                    new_name = None;
+                }
+            }
+        }
+    });
+    ui.ctx().data_mut(|d| match new_name {
+        Some(n) => {
+            d.insert_temp(new_key, n);
+        }
+        None => d.remove::<String>(new_key),
+    });
 }
 
 /// Salvar como pincel novo, restaurar o preset e importar.
