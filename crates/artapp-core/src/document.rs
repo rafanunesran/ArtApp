@@ -443,6 +443,34 @@ impl Document {
         (names, undo.len())
     }
 
+    /// A camada `layer_id` como estava no passo `step` da linha do tempo (o pincel histórico
+    /// pinta a partir dela). `None` se ela não existia nesse passo ou a tela tinha outro tamanho.
+    pub fn history_surface(
+        &self,
+        step: usize,
+        layer_id: u64,
+    ) -> Option<photocraft_raster::Surface> {
+        let (undo, redo) = self.history.states();
+        let snap = if step < undo.len() {
+            undo.get(step)?
+        } else if step == undo.len() {
+            return self
+                .layers
+                .iter()
+                .find(|l| l.id == layer_id)
+                .map(|l| l.surface.clone());
+        } else {
+            redo.get(redo.len().checked_sub(step - undo.len())?)?
+        };
+        if snap.2 != (self.width, self.height) {
+            return None;
+        }
+        snap.0
+            .iter()
+            .find(|l| l.id == layer_id && !l.is_vector())
+            .map(|l| l.surface.clone())
+    }
+
     /// Desfaz ou refaz até chegar ao passo `step` da linha do tempo. Devolve se algo mudou.
     pub fn jump_history(&mut self, step: usize) -> bool {
         let (_, now) = self.history_steps();

@@ -1004,6 +1004,7 @@ fn mix_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             (MixKind::Clone, "Carimbo"),
             (MixKind::Heal, "Corretivo"),
             (MixKind::BgErase, "Borracha de fundo"),
+            (MixKind::History, "Pincel histórico"),
         ] {
             ui.selectable_value(&mut app.mix_kind, kind, name);
         }
@@ -1024,10 +1025,34 @@ fn mix_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             MixKind::BgErase => {
                 "Apaga a cor que está sob o centro do pincel e as parecidas (a força é a tolerância), deixando as outras."
             }
+            MixKind::History => {
+                "Pinta de volta a camada como ela estava no passo escolhido do histórico, só onde você passar."
+            }
         })
         .size(12.5)
         .color(color::TEXT_MUTED),
     );
+    if app.mix_kind == MixKind::History {
+        let (names, now) = app.doc.history_steps();
+        let last = names.len().saturating_sub(1);
+        app.history_brush_step = app.history_brush_step.min(last);
+        let label = |i: usize| {
+            let n = names.get(i).cloned().unwrap_or_default();
+            if i == now {
+                format!("{i}. {n} (atual)")
+            } else {
+                format!("{i}. {n}")
+            }
+        };
+        egui::ComboBox::from_id_salt("history_brush_step")
+            .selected_text(label(app.history_brush_step))
+            .width(260.0)
+            .show_ui(ui, |ui| {
+                for i in 0..=last {
+                    ui.selectable_value(&mut app.history_brush_step, i, label(i));
+                }
+            });
+    }
     if app.mix_kind == MixKind::Clone
         && ui
             .selectable_label(
