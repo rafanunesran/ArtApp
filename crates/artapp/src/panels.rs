@@ -645,6 +645,10 @@ fn comic_group(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.dialog = Some(crate::dialogs::Dialog::MangaLines(Default::default()));
         ui.close();
     }
+    if item(ui, icon::SCISSORS, "Dividir quadro").clicked() {
+        app.set_tool(Tool::FrameSplit);
+        ui.close();
+    }
     if item(ui, icon::MESSAGE_CIRCLE, "Balão de fala").clicked() {
         app.set_tool(Tool::Balloon);
         ui.close();
@@ -2214,6 +2218,16 @@ fn vector_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             hint(
                 ui,
                 "Desenhe à mão livre: o traço vira curvas editáveis, com a largura da pressão.",
+            );
+        }
+        Tool::FrameSplit => {
+            section(ui, "Dividir quadro");
+            ui.add(egui::Slider::new(&mut app.frame_gap, 0.0..=200.0).text("Calha (px)"));
+            theme::switch(ui, &mut app.frame_snap, "Reta na horizontal/vertical");
+            hint(
+                ui,
+                "Arraste atravessando um quadro da camada de requadros: ele vira dois, com a \
+                 calha da cor do papel entre eles.",
             );
         }
         Tool::Balloon => {

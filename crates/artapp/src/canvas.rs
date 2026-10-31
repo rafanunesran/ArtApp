@@ -1262,6 +1262,11 @@ fn tool_down(
             })
         }
         Tool::Balloon if app.balloon_pending.is_some() => Some(ActiveKind::BalloonTail(vp)),
+        Tool::FrameSplit => Some(ActiveKind::Shape {
+            tool: Tool::FrameSplit,
+            from: vp,
+            to: vp,
+        }),
         Tool::VectorPen | Tool::Line | Tool::Rectangle | Tool::Ellipse | Tool::Balloon => {
             app.ensure_vector_layer();
             Some(if app.tool == Tool::VectorPen {
@@ -1443,6 +1448,23 @@ fn end_stroke(app: &mut ArtApp) {
             app.balloon_pending = Some([from.x, from.y, to.x, to.y]);
             app.status = "Toque onde o rabicho aponta (ou dentro do balão, para não ter).".into();
             return;
+        }
+        ActiveKind::Shape {
+            tool: Tool::FrameSplit,
+            from,
+            to,
+        } => {
+            if from.distance(to) < 8.0 {
+                return;
+            }
+            let to = split_end(app, from, to);
+            let r = app
+                .doc
+                .split_frame([from.x, from.y], [to.x, to.y], f64::from(app.frame_gap));
+            if r.is_empty() {
+                app.status = "Arraste atravessando um quadro, na camada dos requadros.".into();
+            }
+            r
         }
         ActiveKind::BalloonTail(tip) => {
             app.remember_color();
@@ -1969,6 +1991,22 @@ fn draw_bez(
     flush(&mut pts);
 }
 
+/// Fim da reta de dividir quadro: grudada na horizontal ou vertical quando está perto (até 8°).
+fn split_end(app: &ArtApp, from: VPoint, to: VPoint) -> VPoint {
+    let d = to - from;
+    if !app.frame_snap {
+        return to;
+    }
+    let near = 8f64.to_radians().tan();
+    if d.y.abs() <= d.x.abs() * near {
+        VPoint::new(to.x, from.y)
+    } else if d.x.abs() <= d.y.abs() * near {
+        VPoint::new(from.x, to.y)
+    } else {
+        to
+    }
+}
+
 /// Prévia de um balão de quadrinho.
 fn draw_balloon(
     app: &ArtApp,
@@ -2028,6 +2066,21 @@ fn draw_overlay(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
                 for p in [line.first(), line.last()].into_iter().flatten() {
                     painter.circle_filled(*p, r, fill);
                 }
+            }
+            ActiveKind::Shape {
+                tool: Tool::FrameSplit,
+                from,
+                to,
+            } => {
+                let to = split_end(app, *from, *to);
+                let a = app.view.doc_to_screen(panel, from.x as f32, from.y as f32);
+                let b = app.view.doc_to_screen(panel, to.x as f32, to.y as f32);
+                let w = (app.frame_gap * app.view.zoom).max(2.0);
+                painter.line_segment(
+                    [a, b],
+                    egui::Stroke::new(w, Color32::from_rgba_unmultiplied(40, 170, 255, 90)),
+                );
+                painter.line_segment([a, b], guide);
             }
             ActiveKind::Shape {
                 tool: Tool::Balloon,
