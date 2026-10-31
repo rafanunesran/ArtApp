@@ -396,4 +396,36 @@ impl Document {
     pub fn drop_checkpoint(&mut self) {
         self.history.drop_last();
     }
+
+    /// Linha do tempo para o painel de histórico: o nome de cada passo (o primeiro é "Início") e
+    /// a posição do estado atual nela.
+    pub fn history_steps(&self) -> (Vec<String>, usize) {
+        let (undo, redo) = self.history.states();
+        let current = (self.layers.clone(), self.active, (self.width, self.height));
+        let states: Vec<&crate::history::Snapshot> = undo
+            .iter()
+            .chain(std::iter::once(&current))
+            .chain(redo.iter().rev())
+            .collect();
+        let mut names = vec!["Início".to_string()];
+        names.extend(
+            states
+                .windows(2)
+                .map(|w| crate::history::describe(w[0], w[1])),
+        );
+        (names, undo.len())
+    }
+
+    /// Desfaz ou refaz até chegar ao passo `step` da linha do tempo. Devolve se algo mudou.
+    pub fn jump_history(&mut self, step: usize) -> bool {
+        let (_, now) = self.history_steps();
+        let mut changed = false;
+        for _ in step..now {
+            changed |= self.undo();
+        }
+        for _ in now..step {
+            changed |= self.redo();
+        }
+        changed
+    }
 }

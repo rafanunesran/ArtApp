@@ -328,6 +328,8 @@ pub struct ArtApp {
     pub hold_quickmenu: bool,
     /// QuickMenu aberto, centrado neste ponto da tela.
     pub quick_menu: Option<Pos2>,
+    /// Painel de histórico aberto.
+    pub history_open: bool,
     /// Interface escondida (toque com quatro dedos ou Tab): só a tela de desenho.
     pub hide_ui: bool,
     /// Se o dedo usa a ferramenta ou só mexe na vista (rejeição de palma).
@@ -465,6 +467,7 @@ impl ArtApp {
             hold_eyedropper: true,
             hold_quickmenu: false,
             quick_menu: None,
+            history_open: false,
             hide_ui: false,
             finger_mode: FingerMode::Auto,
             show_tools_panel: wide,
@@ -975,6 +978,20 @@ impl ArtApp {
         }
     }
 
+    /// Volta ou avança até o passo `step` do histórico.
+    pub fn jump_history(&mut self, step: usize) {
+        if self.transform.is_some() {
+            self.cancel_transform();
+        }
+        let size = (self.doc.width, self.doc.height);
+        if self.doc.jump_history(step) {
+            if size != (self.doc.width, self.doc.height) {
+                self.view.request_fit();
+            }
+            self.invalidate_all();
+        }
+    }
+
     pub fn new_canvas(&mut self, w: u32, h: u32) {
         self.doc = Document::new(w, h);
         self.view = CanvasView::default();
@@ -1354,6 +1371,7 @@ impl eframe::App for ArtApp {
         let canvas = self.canvas_rect;
         crate::transform_tool::toolbar(self, &ctx, canvas);
         crate::quick_menu::show(self, &ctx);
+        crate::history_panel::show(self, &ctx);
         if hide {
             panels::show_ui_button(self, &ctx, canvas);
             panels::toast(self, &ctx, canvas, 0.0);
