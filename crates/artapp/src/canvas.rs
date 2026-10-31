@@ -846,6 +846,11 @@ fn check_holds(app: &mut ArtApp, ctx: &egui::Context, panel: egui::Rect) {
     }
     let (at, travel) = (s.still.0, s.travel);
     if travel < HOLD_MOVE * 2.0 {
+        if app.hold_quickmenu {
+            cancel_stroke(app);
+            app.quick_menu = Some(at);
+            return;
+        }
         if !app.hold_eyedropper {
             return;
         }
@@ -953,6 +958,10 @@ fn tool_down(
 ) {
     end_stroke(app);
     app.ruler_live = None;
+    // O toque que fecha o QuickMenu não desenha.
+    if app.quick_menu.is_some() {
+        return;
+    }
     let mut pt = point(app, panel, p, force, time);
     snap_to_ruler(app, &mut pt);
     let (x, y) = (pt.x.floor() as i32, pt.y.floor() as i32);
