@@ -356,6 +356,10 @@ fn color_button(app: &mut ArtApp, ui: &mut egui::Ui) {
         Some(theme::ColorChip::Main) => {
             if app.transparent {
                 app.transparent = false;
+            } else if app.color_float {
+                // Com a roda flutuante, a cor principal recolhe/abre a roda.
+                app.color_float_collapsed = !app.color_float_collapsed;
+                app.save_prefs();
             } else {
                 app.show_color = !app.show_color;
             }
@@ -1697,6 +1701,142 @@ pub fn color_popup(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
         });
     if close {
         app.show_color = false;
+    }
+}
+
+/// A roda de cores flutuante: fica na tela o tempo todo (não fecha ao desenhar), arrasta pela
+/// barra, muda de tamanho pelo canto e recolhe. Fica dentro da tela de desenho, sem cobrir as
+/// barras nem o trilho de ferramentas.
+pub fn floating_color(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, portrait: bool) {
+    const HEADER: f32 = 36.0;
+    const MIN: f32 = 140.0;
+    if !canvas.is_positive() {
+        // Primeiro quadro: ainda sem tela, e a posição inicial ficaria errada.
+        return;
+    }
+    let mut bounds = canvas.shrink(4.0);
+    if !portrait {
+        bounds.min.x = canvas.min.x + GAP + rail_w(canvas) + 4.0;
+    }
+    // Margens da moldura (8 de cada lado) e a barra de título.
+    let max = (bounds.width() - 16.0)
+        .min(bounds.height() - HEADER - 26.0)
+        .max(MIN);
+    let size = app.color_float_size.clamp(MIN, max);
+    let width = size.max(4.0 * HEADER + 30.0);
+    // Começa em cima à direita: os painéis abrem embaixo (em pé), à esquerda (deitado) ou
+    // ocupam a direita só no tablet, e os sliders ficam à esquerda.
+    let pos = app
+        .color_float_pos
+        .unwrap_or_else(|| Pos2::new(bounds.max.x - width - 16.0, bounds.min.y));
+    let mut save = false;
+    let mut close = false;
+    let resp = egui::Area::new(Id::unique("color_float"))
+        .order(Order::Foreground)
+        .sense(Sense::drag())
+        .current_pos(pos)
+        .constrain_to(bounds)
+        .show(ctx, |ui| {
+            panel_frame()
+                .inner_margin(egui::Margin::same(8))
+                .show(ui, |ui| {
+                    ui.set_width(width);
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.horizontal(|ui| {
+                        // A cor atual (a barra serve para arrastar).
+                        let (r, _) = ui.allocate_exact_size(Vec2::splat(HEADER), Sense::hover());
+                        ui.painter().circle_filled(r.center(), 11.0, app.color);
+                        ui.painter().circle_stroke(
+                            r.center(),
+                            11.0,
+                            Stroke::new(1.5, color::BORDER),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            close = theme::icon_button_sized(
+                                ui,
+                                icon::X,
+                                false,
+                                "Tirar a roda flutuante",
+                                HEADER,
+                            )
+                            .clicked();
+                            let (glyph, tip) = if app.color_float_collapsed {
+                                (icon::CHEVRON_DOWN, "Abrir a roda")
+                            } else {
+                                (icon::CHEVRON_UP, "Recolher a roda")
+                            };
+                            if theme::icon_button_sized(ui, glyph, false, tip, HEADER).clicked() {
+                                app.color_float_collapsed = !app.color_float_collapsed;
+                                save = true;
+                            }
+                            if theme::icon_button_sized(
+                                ui,
+                                icon::SLIDERS,
+                                app.show_color,
+                                "Painel de cor completo",
+                                HEADER,
+                            )
+                            .clicked()
+                            {
+                                app.show_color = !app.show_color;
+                            }
+                            let (glyph, tip) = if app.color_state.triangle {
+                                (icon::TRIANGLE, "Meio em triângulo (toque para quadrado)")
+                            } else {
+                                (icon::SQUARE, "Meio em quadrado (toque para triângulo)")
+                            };
+                            if theme::icon_button_sized(ui, glyph, false, tip, HEADER).clicked() {
+                                app.color_state.triangle = !app.color_state.triangle;
+                                save = true;
+                            }
+                        });
+                    });
+                    if app.color_float_collapsed {
+                        return;
+                    }
+                    ui.add_space(6.0);
+                    ui.vertical_centered(|ui| {
+                        crate::color_panel::show_wheel(app, ui, size);
+                    });
+                    // Canto para mudar o tamanho.
+                    let r = ui.min_rect();
+                    let grip = egui::Rect::from_min_max(r.max - Vec2::splat(30.0), r.max);
+                    let g = ui.interact(grip, ui.scope_id().with("grip"), Sense::drag());
+                    if g.dragged() {
+                        let d = g.drag_delta();
+                        app.color_float_size = (size + (d.x + d.y) / 2.0).clamp(MIN, max);
+                    }
+                    if g.drag_stopped() {
+                        save = true;
+                    }
+                    let fg = if g.hovered() || g.dragged() {
+                        color::ACCENT
+                    } else {
+                        color::TEXT_MUTED
+                    };
+                    for k in [8.0, 14.0, 20.0] {
+                        ui.painter().line_segment(
+                            [
+                                Pos2::new(grip.max.x - k, grip.max.y - 2.0),
+                                Pos2::new(grip.max.x - 2.0, grip.max.y - k),
+                            ],
+                            Stroke::new(1.5, fg),
+                        );
+                    }
+                });
+        });
+    // A posição é nossa (não da memória do egui) para valer desde o primeiro quadro e entre
+    // aberturas do app; o egui só a prende dentro de `bounds`.
+    if resp.response.dragged() {
+        app.color_float_pos = Some(resp.response.rect.min + resp.response.drag_delta());
+    }
+    if close {
+        app.color_float = false;
+        save = true;
+    }
+    if save || resp.response.drag_stopped() {
+        app.color_float_pos = app.color_float_pos.map(|_| resp.response.rect.min);
+        app.save_prefs();
     }
 }
 

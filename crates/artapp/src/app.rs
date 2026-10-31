@@ -5,7 +5,7 @@ use artapp_core::vector::VectorStyle;
 use artapp_core::{Anchor, BrushSettings, Document, NodeId, Rect};
 use std::collections::HashMap;
 
-use eframe::egui::{self, Color32, TextureHandle};
+use eframe::egui::{self, Color32, Pos2, TextureHandle};
 
 use crate::canvas::CanvasView;
 use crate::{panels, platform};
@@ -302,6 +302,14 @@ pub struct ArtApp {
     pub bezier: Vec<Anchor>,
     /// Seletor de cor aberto.
     pub show_color: bool,
+    /// Roda de cores flutuante: sempre na tela (não fecha ao desenhar), arrastável e
+    /// redimensionável.
+    pub color_float: bool,
+    /// A roda flutuante recolhida (só a barrinha de título).
+    pub color_float_collapsed: bool,
+    /// Lado da roda flutuante e onde ela estava (canto de cima à esquerda).
+    pub color_float_size: f32,
+    pub color_float_pos: Option<Pos2>,
     /// Quando `status` mudou (o aviso some depois de alguns segundos).
     pub status_since: f64,
     last_status: String,
@@ -411,6 +419,10 @@ impl ArtApp {
             selected: None,
             bezier: Vec::new(),
             show_color: false,
+            color_float: false,
+            color_float_collapsed: false,
+            color_float_size: 190.0,
+            color_float_pos: None,
             status_since: 0.0,
             last_status: String::new(),
             canvas_rect: egui::Rect::NOTHING,
@@ -446,6 +458,27 @@ impl ArtApp {
         if let Some(b) = flag("tap_undo") {
             self.tap_undo = b;
         }
+        if let Some(b) = flag("color_triangle") {
+            self.color_state.triangle = b;
+        }
+        if let Some(b) = flag("color_float") {
+            self.color_float = b;
+        }
+        if let Some(b) = flag("color_float_collapsed") {
+            self.color_float_collapsed = b;
+        }
+        if let Some(n) = v
+            .get("color_float_size")
+            .and_then(serde_json::Value::as_f64)
+        {
+            self.color_float_size = n as f32;
+        }
+        if let Some([x, y]) = v
+            .get("color_float_pos")
+            .and_then(|p| serde_json::from_value::<[f32; 2]>(p.clone()).ok())
+        {
+            self.color_float_pos = Some(Pos2::new(x, y));
+        }
         if let Some(name) = v.get("pen_button_tool").and_then(serde_json::Value::as_str) {
             self.pen_button_tool = Tool::PEN_BUTTON
                 .into_iter()
@@ -461,6 +494,11 @@ impl ArtApp {
             "autoclose_panels": self.autoclose_panels,
             "tap_undo": self.tap_undo,
             "pen_button_tool": self.pen_button_tool.map(|t| format!("{t:?}")),
+            "color_triangle": self.color_state.triangle,
+            "color_float": self.color_float,
+            "color_float_collapsed": self.color_float_collapsed,
+            "color_float_size": self.color_float_size,
+            "color_float_pos": self.color_float_pos.map(|p| [p.x, p.y]),
         });
         let path = prefs_path();
         let result = path
@@ -472,7 +510,7 @@ impl ArtApp {
         }
     }
 
-    /// Fecha os painéis flutuantes (ao começar a desenhar).
+    /// Fecha os painéis flutuantes (ao começar a desenhar). A roda de cores flutuante fica.
     pub fn close_panels(&mut self) {
         if self.autoclose_panels {
             self.show_tools_panel = false;
@@ -1167,6 +1205,9 @@ impl eframe::App for ArtApp {
         }
         if self.show_layers_panel {
             panels::layers_panel(self, &ctx, canvas, portrait);
+        }
+        if self.color_float {
+            panels::floating_color(self, &ctx, canvas, portrait);
         }
         if self.show_color {
             panels::color_popup(self, &ctx, canvas, portrait);

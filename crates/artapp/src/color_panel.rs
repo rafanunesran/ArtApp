@@ -1,5 +1,5 @@
-//! Painel de cor, como os do Clip Studio: círculo de cores (anel de matiz e quadrado de saturação
-//! e valor), barras RGB/HSV com hexadecimal, conjuntos de cores salvos e cor intermediária
+//! Painel de cor, como os do Clip Studio: círculo de cores (anel de matiz e quadrado ou triângulo
+//! de saturação e valor), barras RGB/HSV com hexadecimal, conjuntos de cores salvos e cor intermediária
 //! (mistura entre quatro cantos).
 
 use eframe::egui::{self, Color32, CornerRadius, Pos2, Sense, Stroke, Vec2, ecolor::Hsva};
@@ -37,6 +37,8 @@ pub struct ColorState {
     pub set_index: usize,
     /// Cantos da cor intermediária: cima-esquerda, cima-direita, baixo-esquerda, baixo-direita.
     pub corners: [Color32; 4],
+    /// O meio do círculo é um triângulo (matiz pura, branco e preto) em vez do quadrado.
+    pub triangle: bool,
 }
 
 impl Default for ColorState {
@@ -54,6 +56,7 @@ impl Default for ColorState {
                 Color32::from_rgb(60, 110, 220),
                 Color32::from_rgb(40, 40, 50),
             ],
+            triangle: false,
         }
     }
 }
@@ -126,8 +129,8 @@ fn rgba(c: [u8; 4]) -> Color32 {
     Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3])
 }
 
-/// Mostra o painel (o conteúdo do popup de cor).
-pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
+/// Atualiza o HSV guardado quando a cor mudou por fora (conta-gotas, recentes, troca...).
+fn sync(app: &mut ArtApp) {
     let st = &mut app.color_state;
     if st.synced != app.color {
         let hsv = hsv_of(app.color);
@@ -145,6 +148,22 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
             app.color.b()
         );
     }
+}
+
+fn apply(app: &mut ArtApp, picked: Option<Color32>) {
+    if let Some(c) = picked
+        && c != app.color
+    {
+        app.color = c;
+        app.transparent = false;
+        app.color_state.synced = c;
+        app.color_state.hex = format!("{:02X}{:02X}{:02X}", c.r(), c.g(), c.b());
+    }
+}
+
+/// Mostra o painel (o conteúdo do popup de cor).
+pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
+    sync(app);
     ui.horizontal(|ui| {
         for (tab, name) in [
             (ColorTab::Wheel, "Círculo"),
@@ -157,29 +176,77 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
     });
     ui.add_space(4.0);
     let picked = match app.color_state.tab {
-        ColorTab::Wheel => wheel(ui, &mut app.color_state),
+        ColorTab::Wheel => {
+            let c = wheel(ui, &mut app.color_state, 240.0);
+            wheel_options(app, ui);
+            c
+        }
         ColorTab::Sliders => sliders(ui, &mut app.color_state),
         ColorTab::Sets => sets(ui, &mut app.color_state, app.color),
         ColorTab::Mix => mix(ui, &mut app.color_state, app.color),
     };
-    if let Some(c) = picked
-        && c != app.color
+    apply(app, picked);
+}
+
+/// Só o círculo, do tamanho pedido (a roda flutuante).
+pub fn show_wheel(app: &mut ArtApp, ui: &mut egui::Ui, size: f32) {
+    sync(app);
+    let picked = wheel(ui, &mut app.color_state, size);
+    apply(app, picked);
+}
+
+/// Quadrado ou triângulo, e deixar a roda flutuante.
+fn wheel_options(app: &mut ArtApp, ui: &mut egui::Ui) {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label("Meio");
+        changed |= ui
+            .selectable_value(
+                &mut app.color_state.triangle,
+                false,
+                format!("{}  Quadrado", icon::SQUARE),
+            )
+            .changed();
+        changed |= ui
+            .selectable_value(
+                &mut app.color_state.triangle,
+                true,
+                format!("{}  Triângulo", icon::TRIANGLE),
+            )
+            .changed();
+    });
+    let text = if app.color_float {
+        "Tirar a roda flutuante"
+    } else {
+        "Deixar a roda flutuante"
+    };
+    if ui
+        .button(format!("{}  {text}", icon::MAXIMIZE))
+        .on_hover_text("A roda fica sempre na tela, mesmo enquanto você desenha")
+        .clicked()
     {
-        app.color = c;
-        app.transparent = false;
-        app.color_state.synced = c;
-        app.color_state.hex = format!("{:02X}{:02X}{:02X}", c.r(), c.g(), c.b());
+        app.color_float = !app.color_float;
+        app.color_float_collapsed = false;
+        if app.color_float {
+            app.show_color = false;
+        }
+        changed = true;
+    }
+    if changed {
+        app.save_prefs();
     }
 }
 
-/// Anel de matiz em volta de um quadrado de saturação (x) e valor (y).
-fn wheel(ui: &mut egui::Ui, st: &mut ColorState) -> Option<Color32> {
-    let size = ui.available_width().min(240.0);
+/// Anel de matiz em volta de um quadrado de saturação (x) e valor (y), ou de um triângulo com a
+/// matiz pura em cima, o branco embaixo à esquerda e o preto embaixo à direita.
+fn wheel(ui: &mut egui::Ui, st: &mut ColorState, max: f32) -> Option<Color32> {
+    let size = ui.available_width().min(max);
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::click_and_drag());
     let painter = ui.painter_at(rect);
     let c = rect.center();
     let outer = size / 2.0 - 2.0;
-    let inner = outer - 22.0;
+    let ring_w = (size * 0.09).clamp(14.0, 22.0);
+    let inner = outer - ring_w;
     // Anel.
     let n = 96;
     let mut mesh = egui::Mesh::default();
@@ -197,39 +264,21 @@ fn wheel(ui: &mut egui::Ui, st: &mut ColorState) -> Option<Color32> {
         }
     }
     painter.add(egui::Shape::mesh(mesh));
-    // Quadrado inscrito no anel.
-    let half = inner * std::f32::consts::FRAC_1_SQRT_2 - 4.0;
-    let sq = egui::Rect::from_center_size(c, Vec2::splat(half * 2.0));
-    let g = 12;
-    let mut mesh = egui::Mesh::default();
-    for yi in 0..=g {
-        for xi in 0..=g {
-            let (s, v) = (xi as f32 / g as f32, 1.0 - yi as f32 / g as f32);
-            let p = Pos2::new(
-                sq.min.x + sq.width() * xi as f32 / g as f32,
-                sq.min.y + sq.height() * yi as f32 / g as f32,
-            );
-            mesh.colored_vertex(p, color_of([st.hsv[0], s, v]));
-            if xi > 0 && yi > 0 {
-                let k = (yi * (g + 1) + xi) as u32;
-                let w = (g + 1) as u32;
-                mesh.add_triangle(k - w - 1, k - w, k);
-                mesh.add_triangle(k - w - 1, k - 1, k);
-            }
-        }
-    }
-    painter.add(egui::Shape::mesh(mesh));
+    let shape = if st.triangle {
+        Inner::triangle(c, inner - 4.0)
+    } else {
+        let half = inner * std::f32::consts::FRAC_1_SQRT_2 - 4.0;
+        Inner::Square(egui::Rect::from_center_size(c, Vec2::splat(half * 2.0)))
+    };
+    painter.add(egui::Shape::mesh(shape.mesh(st.hsv[0])));
     // Marcadores.
     let a = st.hsv[0] * std::f32::consts::TAU;
     let hm = c + Vec2::new(a.cos(), a.sin()) * (inner + outer) / 2.0;
-    painter.circle_stroke(hm, 8.0, Stroke::new(2.0, Color32::WHITE));
-    let sm = Pos2::new(
-        sq.min.x + sq.width() * st.hsv[1],
-        sq.min.y + sq.height() * (1.0 - st.hsv[2]),
-    );
+    painter.circle_stroke(hm, ring_w * 0.4, Stroke::new(2.0, Color32::WHITE));
+    let sm = shape.pos(st.hsv[1], st.hsv[2]);
     painter.circle_stroke(sm, 7.0, Stroke::new(2.0, Color32::WHITE));
     painter.circle_stroke(sm, 8.5, Stroke::new(1.0, Color32::BLACK));
-    // Arrastar: o que foi tocado primeiro decide (anel ou quadrado).
+    // Arrastar: o que foi tocado primeiro decide (anel ou o meio).
     let id = resp.id.with("ring");
     if (resp.drag_started() || resp.clicked())
         && let Some(p) = resp.interact_pointer_pos()
@@ -246,10 +295,107 @@ fn wheel(ui: &mut egui::Ui, st: &mut ColorState) -> Option<Color32> {
         let d = p - c;
         st.hsv[0] = (d.y.atan2(d.x) / std::f32::consts::TAU).rem_euclid(1.0);
     } else {
-        st.hsv[1] = ((p.x - sq.min.x) / sq.width()).clamp(0.0, 1.0);
-        st.hsv[2] = (1.0 - (p.y - sq.min.y) / sq.height()).clamp(0.0, 1.0);
+        let (s, v) = shape.sv(p, st.hsv[1]);
+        st.hsv[1] = s;
+        st.hsv[2] = v;
     }
     Some(color_of(st.hsv))
+}
+
+/// O meio do círculo de cores.
+enum Inner {
+    Square(egui::Rect),
+    /// Vértices: matiz pura, branco, preto.
+    Triangle([Pos2; 3]),
+}
+
+impl Inner {
+    fn triangle(c: Pos2, r: f32) -> Self {
+        let at = |deg: f32| {
+            let a = deg.to_radians();
+            c + Vec2::new(a.cos(), a.sin()) * r
+        };
+        Self::Triangle([at(-90.0), at(150.0), at(30.0)])
+    }
+
+    /// Onde fica a saturação `s` e o valor `v`.
+    fn pos(&self, s: f32, v: f32) -> Pos2 {
+        match self {
+            Self::Square(sq) => Pos2::new(
+                sq.min.x + sq.width() * s,
+                sq.min.y + sq.height() * (1.0 - v),
+            ),
+            // Do preto em direção à mistura branco→matiz: v escolhe a distância, s o lado.
+            Self::Triangle([h, w, b]) => *b + (*w - *b) * v * (1.0 - s) + (*h - *b) * v * s,
+        }
+    }
+
+    /// Saturação e valor no ponto `p` (preso dentro da forma). No preto a saturação não muda.
+    fn sv(&self, p: Pos2, s_before: f32) -> (f32, f32) {
+        match self {
+            Self::Square(sq) => (
+                ((p.x - sq.min.x) / sq.width()).clamp(0.0, 1.0),
+                (1.0 - (p.y - sq.min.y) / sq.height()).clamp(0.0, 1.0),
+            ),
+            Self::Triangle([h, w, b]) => {
+                // p = b + x·(w − b) + y·(h − b), com x, y ≥ 0 e x + y ≤ 1.
+                let (e1, e2, d) = (*w - *b, *h - *b, p - *b);
+                let det = e1.x * e2.y - e1.y * e2.x;
+                let mut x = ((d.x * e2.y - d.y * e2.x) / det).max(0.0);
+                let mut y = ((e1.x * d.y - e1.y * d.x) / det).max(0.0);
+                if x + y > 1.0 {
+                    let k = x + y;
+                    x /= k;
+                    y /= k;
+                }
+                let v = x + y;
+                let s = if v > 1e-4 { y / v } else { s_before };
+                (s.clamp(0.0, 1.0), v.clamp(0.0, 1.0))
+            }
+        }
+    }
+
+    fn mesh(&self, hue: f32) -> egui::Mesh {
+        let g = 12;
+        let mut mesh = egui::Mesh::default();
+        match self {
+            Self::Square(_) => {
+                for yi in 0..=g {
+                    for xi in 0..=g {
+                        let (s, v) = (xi as f32 / g as f32, 1.0 - yi as f32 / g as f32);
+                        mesh.colored_vertex(self.pos(s, v), color_of([hue, s, v]));
+                        if xi > 0 && yi > 0 {
+                            let k = (yi * (g + 1) + xi) as u32;
+                            let w = (g + 1) as u32;
+                            mesh.add_triangle(k - w - 1, k - w, k);
+                            mesh.add_triangle(k - w - 1, k - 1, k);
+                        }
+                    }
+                }
+            }
+            Self::Triangle(_) => {
+                // Fileiras de valor (do preto para fora); a fileira i tem i + 1 pontos.
+                let start = |i: u32| i * (i + 1) / 2;
+                for i in 0..=g {
+                    let v = i as f32 / g as f32;
+                    for j in 0..=i {
+                        let s = if i == 0 { 0.0 } else { j as f32 / i as f32 };
+                        mesh.colored_vertex(self.pos(s, v), color_of([hue, s, v]));
+                    }
+                    if i > 0 {
+                        let (prev, cur) = (start(i as u32 - 1), start(i as u32));
+                        for j in 0..i as u32 {
+                            mesh.add_triangle(prev + j, cur + j, cur + j + 1);
+                            if j + 1 < i as u32 {
+                                mesh.add_triangle(prev + j, prev + j + 1, cur + j + 1);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        mesh
+    }
 }
 
 fn sliders(ui: &mut egui::Ui, st: &mut ColorState) -> Option<Color32> {
