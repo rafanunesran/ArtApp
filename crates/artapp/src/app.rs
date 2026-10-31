@@ -254,6 +254,9 @@ pub struct ArtApp {
     pub brush_index: usize,
     /// Pincéis usados por último (chave de [`brush_key`]), o mais recente primeiro.
     pub brush_recent: Vec<String>,
+    /// Troca temporária (desktop): tecla da ferramenta ainda apertada, a ferramenta de antes e
+    /// quando a tecla desceu. Segurar e soltar volta para a de antes, como no Clip Studio.
+    spring: Option<(egui::Key, Tool, f64)>,
     /// Pincéis marcados com estrela (chave de [`brush_key`]).
     pub brush_favorites: Vec<String>,
     pub brush: BrushSettings,
@@ -582,6 +585,7 @@ impl ArtApp {
             hide_ui: false,
             eyedropper_from: Default::default(),
             brush_recent: Vec::new(),
+            spring: None,
             brush_favorites: Vec::new(),
             eyedropper_erase: false,
             finger_mode: FingerMode::Auto,
@@ -1616,7 +1620,21 @@ impl ArtApp {
         if redo {
             self.redo();
         }
-        if let Some(t) = tool {
+        let now = ctx.input(|i| i.time);
+        if let Some((key, before, since)) = self.spring {
+            // Soltou a tecla: se segurou, volta para a ferramenta de antes.
+            if !ctx.input(|i| i.key_down(key)) {
+                self.spring = None;
+                if now - since >= SPRING_HOLD_SECS && self.tool != before {
+                    self.set_tool(before);
+                }
+            }
+        }
+        let repeat = tool.is_some_and(|t| self.spring.is_some_and(|(k, ..)| k == t.key()));
+        if let Some(t) = tool.filter(|_| !repeat) {
+            if t != self.tool {
+                self.spring = Some((t.key(), self.tool, now));
+            }
             self.set_tool(t);
         }
         let target = match self.tool {
@@ -1721,6 +1739,9 @@ pub fn color_to_f32(c: Color32) -> [f32; 4] {
         a as f32 / 255.0,
     ]
 }
+
+/// Segurar a tecla de uma ferramenta por mais que isto e soltar volta para a ferramenta de antes.
+pub const SPRING_HOLD_SECS: f64 = 0.4;
 
 /// Quantos pincéis o grupo Recentes guarda (como no Procreate).
 pub const RECENT_BRUSHES: usize = 8;
