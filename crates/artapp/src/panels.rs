@@ -558,6 +558,10 @@ fn canvas_group(app: &mut ArtApp, ui: &mut egui::Ui) {
 /// Camada: operações sobre a camada atual (texto, linha, cor).
 fn layer_group(app: &mut ArtApp, ui: &mut egui::Ui) {
     let item = menu_item;
+    if item(ui, icon::FOLDER_PLUS, "Materiais…").clicked() {
+        app.materials.open = true;
+        ui.close();
+    }
     if item(ui, icon::SQUARE_PEN, "Texto…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::Text {
             text: String::new(),

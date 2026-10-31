@@ -30,6 +30,7 @@ pub mod line_width;
 pub mod liquify;
 pub mod manga_lines;
 pub mod mask;
+pub mod materials;
 pub mod mix;
 pub mod model3d;
 pub mod palette;

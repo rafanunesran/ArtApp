@@ -281,6 +281,8 @@ pub struct ArtApp {
     pub anim_settings_open: bool,
     /// Gravação e janela do timelapse.
     pub timelapse: crate::timelapse_view::TimelapseState,
+    /// Biblioteca de materiais.
+    pub materials: crate::materials_view::MaterialsState,
     /// Pintura 3D: o modelo do documento, se houver.
     pub view3d: Option<crate::view3d::View3d>,
     /// Pincel histórico: o passo da linha do tempo de onde ele pinta (0 = o mais antigo).
@@ -498,6 +500,7 @@ impl ArtApp {
             anim_next: 0.0,
             anim_settings_open: false,
             timelapse: Default::default(),
+            materials: Default::default(),
             view3d: None,
             history_brush_step: 0,
             eraser: BrushSettings {
@@ -1754,6 +1757,7 @@ impl eframe::App for ArtApp {
         crate::quick_menu::copy_paste(self, &ctx);
         crate::history_panel::show(self, &ctx);
         crate::timelapse_view::show(self, &ctx);
+        crate::materials_view::show(self, &ctx);
         crate::reference::show(self, &ctx);
         crate::canvas::drop_fill_bar(self, &ctx, canvas);
         crate::canvas::persp_crop_bar(self, &ctx, canvas);
