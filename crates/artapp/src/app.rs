@@ -1937,6 +1937,7 @@ impl eframe::App for ArtApp {
         panels::toast(self, &ctx, canvas, 0.0);
         crate::dialogs::show(self, &ctx);
         crate::projects::show(self, &ctx);
+        crate::backup::show(self, &ctx);
         crate::updater::show(self, &ctx);
         if self.show_new_dialog {
             panels::new_canvas_dialog(self, &ctx);
