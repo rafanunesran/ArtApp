@@ -1184,6 +1184,101 @@ fn kit_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             }
         });
     }
+    kit_align(app, ui);
+    kit_stroke_style(app, ui);
+}
+
+/// Alinhar e distribuir os objetos selecionados (painel Alinhar do VectorCraft).
+fn kit_align(app: &mut ArtApp, ui: &mut egui::Ui) {
+    use serde_json::json;
+    section(ui, "Alinhar e distribuir");
+    ui.checkbox(&mut app.align_to_canvas, "Em relação à tela")
+        .on_hover_text("Desligado: alinha os objetos selecionados entre si.");
+    let to = if app.align_to_canvas {
+        "artboard"
+    } else {
+        "selection"
+    };
+    let aligns = [
+        ("Esquerda", json!({"horizontal": "left", "to": to})),
+        ("Centro H", json!({"horizontal": "center", "to": to})),
+        ("Direita", json!({"horizontal": "right", "to": to})),
+        ("Topo", json!({"vertical": "top", "to": to})),
+        ("Centro V", json!({"vertical": "center", "to": to})),
+        ("Base", json!({"vertical": "bottom", "to": to})),
+    ];
+    ui.horizontal_wrapped(|ui| {
+        for (name, p) in aligns {
+            if ui.button(name).clicked() {
+                app.kit_command("object.align", p);
+            }
+        }
+    });
+    let distrib = [
+        (
+            "Distribuir na horizontal",
+            "object.distribute",
+            json!({"horizontal": "center", "to": to}),
+        ),
+        (
+            "Distribuir na vertical",
+            "object.distribute",
+            json!({"vertical": "center", "to": to}),
+        ),
+        (
+            "Espaço igual (H)",
+            "object.distributeSpacing",
+            json!({"axis": "horizontal", "to": to}),
+        ),
+        (
+            "Espaço igual (V)",
+            "object.distributeSpacing",
+            json!({"axis": "vertical", "to": to}),
+        ),
+    ];
+    ui.horizontal_wrapped(|ui| {
+        for (name, id, p) in distrib {
+            if ui.button(name).clicked() {
+                app.kit_command(id, p);
+            }
+        }
+    });
+}
+
+/// Pontas, cantos e tracejado do traço dos objetos selecionados.
+fn kit_stroke_style(app: &mut ArtApp, ui: &mut egui::Ui) {
+    use serde_json::json;
+    section(ui, "Estilo do traço");
+    let rows: [&[(&str, serde_json::Value)]; 3] = [
+        &[
+            ("Ponta reta", json!({"cap": "butt"})),
+            ("Ponta redonda", json!({"cap": "round"})),
+            ("Ponta quadrada", json!({"cap": "square"})),
+        ],
+        &[
+            ("Canto vivo", json!({"join": "miter"})),
+            ("Canto redondo", json!({"join": "round"})),
+            ("Canto chanfrado", json!({"join": "bevel"})),
+        ],
+        &[
+            ("Contínuo", json!({"dash": null})),
+            ("Tracejado", json!({"dash": [12, 6]})),
+            ("Pontilhado", json!({"dash": [1, 8], "cap": "round"})),
+            (
+                "Traço e ponto",
+                json!({"dash": [14, 5, 1, 5], "cap": "round"}),
+            ),
+        ],
+    ];
+    for row in rows {
+        ui.horizontal_wrapped(|ui| {
+            for (name, p) in row {
+                if ui.button(*name).clicked() {
+                    app.kit_command("stroke.set", p.clone());
+                }
+            }
+        });
+    }
 }
 
 /// Com a interface escondida: um botão discreto no canto para trazê-la de volta.
