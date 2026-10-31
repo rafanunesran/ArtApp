@@ -11,12 +11,17 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
 
+    <!-- Menu › Atualizar app: baixa o APK da última release e pede ao Android para instalar.
+         A pessoa libera "Instalar apps desconhecidos" para o ArtApp uma vez. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
 
     <application
         android:label="@string/app_name"
         android:icon="@drawable/ic_launcher"
-        android:hasCode="false"
+        android:hasCode="true"
         android:hardwareAccelerated="true"
         android:requestLegacyExternalStorage="true"
         android:theme="@style/ArtAppTheme">
@@ -33,5 +38,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Resultado da instalação da atualização (Updater.java). -->
+        <receiver
+            android:name=".UpdateReceiver"
+            android:exported="false" />
     </application>
 </manifest>

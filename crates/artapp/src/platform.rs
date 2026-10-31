@@ -201,7 +201,7 @@ mod android_files {
 
     /// Roda `f` com o JNI e a Activity.
     #[allow(unsafe_code)]
-    fn with_activity<T>(
+    pub(super) fn with_activity<T>(
         f: impl FnOnce(&mut jni::Env, &JObject) -> jni::errors::Result<T>,
     ) -> Result<T, String> {
         let ctx = ndk_context::android_context();
@@ -216,7 +216,13 @@ mod android_files {
             // SAFETY: a Activity é uma referência global válida enquanto o app roda; o JObject
             // não a apaga ao sair de escopo.
             let act = unsafe { JObject::from_raw(env, activity as jni::sys::jobject) };
-            f(env, &act)
+            let r = f(env, &act);
+            // Uma exceção Java pendente derrubaria a próxima chamada JNI.
+            if env.exception_check() {
+                env.exception_describe();
+                env.exception_clear();
+            }
+            r
         })
         .map_err(|e| e.to_string())
     }
@@ -304,6 +310,259 @@ mod android_files {
             }
             Ok(())
         })
+    }
+}
+
+/// Atualizar o app pelo próprio app (Android): as chamadas ao `Updater.java` do APK. No desktop
+/// nada disso existe e `SUPPORTED` é `false`.
+pub mod update {
+    pub const SUPPORTED: bool = cfg!(target_os = "android");
+
+    /// Em que pé está a instalação pedida com [`install`].
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum InstallState {
+        /// Nada pedido (ou o sistema já trocou a versão).
+        Idle,
+        /// O Android está instalando.
+        Waiting,
+        /// O diálogo "Atualizar" do Android está aberto.
+        Confirming,
+        Failed(String),
+        /// A pessoa tocou em Cancelar no diálogo do Android.
+        Cancelled,
+    }
+
+    #[cfg(target_os = "android")]
+    pub use super::android_update::*;
+
+    #[cfg(not(target_os = "android"))]
+    mod desktop {
+        use std::path::Path;
+
+        use super::*;
+
+        const NO: &str = "só no Android";
+
+        pub fn installed_build() -> u64 {
+            0
+        }
+        pub fn latest_release_json() -> Result<String, String> {
+            Err(NO.into())
+        }
+        pub fn download(_url: &str, _dest: &Path) -> Result<(), String> {
+            Err(NO.into())
+        }
+        pub fn progress() -> (u64, Option<u64>) {
+            (0, None)
+        }
+        pub fn cancel() {}
+        pub fn can_install() -> bool {
+            false
+        }
+        pub fn open_install_settings() -> Result<(), String> {
+            Err(NO.into())
+        }
+        pub fn install(_apk: &Path) -> Result<(), String> {
+            Err(NO.into())
+        }
+        pub fn install_state() -> InstallState {
+            InstallState::Idle
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    pub use desktop::*;
+}
+
+/// JNI para `io.github.rafanunesran.artapp.Updater` (android/app/src/main/java).
+#[cfg(target_os = "android")]
+mod android_update {
+    use std::path::Path;
+
+    use jni::objects::{JClass, JClassLoader, JObject, JString, JValue};
+    use jni::refs::LoaderContext;
+    use jni::{jni_sig, jni_str};
+
+    use super::android_files::with_activity;
+    use super::update::InstallState;
+
+    /// A classe `Updater`. Threads nativas não acham as classes do app por `FindClass`: carrega
+    /// pelo ClassLoader do app.
+    fn updater<'l>(env: &mut jni::Env<'l>, act: &JObject) -> jni::errors::Result<JClass<'l>> {
+        let loader = env
+            .call_method(
+                act,
+                jni_str!("getClassLoader"),
+                jni_sig!(() -> java.lang.ClassLoader),
+                &[],
+            )?
+            .l()?;
+        let loader = env.cast_local::<JClassLoader>(loader)?;
+        LoaderContext::Loader(&loader).load_class(
+            env,
+            jni_str!("io.github.rafanunesran.artapp.Updater"),
+            true,
+        )
+    }
+
+    /// Texto de uma `String` Java (`None` se for `null`).
+    fn opt_string(env: &mut jni::Env, obj: JObject) -> jni::errors::Result<Option<String>> {
+        if obj.is_null() {
+            return Ok(None);
+        }
+        let s = JString::cast_local(env, obj)?;
+        Ok(Some(s.try_to_string(env)?))
+    }
+
+    /// Erro devolvido como `String` (`null` = deu certo).
+    fn result(r: Result<Option<String>, String>) -> Result<(), String> {
+        match r? {
+            None => Ok(()),
+            Some(e) => Err(e),
+        }
+    }
+
+    pub fn installed_build() -> u64 {
+        with_activity(|env, act| {
+            let cls = updater(env, act)?;
+            env.call_static_method(
+                &cls,
+                jni_str!("installedVersion"),
+                jni_sig!((c: android.content.Context) -> jlong),
+                &[JValue::Object(act)],
+            )?
+            .j()
+        })
+        .map(|v| v.max(0) as u64)
+        .unwrap_or(0)
+    }
+
+    pub fn latest_release_json() -> Result<String, String> {
+        let body = with_activity(|env, act| {
+            let cls = updater(env, act)?;
+            let s = env
+                .call_static_method(
+                    &cls,
+                    jni_str!("latestRelease"),
+                    jni_sig!(() -> java.lang.String),
+                    &[],
+                )?
+                .l()?;
+            opt_string(env, s)
+        })?
+        .unwrap_or_default();
+        match body.strip_prefix('!') {
+            Some(e) => Err(e.to_string()),
+            None => Ok(body),
+        }
+    }
+
+    pub fn download(url: &str, dest: &Path) -> Result<(), String> {
+        result(with_activity(|env, act| {
+            let cls = updater(env, act)?;
+            let url = env.new_string(url)?;
+            let dest = env.new_string(dest.to_string_lossy())?;
+            let r = env
+                .call_static_method(
+                    &cls,
+                    jni_str!("download"),
+                    jni_sig!((url: java.lang.String, dest: java.lang.String) -> java.lang.String),
+                    &[JValue::Object(&url), JValue::Object(&dest)],
+                )?
+                .l()?;
+            opt_string(env, r)
+        }))
+    }
+
+    pub fn progress() -> (u64, Option<u64>) {
+        with_activity(|env, act| {
+            let cls = updater(env, act)?;
+            let done = env
+                .call_static_method(&cls, jni_str!("downloaded"), jni_sig!(() -> jlong), &[])?
+                .j()?;
+            let total = env
+                .call_static_method(&cls, jni_str!("total"), jni_sig!(() -> jlong), &[])?
+                .j()?;
+            Ok((done.max(0) as u64, (total > 0).then_some(total as u64)))
+        })
+        .unwrap_or((0, None))
+    }
+
+    pub fn cancel() {
+        let _ = with_activity(|env, act| {
+            let cls = updater(env, act)?;
+            env.call_static_method(&cls, jni_str!("cancel"), jni_sig!(() -> void), &[])?;
+            Ok(())
+        });
+    }
+
+    pub fn can_install() -> bool {
+        with_activity(|env, act| {
+            let cls = updater(env, act)?;
+            env.call_static_method(
+                &cls,
+                jni_str!("canInstall"),
+                jni_sig!((c: android.content.Context) -> jboolean),
+                &[JValue::Object(act)],
+            )?
+            .z()
+        })
+        .unwrap_or(false)
+    }
+
+    pub fn open_install_settings() -> Result<(), String> {
+        with_activity(|env, act| {
+            let cls = updater(env, act)?;
+            env.call_static_method(
+                &cls,
+                jni_str!("openInstallSettings"),
+                jni_sig!((c: android.content.Context) -> void),
+                &[JValue::Object(act)],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn install(apk: &Path) -> Result<(), String> {
+        result(with_activity(|env, act| {
+            let cls = updater(env, act)?;
+            let apk = env.new_string(apk.to_string_lossy())?;
+            let r = env
+                .call_static_method(
+                    &cls,
+                    jni_str!("install"),
+                    jni_sig!((c: android.content.Context, apk: java.lang.String) -> java.lang.String),
+                    &[JValue::Object(act), JValue::Object(&apk)],
+                )?
+                .l()?;
+            opt_string(env, r)
+        }))
+    }
+
+    pub fn install_state() -> InstallState {
+        with_activity(|env, act| {
+            let cls = updater(env, act)?;
+            let state = env
+                .call_static_method(&cls, jni_str!("installState"), jni_sig!(() -> jint), &[])?
+                .i()?;
+            Ok(match state {
+                1 => InstallState::Waiting,
+                2 => InstallState::Confirming,
+                3 => {
+                    let m = env
+                        .call_static_method(
+                            &cls,
+                            jni_str!("installMessage"),
+                            jni_sig!(() -> java.lang.String),
+                            &[],
+                        )?
+                        .l()?;
+                    InstallState::Failed(opt_string(env, m)?.unwrap_or_default())
+                }
+                4 => InstallState::Cancelled,
+                _ => InstallState::Idle,
+            })
+        })
+        .unwrap_or(InstallState::Idle)
     }
 }
 

@@ -335,6 +335,18 @@ impl ArtApp {
         }
     }
 
+    /// Grava agora o que estiver pendente, como o salvamento automático (antes de o app fechar
+    /// para atualizar).
+    pub fn flush_autosave(&mut self) {
+        if !self.projects.dirty() || self.projects.busy() {
+            return;
+        }
+        match self.projects.path.clone() {
+            Some(path) => self.start_save(path, true, false),
+            None => self.start_save(recovery_path(), true, true),
+        }
+    }
+
     /// Codifica e grava em segundo plano.
     fn start_save(&mut self, path: PathBuf, auto: bool, recovery: bool) {
         if self.projects.busy() {
