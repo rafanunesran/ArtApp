@@ -1152,7 +1152,45 @@ fn selection_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
         if ui.button(format!("{}  Da camada", icon::LAYERS)).clicked() {
             app.doc.select_layer_content();
         }
+        if ui
+            .button(format!("{}  Assunto", icon::WAND_SPARKLES))
+            .on_hover_text("Tudo que não é o fundo liso em volta (usa a tolerância)")
+            .clicked()
+        {
+            let sel = app.doc.select_subject(app.wand_tolerance);
+            if sel.is_none() {
+                app.status = "Não achei um assunto: a imagem está vazia ou sem fundo liso.".into();
+            }
+            app.doc.combine_selection(sel, app.select_mode);
+        }
+        if ui
+            .button(format!("{}  Pela cor", icon::DROPLET))
+            .on_hover_text("As cores perto da cor principal, na imagem toda (usa a tolerância)")
+            .clicked()
+        {
+            let [r, g, b, _] = crate::app::color_to_f32(app.color);
+            let sel = app
+                .doc
+                .select_color_range([r, g, b], app.wand_tolerance.max(0.05));
+            if sel.is_none() {
+                app.status = "Nenhum pixel com essa cor.".into();
+            }
+            app.doc.combine_selection(sel, app.select_mode);
+        }
     });
+    if app.tool != Tool::MagicWand {
+        let mut pct = app.wand_tolerance * 100.0;
+        if ui
+            .add(
+                egui::Slider::new(&mut pct, 0.0..=100.0)
+                    .suffix("%")
+                    .text("Tolerância"),
+            )
+            .changed()
+        {
+            app.wand_tolerance = pct / 100.0;
+        }
+    }
     if app.doc.selection.is_some() {
         section(ui, "Ajustar seleção");
         ui.add(
