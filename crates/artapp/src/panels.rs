@@ -2222,8 +2222,43 @@ fn brush_general(app: &mut ArtApp, ui: &mut egui::Ui) {
     if theme::switch(ui, &mut app.use_pressure, "Usar pressão da caneta").changed() {
         app.save_prefs();
     }
-    if app.use_pressure && pressure_curve(ui, &mut app.pressure_curve) {
+    if app.use_pressure {
+        let key = app.current_brush_key();
+        if let Some(k) = &key {
+            let mut own = app.brush_curves.contains_key(k);
+            if theme::switch(ui, &mut own, "Curva própria deste pincel").changed() {
+                if own {
+                    app.brush_curves
+                        .insert(k.clone(), app.pressure_curve.clone());
+                } else {
+                    app.brush_curves.remove(k);
+                }
+                app.save_prefs();
+            }
+        }
+        let curve = match key.filter(|k| app.brush_curves.contains_key(k)) {
+            Some(k) => app.brush_curves.get_mut(&k),
+            None => Some(&mut app.pressure_curve),
+        };
+        if curve.is_some_and(|c| pressure_curve(ui, c)) {
+            app.save_prefs();
+        }
+    }
+    if theme::switch(
+        ui,
+        &mut app.speed_pressure,
+        "Pressão pela velocidade (dedo)",
+    )
+    .changed()
+    {
         app.save_prefs();
+    }
+    if app.speed_pressure {
+        ui.label(
+            RichText::new("Sem caneta: devagar faz o traço cheio, rápido faz fino.")
+                .size(12.0)
+                .color(color::TEXT_MUTED),
+        );
     }
     if eraser {
         section(ui, "Borracha mágica");
@@ -2424,6 +2459,13 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
                 .color(color::TEXT_MUTED),
         );
     }
+    if let Some(d) = app
+        .brushes
+        .get(app.brush_index)
+        .and_then(|b| artapp_core::brushes::describe(&b.name))
+    {
+        ui.label(RichText::new(d).size(12.0).color(color::TEXT_MUTED));
+    }
     if let Some(i) = star {
         app.toggle_favorite(i);
     }
@@ -2455,10 +2497,17 @@ fn brush_save_row(app: &mut ArtApp, ui: &mut egui::Ui) {
         }
         if ui
             .button(format!("{}  Importar pincéis…", icon::FOLDER_OPEN))
-            .on_hover_text("Pincéis do Photoshop (.abr) ou uma imagem, que vira a ponta.")
+            .on_hover_text("Pincéis do Photoshop (.abr), pacote do ArtApp (.artbrushes) ou uma imagem, que vira a ponta.")
             .clicked()
         {
             app.pick_image_for(crate::projects::ImageUse::Brushes);
+        }
+        if ui
+            .button("Exportar meus pincéis")
+            .on_hover_text("Grava os pincéis de Meus pincéis num arquivo .artbrushes.")
+            .clicked()
+        {
+            app.export_brushes();
         }
     });
 }

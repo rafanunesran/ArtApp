@@ -289,6 +289,13 @@ impl ArtApp {
         }
     }
 
+    /// Grava um arquivo avulso na pasta de backup (`None` se o backup está desligado).
+    pub fn backup_put(&self, name: &str, bytes: &[u8]) -> Option<Result<(), String>> {
+        self.backup
+            .enabled
+            .then(|| self.backup.dest.put(name, bytes))
+    }
+
     /// Menu › Backup › Fazer backup agora.
     pub fn backup_now(&mut self) {
         if self.backup.busy() {

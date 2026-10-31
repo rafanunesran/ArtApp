@@ -6,8 +6,8 @@
 pub const MAX_SIZE: f32 = photocraft_paint::MAX_BRUSH_SIZE;
 
 use photocraft_paint::{
-    BrushPreset, BrushSettings, Control, Dynamic, MixerSettings, Pattern, PatternStyle,
-    ShapeDynamics, Smoothing, Texture, Transfer, presets,
+    BrushPreset, BrushSettings, Control, Dynamic, GrayTile, MaskMode, MixerSettings, Pattern,
+    PatternStyle, ShapeDynamics, Smoothing, Texture, Transfer, presets,
 };
 
 /// Um pincel da paleta: nome mostrado e configurações.
@@ -114,6 +114,37 @@ fn localize(name: &str, group: &str) -> (String, &'static str) {
         }
     };
     (pt.to_string(), cat)
+}
+
+/// Uma frase sobre para que serve o pincel (os do conjunto padrão; `None` para os outros).
+pub fn describe(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "Caneta G" => "Contorno de quadrinho: linha firme que afina com pouca pressão.",
+        "Lápis" => "Esboço solto, com borda irregular e opacidade pela pressão.",
+        "Lapiseira" => "Linha fina e clara para estudo e construção.",
+        "Lápis de cor" => "Colorir com o grão do papel aparecendo.",
+        "Marcador" => "Cor chapada semitransparente para preencher rápido.",
+        "Marcador de álcool" => "Ponta larga inclinada; passar de novo escurece, como no papel.",
+        "Marca-texto" => "Multiplica sobre o desenho: destaca sem cobrir a linha.",
+        "Caneta de feltro" => "Linha média e quase opaca, boa para lettering e rabiscos.",
+        "Caneta fina" => "Detalhes e hachuras finas, com estabilização.",
+        "Caneta técnica" => "Linha de largura constante, sem pressão.",
+        "Pincel de nanquim" => "Traço de pincel com grande variação de largura.",
+        "Caneta chanfrada" => "Ponta chata a 45°: grossa num sentido, fina no outro.",
+        "Monoline" => "Lettering de largura igual, bem estabilizado.",
+        "Aquarela" => "Aguada transparente com borda molhada.",
+        "Aerógrafo" => "Sombra e brilho macios; segurar parado acumula tinta.",
+        "Óleo que mistura" => "Pinta com a cor escolhida e mistura com a tinta da tela.",
+        "Pincel úmido" => "Bem molhado: pega muita cor da tela e funde as áreas.",
+        "Esfumar com cor" => "Quase sem tinta própria: espalha e suaviza o que já está pintado.",
+        "Hachura" => "Linhas diagonais presas à tela: sombra de quadrinho que não se desalinha.",
+        "Hachura cruzada" => "Hachura nas duas diagonais, para sombras mais escuras.",
+        "Borracha dura" => "Apaga com borda limpa.",
+        "Borracha macia" => "Apaga suave, para clarear áreas.",
+        "Borracha de lápis" => "Apaga como borracha de papel, pela pressão.",
+        "Borracha de textura" => "Apaga deixando o grão do papel.",
+        _ => return None,
+    })
 }
 
 /// Posição da categoria em [`CATEGORIES`] (desconhecidas vão para o fim).
@@ -224,6 +255,31 @@ fn pressure_opacity() -> Transfer {
         enabled: true,
         opacity: Dynamic::controlled(Control::PenPressure),
         ..Default::default()
+    }
+}
+
+/// Linhas diagonais a cada 8 px (e as da outra diagonal, se `cross`), 2 px de largura.
+fn hatch_tile(cross: bool) -> GrayTile {
+    GrayTile::from_fn(32, 32, move |x, y| {
+        let a = (x + y) % 8 < 2;
+        let b = cross && (x + 32 - y) % 8 < 2;
+        if a || b { 1.0 } else { 0.0 }
+    })
+}
+
+fn hatch_brush(cross: bool) -> BrushSettings {
+    BrushSettings {
+        size: 60.0,
+        hardness: 0.8,
+        spacing: 0.1,
+        texture: Texture {
+            enabled: true,
+            pattern: Pattern::Tile(hatch_tile(cross)),
+            mode: MaskMode::HardMix,
+            depth: 1.0,
+            ..Default::default()
+        },
+        ..BrushSettings::default()
     }
 }
 
@@ -431,6 +487,9 @@ pub fn extra() -> Vec<BrushEntry> {
                 ..base.clone()
             },
         ),
+        // Quadrinhos: o padrão fica preso à tela, então traços vizinhos continuam a mesma hachura.
+        ours("Hachura", "Quadrinhos", hatch_brush(false)),
+        ours("Hachura cruzada", "Quadrinhos", hatch_brush(true)),
         // Borrachas
         ours(
             "Borracha dura",
@@ -512,6 +571,54 @@ pub fn load_custom(path: &std::path::Path) -> Vec<BrushEntry> {
 }
 
 /// Grava os pincéis do usuário.
+/// Extensão do pacote de pincéis do ArtApp (JSON com os ajustes de cada pincel).
+pub const PACK_EXT: &str = "artbrushes";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Pack {
+    format: String,
+    version: u32,
+    brushes: Vec<BrushEntry>,
+}
+
+const PACK_FORMAT: &str = "artapp-brushes";
+
+/// Pacote com os pincéis de "Meus pincéis", para levar a outro aparelho ou mandar a alguém.
+pub fn export_pack(brushes: &[BrushEntry]) -> Result<Vec<u8>, String> {
+    let pack = Pack {
+        format: PACK_FORMAT.into(),
+        version: 1,
+        brushes: brushes
+            .iter()
+            .filter(|b| b.group == CUSTOM_GROUP)
+            .cloned()
+            .collect(),
+    };
+    if pack.brushes.is_empty() {
+        return Err("não há pincéis em Meus pincéis".into());
+    }
+    serde_json::to_vec_pretty(&pack).map_err(|e| e.to_string())
+}
+
+fn import_pack(bytes: &[u8]) -> Result<Vec<BrushEntry>, String> {
+    let pack: Pack =
+        serde_json::from_slice(bytes).map_err(|e| format!("pacote de pincéis inválido ({e})"))?;
+    if pack.format != PACK_FORMAT {
+        return Err("não é um pacote de pincéis do ArtApp".into());
+    }
+    if pack.brushes.is_empty() {
+        return Err("o pacote não tem pincéis".into());
+    }
+    Ok(pack
+        .brushes
+        .into_iter()
+        .map(|mut b| {
+            b.group = CUSTOM_GROUP.into();
+            b
+        })
+        .collect())
+}
+
 pub fn save_custom(path: &std::path::Path, brushes: &[BrushEntry]) -> Result<(), String> {
     let custom: Vec<&BrushEntry> = brushes.iter().filter(|b| b.group == CUSTOM_GROUP).collect();
     let json = serde_json::to_vec_pretty(&custom).map_err(|e| e.to_string())?;
@@ -524,6 +631,23 @@ pub fn save_custom(path: &std::path::Path, brushes: &[BrushEntry]) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn brush_pack_round_trips_only_my_brushes() -> Result<(), String> {
+        let mut b = drawing();
+        b[1].group = CUSTOM_GROUP.into();
+        b[1].name = "Meu lápis".into();
+        b[1].settings.size = 12.0;
+        let bytes = export_pack(&b)?;
+        let back = import(&format!("x.{PACK_EXT}"), &bytes)?;
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].name, "Meu lápis");
+        assert_eq!(back[0].group, CUSTOM_GROUP);
+        assert_eq!(back[0].settings.size, 12.0);
+        assert!(export_pack(&drawing()).is_err());
+        assert!(import(&format!("x.{PACK_EXT}"), b"{}").is_err());
+        Ok(())
+    }
 
     #[test]
     fn custom_brushes_round_trip() {
@@ -539,6 +663,32 @@ mod tests {
         assert_eq!(back[0].name, "Meu");
         assert_eq!(back[0].settings.size, 33.0);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn hatch_leaves_gaps_between_the_lines() {
+        let all = all();
+        let ink = |name: &str| {
+            let b = all
+                .iter()
+                .find(|b| b.name == name)
+                .map(|b| b.settings.clone());
+            let px = preview(&b.unwrap_or_default(), 200, 60);
+            // Faixa do meio do traço.
+            let mid: Vec<_> = px[60 * 200 / 2 - 100..60 * 200 / 2 + 100].to_vec();
+            mid.iter().filter(|p| p[3] > 128).count() as f32 / mid.len() as f32
+        };
+        let single = ink("Hachura");
+        let cross = ink("Hachura cruzada");
+        assert!(single > 0.1 && single < 0.6, "hachura cobre {single}");
+        assert!(cross > single, "cruzada {cross} <= simples {single}");
+    }
+
+    #[test]
+    fn our_brushes_have_a_description() {
+        for b in drawing().iter().chain(extra().iter()) {
+            assert!(describe(&b.name).is_some(), "{} sem descrição", b.name);
+        }
     }
 
     #[test]
@@ -656,6 +806,9 @@ pub fn import(file_name: &str, bytes: &[u8]) -> Result<Vec<BrushEntry>, String> 
     let stem = std::path::Path::new(file_name)
         .file_stem()
         .map_or_else(|| "Pincel".into(), |s| s.to_string_lossy().into_owned());
+    if lower.ends_with(&format!(".{PACK_EXT}")) {
+        return import_pack(bytes);
+    }
     if lower.ends_with(".abr") {
         let imp = crate::abr::read_abr(bytes, &stem)?;
         if imp.presets.is_empty() {

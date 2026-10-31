@@ -271,7 +271,7 @@ fn input(app: &mut ArtApp, ctx: &egui::Context, resp: &egui::Response, panel: eg
     let pressure = force
         .filter(|f| app.use_pressure && f.is_finite() && *f > 0.0)
         .map_or(1.0, |f| {
-            artapp_core::pressure::apply(&app.pressure_curve, f)
+            artapp_core::pressure::apply(app.active_pressure_curve(), f)
         });
     let time = ctx.input(|i| i.time) * 1000.0;
     let Some((x, y)) = texel_at(app, panel, p) else {

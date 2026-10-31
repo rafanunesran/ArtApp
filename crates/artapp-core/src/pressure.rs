@@ -1,6 +1,21 @@
 //! Curva de pressão da caneta: pontos de controle entre (0, 0) e (1, 1), ligados por uma curva
 //! suave que nunca desce (Hermite monotônica), como o ajuste de pressão do Procreate.
 
+/// Velocidade (pontos de tela por segundo) em que a pressão simulada cai pela metade.
+pub const SPEED_HALF: f32 = 900.0;
+
+/// Pressão simulada para dedo e caneta sem pressão: devagar = traço cheio, rápido = fino, como
+/// uma caneta de nanquim. `prev` é a pressão do ponto anterior (suaviza para não tremer).
+pub fn from_speed(points_per_sec: f32, prev: f32) -> f32 {
+    let v = if points_per_sec.is_finite() {
+        points_per_sec.max(0.0)
+    } else {
+        0.0
+    };
+    let target = (1.0 / (1.0 + v / SPEED_HALF)).clamp(0.15, 1.0);
+    (prev + (target - prev) * 0.35).clamp(0.0, 1.0)
+}
+
 /// Mais pontos que isso deixam a curva difícil de mexer com o dedo.
 pub const MAX_POINTS: usize = 4;
 
@@ -76,5 +91,25 @@ mod tests {
             last = y;
         }
         assert!((apply(&p, 1.0) - 1.0).abs() < 1e-5);
+    }
+}
+
+#[cfg(test)]
+mod speed_tests {
+    use super::*;
+
+    #[test]
+    fn faster_strokes_get_thinner_and_change_smoothly() {
+        let mut slow = 1.0;
+        let mut fast = 1.0;
+        for _ in 0..30 {
+            slow = from_speed(50.0, slow);
+            fast = from_speed(4000.0, fast);
+        }
+        assert!(slow > 0.9, "{slow}");
+        assert!(fast < 0.3, "{fast}");
+        // Um pulo de velocidade não derruba a pressão de uma vez.
+        assert!(from_speed(4000.0, 1.0) > 0.6);
+        assert_eq!(from_speed(f32::NAN, 0.5), from_speed(0.0, 0.5));
     }
 }
