@@ -1,7 +1,9 @@
 //! Tamanho da tela: cortar, aumentar ou diminuir a área (sem mudar o desenho) e redimensionar a
 //! imagem inteira (escala todas as camadas). Cada operação é um passo do desfazer.
 
-use photocraft_algo::transform::{Homography, Interp, warp_surface};
+use photocraft_algo::transform::{
+    Homography, Interp, convex_quad, quad_size, quad_to_rect, warp_surface, warp_surface_clipped,
+};
 use photocraft_color::PixelFormat;
 use photocraft_geom::Rect;
 use photocraft_raster::Surface;
@@ -126,6 +128,42 @@ impl Document {
         self.selection = None;
         true
     }
+
+    /// Recorte com perspectiva (do PhotoCraft): o quadrilátero `quad` (cima-esquerda,
+    /// cima-direita, baixo-direita, baixo-esquerda) vira a tela inteira, endireitado. Camadas
+    /// vetoriais viram raster. Devolve `false` se o quadrilátero não serve.
+    pub fn perspective_crop(&mut self, quad: [[f64; 2]; 4]) -> bool {
+        if !convex_quad(&quad) {
+            return false;
+        }
+        let (qw, qh) = quad_size(&quad);
+        let side = f64::from(MAX_CANVAS_SIDE);
+        let (w, h) = (qw.round().clamp(1.0, side), qh.round().clamp(1.0, side));
+        let Some(map) = quad_to_rect(&quad, w, h) else {
+            return false;
+        };
+        let (w, h) = (w as u32, h as u32);
+        self.checkpoint();
+        let old = self.bounds();
+        let bounds = Rect::new(0, 0, w as i32, h as i32);
+        for layer in &mut self.layers {
+            layer.vector = None;
+            let content = layer.surface.content_bounds().intersect(&old);
+            let mut out = Surface::new(PixelFormat::RGBA8);
+            if !content.is_empty()
+                && let Ok(s) =
+                    warp_surface_clipped(&layer.surface, content, &map, Interp::Bicubic, bounds)
+            {
+                out = s;
+                out.prune();
+            }
+            layer.surface = out;
+        }
+        self.width = w;
+        self.height = h;
+        self.selection = None;
+        true
+    }
 }
 
 #[cfg(test)]
@@ -166,5 +204,24 @@ mod tests {
         assert!(doc.layers[0].surface.rgba(110, 50)[3] < 0.1);
         assert!(doc.resize_canvas(300, 100, 50, 0));
         assert!(doc.layers[0].surface.rgba(140, 50)[2] > 0.9);
+    }
+
+    #[test]
+    fn perspective_crop_straightens_the_quad() {
+        let mut doc = Document::new(100, 100);
+        doc.layers[0]
+            .surface
+            .fill_rect(Rect::new(40, 40, 60, 60), &[0.0, 0.0, 1.0, 1.0]);
+        // Um trapézio em volta do quadrado azul.
+        let quad = [[20.0, 30.0], [80.0, 20.0], [85.0, 80.0], [15.0, 75.0]];
+        assert!(doc.perspective_crop(quad));
+        let (w, h) = (doc.width, doc.height);
+        assert!(w > 50 && h > 40, "{w}×{h}");
+        let mid = doc.layers[0].surface.rgba(w as i32 / 2, h as i32 / 2);
+        assert!(mid[2] > 0.9 && mid[3] > 0.9, "{mid:?}");
+        assert!(doc.layers[0].surface.rgba(1, 1)[3] < 0.1);
+        assert!(doc.undo());
+        assert_eq!((doc.width, doc.height), (100, 100));
+        assert!(!doc.perspective_crop([[0.0, 0.0], [0.0, 0.0], [1.0, 1.0], [0.0, 1.0]]));
     }
 }

@@ -436,6 +436,12 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         ));
         ui.close();
     }
+    if item(ui, icon::CROP, "Recorte com perspectiva").clicked() {
+        let (w, h) = (f64::from(app.doc.width), f64::from(app.doc.height));
+        let (mx, my) = (w * 0.1, h * 0.1);
+        app.persp_crop = Some([[mx, my], [w - mx, my], [w - mx, h - my], [mx, h - my]]);
+        ui.close();
+    }
     if app.doc.selection.is_some() && item(ui, icon::CROP, "Cortar na seleção").clicked() {
         app.crop_to_selection();
         ui.close();
