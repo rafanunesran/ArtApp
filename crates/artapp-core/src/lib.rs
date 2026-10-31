@@ -32,6 +32,7 @@ pub mod stroke;
 pub mod transform;
 pub mod vector;
 pub mod vectorkit;
+pub mod warp;
 
 pub use document::{Document, Layer};
 pub use photocraft_algo::FilterParams;
