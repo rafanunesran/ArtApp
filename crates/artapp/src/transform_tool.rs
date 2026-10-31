@@ -205,7 +205,10 @@ pub fn draw(app: &mut ArtApp, ctx: &egui::Context, painter: &egui::Painter, pane
         for j in 0..=N {
             for i in 0..=N {
                 let (u, v) = (i as f64 / N as f64, j as f64 / N as f64);
-                let (x, y) = h.apply(src[0] + u * (src[2] - src[0]), src[1] + v * (src[3] - src[1]));
+                let (x, y) = h.apply(
+                    src[0] + u * (src[2] - src[0]),
+                    src[1] + v * (src[3] - src[1]),
+                );
                 mesh.vertices.push(egui::epaint::Vertex {
                     pos: screen(app, panel, [x, y]),
                     uv: Pos2::new(u as f32, v as f32),

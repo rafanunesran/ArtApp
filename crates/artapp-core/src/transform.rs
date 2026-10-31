@@ -3,8 +3,8 @@
 //! para o quadrilátero escolhido ao aplicar. Livre e uniforme dão retângulos girados; distorcer
 //! move cada canto (perspectiva).
 
-pub use photocraft_algo::transform::{Homography, Interp};
 use photocraft_algo::transform::warp_surface;
+pub use photocraft_algo::transform::{Homography, Interp};
 use photocraft_color::PixelFormat;
 use photocraft_geom::Rect;
 use photocraft_raster::Surface;
@@ -242,9 +242,19 @@ pub fn drag_edge(q: &Quad, side: usize, p: [f64; 2], uniform: bool) -> Option<Qu
         ]
     };
     Some(if matches!(side % 4, 1 | 3) {
-        [corner(0.0, 0.0), corner(1.0, 0.0), corner(1.0, 1.0), corner(0.0, 1.0)]
+        [
+            corner(0.0, 0.0),
+            corner(1.0, 0.0),
+            corner(1.0, 1.0),
+            corner(0.0, 1.0),
+        ]
     } else {
-        [corner(0.0, 0.0), corner(0.0, 1.0), corner(1.0, 1.0), corner(1.0, 0.0)]
+        [
+            corner(0.0, 0.0),
+            corner(0.0, 1.0),
+            corner(1.0, 1.0),
+            corner(1.0, 0.0),
+        ]
     })
 }
 
