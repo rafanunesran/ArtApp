@@ -721,6 +721,8 @@ fn view_group(app: &mut ArtApp, ui: &mut egui::Ui) {
                 .text("Grade"),
         );
     }
+    ui.separator();
+    crate::workspace::menu(app, ui);
 }
 
 /// Preferências gerais e atualização do app.
@@ -955,16 +957,112 @@ pub fn side_sliders(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, p
 /// em pé. Todo painel tem título com botão de fechar, e o conteúdo rola quando não cabe na altura
 /// (celular deitado). `add` recebe a altura útil do painel. Devolve `true` se pediram para fechar.
 #[allow(clippy::too_many_arguments)]
+/// Onde um painel lateral aparece: flutuando por cima da tela ou encaixado numa lateral.
+pub enum Place<'a> {
+    Float {
+        ctx: &'a egui::Context,
+        canvas: egui::Rect,
+        portrait: bool,
+        right: bool,
+    },
+    Dock {
+        ui: &'a mut egui::Ui,
+        right: bool,
+        width: f32,
+    },
+}
+
+/// O que foi tocado no cabeçalho do painel.
+#[derive(Default)]
+pub struct PanelEvents {
+    pub close: bool,
+    /// Encaixar ou soltar.
+    pub dock: bool,
+    /// Trocar de lado.
+    pub swap: bool,
+}
+
+/// Cabeçalho (ícone, título, encaixar, trocar de lado, fechar) e corpo rolável.
+fn panel_body(
+    ui: &mut egui::Ui,
+    id: &str,
+    docked: Option<bool>,
+    glyph: char,
+    title: &str,
+    max_h: f32,
+    add: impl FnOnce(&mut egui::Ui, f32),
+) -> PanelEvents {
+    let mut ev = PanelEvents::default();
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(glyph.to_string())
+                .font(theme::icon_font(18.0))
+                .color(color::ACCENT),
+        );
+        ui.heading(title);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ev.close = theme::icon_button_sized(ui, icon::X, false, "Fechar", 36.0).clicked();
+            if let Some(docked) = docked {
+                ev.swap =
+                    theme::icon_button_sized(ui, icon::SWAP_SIDE, false, "Trocar de lado", 36.0)
+                        .clicked();
+                let tip = if docked {
+                    "Soltar (flutuar sobre a tela)"
+                } else {
+                    "Encaixar na lateral"
+                };
+                ev.dock = theme::icon_button_sized(ui, icon::PIN, docked, tip, 36.0).clicked();
+            }
+        });
+    });
+    ui.separator();
+    let body_h = max_h - 48.0;
+    egui::ScrollArea::vertical()
+        .id_salt(id)
+        .max_height(body_h)
+        .auto_shrink([false, true])
+        .show(ui, |ui| add(ui, body_h));
+    ev
+}
+
 fn panel_area(
     id: &str,
-    ctx: &egui::Context,
-    canvas: egui::Rect,
-    portrait: bool,
-    right: bool,
+    place: Place<'_>,
     glyph: char,
     title: &str,
     add: impl FnOnce(&mut egui::Ui, f32),
-) -> bool {
+) -> PanelEvents {
+    let (ctx, canvas, portrait, right) = match place {
+        Place::Dock { ui, right, width } => {
+            let panel = if right {
+                egui::Panel::right(format!("{id}_dock"))
+            } else {
+                egui::Panel::left(format!("{id}_dock"))
+            };
+            let frame = egui::Frame::new()
+                .fill(color::PANEL)
+                .inner_margin(egui::Margin::same(12));
+            return panel
+                .exact_size(width)
+                .resizable(false)
+                .frame(frame)
+                .show(ui, |ui| {
+                    let inner = width - 24.0;
+                    ui.set_min_width(inner);
+                    ui.set_max_width(inner);
+                    ui.spacing_mut().slider_width = (inner - 160.0).max(80.0);
+                    let h = ui.available_height();
+                    panel_body(ui, id, Some(true), glyph, title, h, add)
+                })
+                .inner;
+        }
+        Place::Float {
+            ctx,
+            canvas,
+            portrait,
+            right,
+        } => (ctx, canvas, portrait, right),
+    };
     let (pos, width, max_h) = if portrait {
         let h = canvas.height() * 0.55;
         (
@@ -989,48 +1087,55 @@ fn panel_area(
         )
     };
     let max_h = max_h.max(120.0);
-    let mut close = false;
+    let docked = (!portrait).then_some(false);
     egui::Area::new(Id::unique(id))
         .order(Order::Foreground)
         .fixed_pos(pos)
         .show(ctx, |ui| {
-            panel_frame().show(ui, |ui| {
-                let inner = width - 24.0;
-                ui.set_min_width(inner);
-                ui.set_max_width(inner);
-                ui.set_max_height(max_h);
-                ui.spacing_mut().slider_width = (inner - 160.0).max(80.0);
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(glyph.to_string())
-                            .font(theme::icon_font(18.0))
-                            .color(color::ACCENT),
-                    );
-                    ui.heading(title);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        close =
-                            theme::icon_button_sized(ui, icon::X, false, "Fechar", 36.0).clicked();
-                    });
-                });
-                ui.separator();
-                let body_h = max_h - 48.0;
-                egui::ScrollArea::vertical()
-                    .id_salt(id)
-                    .max_height(body_h)
-                    .auto_shrink([false, true])
-                    .show(ui, |ui| add(ui, body_h));
-            });
-        });
-    close
+            panel_frame()
+                .show(ui, |ui| {
+                    let inner = width - 24.0;
+                    ui.set_min_width(inner);
+                    ui.set_max_width(inner);
+                    ui.set_max_height(max_h);
+                    ui.spacing_mut().slider_width = (inner - 160.0).max(80.0);
+                    panel_body(ui, id, docked, glyph, title, max_h, add)
+                })
+                .inner
+        })
+        .inner
 }
 
-pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, portrait: bool) {
-    let close = panel_area(
+/// Aplica o que foi tocado no cabeçalho de um painel (`tools`: o da ferramenta).
+fn panel_events(app: &mut ArtApp, ev: PanelEvents, tools: bool) {
+    let w = &mut app.workspace;
+    let (docked, right) = if tools {
+        (&mut w.tools_docked, &mut w.tools_right)
+    } else {
+        (&mut w.layers_docked, &mut w.layers_right)
+    };
+    if ev.dock {
+        *docked = !*docked;
+    }
+    if ev.swap {
+        *right = !*right;
+    }
+    if ev.close {
+        if tools {
+            app.show_tools_panel = false;
+        } else {
+            app.show_layers_panel = false;
+        }
+    }
+    if ev.dock || ev.swap {
+        app.save_prefs();
+    }
+}
+
+pub fn brush_panel(app: &mut ArtApp, place: Place<'_>) {
+    let ev = panel_area(
         "brush_panel",
-        ctx,
-        canvas,
-        portrait,
-        false,
+        place,
         app.tool.icon(),
         app.tool.label(),
         |ui, _| {
@@ -1077,9 +1182,7 @@ pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
             }
         },
     );
-    if close {
-        app.show_tools_panel = false;
-    }
+    panel_events(app, ev, true);
 }
 
 /// Opções do conta-gotas (valem também para segurar o dedo parado na tela).
@@ -2366,7 +2469,7 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
                 };
                 let mut text = RichText::new(format!("{glyph}  {c}")).size(13.5);
                 if on {
-                    text = text.strong().color(color::ACCENT);
+                    text = text.strong().color(color::ON_ACCENT);
                 } else if *c == current_group {
                     // Mostra onde está o pincel em uso.
                     text = text.color(color::TEXT);
@@ -2717,13 +2820,10 @@ fn vector_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
     }
 }
 
-pub fn layers_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, portrait: bool) {
-    let close = panel_area(
+pub fn layers_panel(app: &mut ArtApp, place: Place<'_>) {
+    let ev = panel_area(
         "layers_panel",
-        ctx,
-        canvas,
-        portrait,
-        true,
+        place,
         icon::LAYERS,
         "Camadas",
         |ui, body_h| {
@@ -2859,9 +2959,7 @@ pub fn layers_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, p
             }
         },
     );
-    if close {
-        app.show_layers_panel = false;
-    }
+    panel_events(app, ev, false);
 }
 
 /// Uma linha da lista de camadas. Devolve (selecionar, alternar visibilidade).

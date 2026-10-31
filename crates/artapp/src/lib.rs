@@ -23,6 +23,7 @@ mod transform_tool;
 mod units;
 mod updater;
 mod view3d;
+mod workspace;
 
 pub use app::ArtApp;
 
