@@ -252,17 +252,22 @@ pub enum Dialog {
         keep_ratio: bool,
         scale: bool,
         anchor: usize,
+        /// Resolução (muda só o tamanho no papel, não os pixels) e a unidade mostrada.
+        dpi: f32,
+        unit: crate::units::Unit,
     },
 }
 
 impl Dialog {
-    pub fn canvas_size(width: u32, height: u32) -> Self {
+    pub fn canvas_size(width: u32, height: u32, dpi: f32) -> Self {
         Dialog::CanvasSize {
             width,
             height,
             keep_ratio: true,
             scale: false,
             anchor: 4,
+            dpi,
+            unit: crate::units::Unit::Px,
         }
     }
 
@@ -441,10 +446,15 @@ fn apply(app: &mut ArtApp, dialog: &Dialog) {
         height,
         scale,
         anchor,
+        dpi,
         ..
     } = *dialog
     {
         app.commit_transform();
+        if (dpi - app.doc.dpi).abs() > f32::EPSILON {
+            app.doc.dpi = dpi;
+            app.projects.touch();
+        }
         let (ow, oh) = (app.doc.width as i64, app.doc.height as i64);
         let changed = if scale {
             app.doc
@@ -576,6 +586,8 @@ fn canvas_size_ui(app: &ArtApp, ui: &mut egui::Ui, dialog: &mut Dialog) {
         keep_ratio,
         scale,
         anchor,
+        dpi,
+        unit,
     } = dialog
     else {
         return;
@@ -596,26 +608,17 @@ fn canvas_size_ui(app: &ArtApp, ui: &mut egui::Ui, dialog: &mut Dialog) {
     );
     ui.checkbox(keep_ratio, "Manter a proporção");
     let max = artapp_core::document::MAX_CANVAS_SIDE;
-    ui.horizontal(|ui| {
-        ui.label("Largura");
-        if ui
-            .add(egui::DragValue::new(width).range(1..=max).suffix(" px"))
-            .changed()
-            && *keep_ratio
-        {
+    let (w0, h0) = (*width, *height);
+    crate::units::size_editor(ui, width, height, dpi, unit, max);
+    if *keep_ratio {
+        if *width != w0 && *height == h0 {
             *height =
                 ((f64::from(*width) * f64::from(oh) / f64::from(ow)).round() as u32).clamp(1, max);
-        }
-        ui.label("Altura");
-        if ui
-            .add(egui::DragValue::new(height).range(1..=max).suffix(" px"))
-            .changed()
-            && *keep_ratio
-        {
+        } else if *height != h0 && *width == w0 {
             *width =
                 ((f64::from(*height) * f64::from(ow) / f64::from(oh)).round() as u32).clamp(1, max);
         }
-    });
+    }
     ui.horizontal_wrapped(|ui| {
         for pct in [50u32, 75, 150, 200] {
             if ui.button(format!("{pct}%")).clicked() {

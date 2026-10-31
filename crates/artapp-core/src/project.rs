@@ -54,8 +54,15 @@ struct Manifest {
     active: usize,
     #[serde(default)]
     preview: Option<Blob>,
+    /// Resolução de impressão.
+    #[serde(default = "default_dpi")]
+    dpi: f32,
     #[serde(default)]
     layers: Vec<LayerEntry>,
+}
+
+fn default_dpi() -> f32 {
+    crate::document::DEFAULT_DPI
 }
 
 fn white() -> [f32; 4] {
@@ -197,6 +204,7 @@ pub fn save(doc: &Document) -> Result<Vec<u8>, String> {
         paper: doc.paper,
         active: doc.active,
         preview,
+        dpi: doc.dpi,
         layers,
     };
     let json = serde_json::to_vec(&manifest).map_err(|e| e.to_string())?;
@@ -303,9 +311,11 @@ pub fn load(bytes: &[u8]) -> Result<Document, String> {
         }
         layers.push(layer);
     }
-    Ok(Document::from_parts(
-        m.width, m.height, m.paper, layers, m.active,
-    ))
+    let mut doc = Document::from_parts(m.width, m.height, m.paper, layers, m.active);
+    if m.dpi.is_finite() && m.dpi > 0.0 {
+        doc.dpi = m.dpi.clamp(1.0, 10_000.0);
+    }
+    Ok(doc)
 }
 
 /// A miniatura de um projeto no disco (PNG), lendo só o começo do arquivo.
@@ -436,11 +446,13 @@ mod tests {
 
     #[test]
     fn round_trips_layers() {
-        let doc = painted();
+        let mut doc = painted();
+        doc.dpi = 350.0;
         let bytes = save(&doc).unwrap();
         assert!(sniff(&bytes));
         let back = load(&bytes).unwrap();
         assert_eq!((back.width, back.height), (64, 48));
+        assert_eq!(back.dpi, 350.0);
         assert_eq!(back.paper, doc.paper);
         assert_eq!(back.layers.len(), doc.layers.len());
         assert_eq!(back.active, doc.active);

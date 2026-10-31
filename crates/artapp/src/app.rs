@@ -217,16 +217,19 @@ impl Tool {
 }
 
 /// Tamanhos de tela oferecidos em "Nova tela".
-pub const CANVAS_PRESETS: [(&str, u32, u32); 9] = [
-    ("Retrato 1536×2048", 1536, 2048),
-    ("Quadrado 2048×2048", 2048, 2048),
-    ("Celular 1080×1920", 1080, 1920),
-    ("Paisagem 1920×1080", 1920, 1080),
-    ("A4 150 dpi", 1240, 1754),
-    ("A4 300 dpi (impressão)", 2480, 3508),
-    ("Página de quadrinho 1988×3075", 1988, 3075),
-    ("Ilustração 3000×3000", 3000, 3000),
-    ("4K 3840×2160", 3840, 2160),
+/// Nome, largura, altura (px) e resolução (dpi).
+pub const CANVAS_PRESETS: [(&str, u32, u32, f32); 11] = [
+    ("Retrato 1536×2048", 1536, 2048, 150.0),
+    ("Quadrado 2048×2048", 2048, 2048, 150.0),
+    ("Celular 1080×1920", 1080, 1920, 150.0),
+    ("Paisagem 1920×1080", 1920, 1080, 150.0),
+    ("A4 150 dpi", 1240, 1754, 150.0),
+    ("A4 300 dpi (impressão)", 2480, 3508, 300.0),
+    ("A5 300 dpi", 1748, 2480, 300.0),
+    ("B5 350 dpi (mangá)", 2508, 3541, 350.0),
+    ("Página de quadrinho 1988×3075", 1988, 3075, 300.0),
+    ("Ilustração 3000×3000", 3000, 3000, 300.0),
+    ("4K 3840×2160", 3840, 2160, 150.0),
 ];
 
 pub struct ArtApp {
@@ -345,6 +348,8 @@ pub struct ArtApp {
     /// Painel do pincel, camadas e cor no quadro anterior, para saber qual acabou de abrir.
     panels_before: [bool; 3],
     pub show_new_dialog: bool,
+    /// Tamanho personalizado da caixa de nova tela: largura e altura (px), dpi e unidade.
+    pub new_size: (u32, u32, f32, crate::units::Unit),
     /// Mensagem curta na barra de baixo (ex.: onde a imagem foi salva).
     pub status: String,
     /// Estilo dos objetos vetoriais novos (a cor do traço é `color`).
@@ -483,6 +488,7 @@ impl ArtApp {
             show_layers_panel: wide,
             panels_before: [false; 3],
             show_new_dialog: false,
+            new_size: (2480, 3508, 300.0, crate::units::Unit::Mm),
             status: String::new(),
             vector_stroke: true,
             vector_width: 6.0,

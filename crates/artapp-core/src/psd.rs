@@ -37,7 +37,7 @@ fn q(v: f32) -> u8 {
 /// Codifica o documento como PSD com uma camada por camada do ArtApp.
 pub fn export(doc: &Document) -> Result<Vec<u8>, String> {
     let (w, h) = (doc.width, doc.height);
-    let mut b = PsdBuilder::new(w, h);
+    let mut b = PsdBuilder::new(w, h).resolution(f64::from(doc.dpi));
     if doc.paper[3] > 0.0 {
         let [r, g, bl, a] = doc.paper.map(q);
         let px: Vec<u8> = std::iter::repeat_n([r, g, bl, a], w as usize * h as usize)
@@ -111,13 +111,15 @@ pub fn import(bytes: &[u8]) -> Result<Document, String> {
     }
     let active = layers.len().saturating_sub(1);
     // O fundo do PSD é a própria camada de baixo; o papel fica transparente.
-    Ok(Document::from_parts(
-        w,
-        h,
-        [1.0, 1.0, 1.0, 0.0],
-        layers,
-        active,
-    ))
+    let mut doc = Document::from_parts(w, h, [1.0, 1.0, 1.0, 0.0], layers, active);
+    // A resolução vem em ponto fixo 16.16, sempre em pixels por polegada.
+    if let Some(r) = file.resolution() {
+        let dpi = r.h_res_fixed as f32 / 65536.0;
+        if dpi.is_finite() && dpi >= 1.0 {
+            doc.dpi = dpi.min(10_000.0);
+        }
+    }
+    Ok(doc)
 }
 
 fn walk(
@@ -222,6 +224,7 @@ mod tests {
     #[test]
     fn export_then_import_keeps_layers() {
         let mut doc = Document::new(32, 20);
+        doc.dpi = 300.0;
         if let Some(l) = doc.active_layer_mut() {
             let r = Rect::new(2, 3, 12, 9);
             let px: Vec<u8> = (0..r.width() * r.height())
@@ -242,6 +245,7 @@ mod tests {
         assert!(sniff(&bytes));
         let back = import(&bytes).unwrap();
         assert_eq!((back.width, back.height), (32, 20));
+        assert!((back.dpi - 300.0).abs() < 0.01);
         // Papel + 2 camadas.
         assert_eq!(back.layers.len(), 3);
         assert_eq!(back.layers[0].name, "Papel");
