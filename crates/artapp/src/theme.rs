@@ -377,6 +377,8 @@ pub enum ColorChip {
     Main,
     Sub,
     Transparent,
+    /// A cor principal foi arrastada e solta neste ponto da tela (ColorDrop do Procreate).
+    Drop(egui::Pos2),
 }
 
 /// Cores principal e secundária e a cor transparente, como no pé da paleta de ferramentas do Clip
@@ -389,7 +391,7 @@ pub fn color_chips(
     transparent: bool,
 ) -> Option<ColorChip> {
     let side = TOUCH;
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(side), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(side), Sense::click_and_drag());
     let p = ui.painter();
     let main_c = rect.min + Vec2::new(17.0, 17.0);
     let sub_c = rect.min + Vec2::new(30.0, 30.0);
@@ -412,7 +414,24 @@ pub fn color_chips(
         let r = egui::Rect::from_two_pos(tr_c, tr_c + Vec2::new(q.0 * 4.2, q.1 * 4.2));
         p.rect_filled(r, 0.0, Color32::from_gray(shade));
     }
-    let resp = resp.on_hover_text("Cor (toque na de trás para trocar; xadrez = transparente)");
+    // Arrastar a cor principal leva uma bolinha da cor; soltar na tela preenche ali.
+    if resp.dragged()
+        && let Some(at) = resp.interact_pointer_pos()
+    {
+        let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("color-drop"));
+        let p = ui.ctx().layer_painter(layer);
+        p.circle_filled(at, 15.0, Color32::WHITE);
+        p.circle_filled(at, 13.0, main);
+    }
+    if resp.drag_stopped() {
+        let at = resp
+            .interact_pointer_pos()
+            .or_else(|| ui.ctx().input(|i| i.pointer.latest_pos()));
+        return at.filter(|p| !rect.contains(*p)).map(ColorChip::Drop);
+    }
+    let resp = resp.on_hover_text(
+        "Cor (toque na de trás para trocar; xadrez = transparente; arraste até a tela para preencher)",
+    );
     if !resp.clicked() {
         return None;
     }

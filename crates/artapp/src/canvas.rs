@@ -20,6 +20,16 @@ const TAP_MAX_SECS: f64 = 0.45;
 const TAP_MAX_MOVE: f32 = 24.0;
 /// Os painéis somem quando o traço passa disto (antes pode ser o começo de um gesto de dois dedos).
 const PANEL_CLOSE_SECS: f64 = 0.15;
+/// Segurar parado por isto: conta-gotas (no começo do traço) ou forma rápida (no fim).
+const HOLD_SECS: f64 = 0.55;
+/// "Parado" é mexer menos que isto (pontos de tela).
+const HOLD_MOVE: f32 = 5.0;
+/// Segurar dois ou três dedos: desfaz/refaz em sequência a partir disto, nesse ritmo.
+const REPEAT_AFTER: f64 = 0.65;
+const REPEAT_EVERY: f64 = 0.18;
+/// Esfregar três dedos: idas e voltas para limpar a camada.
+const SCRUB_REVERSALS: u32 = 3;
+const SCRUB_MIN_RUN: f32 = 25.0;
 const MIN_ZOOM: f32 = 0.02;
 const MAX_ZOOM: f32 = 64.0;
 
@@ -82,12 +92,43 @@ struct TapGesture {
     origins: HashMap<u64, Pos2>,
     /// Quanto o dedo que mais andou se afastou de onde encostou, em pontos.
     moved: f32,
+    /// Desfazer/refazer em sequência (segurando): próximo instante e se já aconteceu.
+    repeat_at: f64,
+    repeated: bool,
+    /// Esfregar com três dedos: x do centro, sentido atual, quanto andou nele, idas e voltas.
+    scrub_x: Option<f32>,
+    scrub_dir: f32,
+    scrub_run: f32,
+    reversals: u32,
+    scrubbed: bool,
 }
 
 struct ActiveStroke {
     kind: ActiveKind,
     touch: Option<u64>,
     started: f64,
+    /// Pontos do traço do pincel (para a forma rápida).
+    path: Vec<StrokePoint>,
+    /// Onde e quando o traço parou de se mexer.
+    still: (Pos2, f64),
+    /// Quanto o traço andou na tela, em pontos.
+    travel: f32,
+    /// A forma rápida em que o traço virou.
+    quick: Option<artapp_core::quickshape::QuickShape>,
+}
+
+impl ActiveStroke {
+    fn new(kind: ActiveKind, touch: Option<u64>, time: f64, at: Pos2) -> Self {
+        Self {
+            kind,
+            touch,
+            started: time,
+            path: Vec::new(),
+            still: (at, time),
+            travel: 0.0,
+            quick: None,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -226,6 +267,7 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.view.fit(panel, app.doc.width, app.doc.height);
     }
     handle_input(app, ui, panel, response.hovered());
+    check_holds(app, ui.ctx(), panel);
     update_texture(app, ui.ctx());
 
     let painter = ui.painter_at(panel);
@@ -455,6 +497,9 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
                         if let Some(o) = tap.origins.get(&id) {
                             tap.moved = tap.moved.max(o.distance(*pos));
                         }
+                        if app.view.touches.len() >= 3 {
+                            scrub(app);
+                        }
                         if app.view.gesturing {
                             continue;
                         }
@@ -596,6 +641,14 @@ fn pen_swap(app: &mut ArtApp, id: u64) {
 /// Studio e no Procreate).
 fn finish_tap(app: &mut ArtApp, time: f64) {
     let tap = std::mem::take(&mut app.view.tap);
+    if tap.repeated || tap.scrubbed {
+        return;
+    }
+    if tap.fingers == 4 && time - tap.started <= TAP_MAX_SECS && tap.moved <= TAP_MAX_MOVE {
+        // Quatro dedos: esconde ou mostra a interface (tela cheia, como no Procreate).
+        app.hide_ui = !app.hide_ui;
+        return;
+    }
     if !app.tap_undo || time - tap.started > TAP_MAX_SECS || tap.moved > TAP_MAX_MOVE {
         return;
     }
@@ -609,6 +662,38 @@ fn finish_tap(app: &mut ArtApp, time: f64) {
             app.status = "Refeito".into();
         }
         _ => {}
+    }
+}
+
+/// Esfregar três dedos de um lado para o outro limpa a camada (Procreate).
+fn scrub(app: &mut ArtApp) {
+    let n = app.view.touches.len() as f32;
+    let x = app.view.touches.values().map(|p| p.x).sum::<f32>() / n;
+    let tap = &mut app.view.tap;
+    if tap.scrubbed {
+        return;
+    }
+    let Some(last) = tap.scrub_x.replace(x) else {
+        return;
+    };
+    let dx = x - last;
+    if dx == 0.0 {
+        return;
+    }
+    if dx.signum() == tap.scrub_dir {
+        tap.scrub_run += dx.abs();
+    } else {
+        if tap.scrub_run >= SCRUB_MIN_RUN {
+            tap.reversals += 1;
+        }
+        tap.scrub_dir = dx.signum();
+        tap.scrub_run = dx.abs();
+    }
+    if tap.reversals >= SCRUB_REVERSALS {
+        tap.scrubbed = true;
+        app.doc.clear_layer();
+        app.invalidate_all();
+        app.status = "Camada limpa".into();
     }
 }
 
@@ -632,6 +717,154 @@ fn point(app: &ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, time: f64
     StrokePoint {
         time: time * 1000.0,
         ..StrokePoint::new(x, y, pressure)
+    }
+}
+
+/// ColorDrop: a cor principal solta no ponto de tela `at` preenche a área ali (como o balde,
+/// com a tolerância do balde).
+pub fn color_drop(app: &mut ArtApp, at: Pos2) {
+    let panel = app.canvas_rect;
+    if !panel.contains(at) {
+        return;
+    }
+    let (x, y) = app.view.to_canvas(panel, at);
+    let r = if app.doc.active_is_vector() {
+        let [r, g, b, _] = color_to_f32(app.color);
+        app.doc.vector_fill_at(x, y, [r, g, b])
+    } else {
+        let opts = fill::FillOptions {
+            tolerance: app.fill_tolerance,
+            close_gap: app.fill_close_gap,
+            expand: app.fill_expand,
+        };
+        fill::flood_fill_with(
+            &mut app.doc,
+            x.floor() as i32,
+            y.floor() as i32,
+            color_to_f32(app.color),
+            &opts,
+        )
+    };
+    app.invalidate(r);
+    app.remember_color();
+    app.status = "Preenchido (ColorDrop)".into();
+}
+
+/// Começa um traço de pincel ou borracha com os ajustes atuais.
+fn begin_paint(app: &mut ArtApp) -> Option<PaintSession> {
+    let brush = app.stroke_brush();
+    let taper = if app.tool == Tool::Brush {
+        app.taper
+    } else {
+        artapp_core::Taper::default()
+    };
+    let opts = artapp_core::StrokeOptions {
+        taper,
+        symmetry: app.symmetry_ruler(),
+    };
+    PaintSession::begin_with(&mut app.doc, &brush, app.view.zoom, opts)
+}
+
+/// Refaz o traço atual como a forma rápida `shape`, com o mesmo pincel e a pressão média.
+fn redraw_quick(app: &mut ArtApp, shape: artapp_core::quickshape::QuickShape) {
+    let Some(mut s) = app.view.stroke.take() else {
+        return;
+    };
+    let ActiveKind::Paint(session) = s.kind else {
+        app.view.stroke = Some(s);
+        return;
+    };
+    let dirty = session.cancel(&mut app.doc);
+    app.invalidate(dirty);
+    let Some(mut session) = begin_paint(app) else {
+        return;
+    };
+    let pressure = if s.path.is_empty() {
+        1.0
+    } else {
+        s.path.iter().map(|p| p.pressure).sum::<f32>() / s.path.len() as f32
+    };
+    let t0 = s.path.first().map_or(0.0, |p| p.time);
+    let pts: Vec<StrokePoint> = shape
+        .sample(1.0)
+        .into_iter()
+        .enumerate()
+        .map(|(i, [x, y])| StrokePoint {
+            time: t0 + i as f64,
+            ..StrokePoint::new(x, y, pressure)
+        })
+        .collect();
+    let dirty = session.add(&mut app.doc, &pts);
+    app.invalidate(dirty);
+    s.kind = ActiveKind::Paint(Box::new(session));
+    s.quick = Some(shape);
+    app.view.stroke = Some(s);
+}
+
+/// A cada quadro: segurar parado vira conta-gotas (no começo do traço) ou forma rápida (no fim);
+/// segurar dois ou três dedos desfaz/refaz em sequência.
+fn check_holds(app: &mut ArtApp, ctx: &egui::Context, panel: egui::Rect) {
+    let time = ctx.input(|i| i.time);
+    // Desfazer/refazer em sequência.
+    let tap = &app.view.tap;
+    if app.tap_undo
+        && matches!(tap.fingers, 2 | 3)
+        && app.view.touches.len() == tap.fingers
+        && tap.moved <= TAP_MAX_MOVE
+        && !tap.scrubbed
+    {
+        ctx.request_repaint_after(std::time::Duration::from_millis(60));
+        if time - tap.started > REPEAT_AFTER && time >= tap.repeat_at {
+            let undo = tap.fingers == 2;
+            app.view.tap.repeat_at = time + REPEAT_EVERY;
+            app.view.tap.repeated = true;
+            if undo && app.doc.can_undo() {
+                app.undo();
+                app.status = "Desfazendo…".into();
+            } else if !undo && app.doc.can_redo() {
+                app.redo();
+                app.status = "Refazendo…".into();
+            }
+        }
+    }
+    let Some(s) = &app.view.stroke else {
+        return;
+    };
+    if !matches!(s.kind, ActiveKind::Paint(_)) || s.quick.is_some() {
+        return;
+    }
+    ctx.request_repaint_after(std::time::Duration::from_millis(80));
+    if time - s.still.1 < HOLD_SECS {
+        return;
+    }
+    let (at, travel) = (s.still.0, s.travel);
+    if travel < HOLD_MOVE * 2.0 {
+        if !app.hold_eyedropper {
+            return;
+        }
+        // Segurou sem desenhar: pega a cor do desenho naquele ponto.
+        cancel_stroke(app);
+        let (x, y) = app.view.to_canvas(panel, at);
+        if let Some(c) = composite::sample(&app.doc, x.floor() as i32, y.floor() as i32) {
+            app.color = color_from_f32(c);
+            app.remember_color();
+            app.status = "Cor pega".into();
+        }
+        return;
+    }
+    if !app.quick_shape || !matches!(app.tool, Tool::Brush | Tool::Eraser) {
+        return;
+    }
+    let pts: Vec<[f64; 2]> = s.path.iter().map(|p| [p.x, p.y]).collect();
+    if let Some(shape) = artapp_core::quickshape::detect(&pts) {
+        app.status = match &shape {
+            artapp_core::quickshape::QuickShape::Line(..) => "Forma rápida: reta",
+            artapp_core::quickshape::QuickShape::Arc { .. } => "Forma rápida: arco",
+            artapp_core::quickshape::QuickShape::Ellipse { .. } => "Forma rápida: elipse",
+            artapp_core::quickshape::QuickShape::Polygon { .. } => "Forma rápida: polígono",
+        }
+        .into();
+        redraw_quick(app, shape);
     }
 }
 
@@ -743,19 +976,7 @@ fn tool_down(
                         .into();
                 return;
             }
-            let brush = app.stroke_brush();
-            let taper = if app.tool == Tool::Brush {
-                app.taper
-            } else {
-                artapp_core::Taper::default()
-            };
-            let opts = artapp_core::StrokeOptions {
-                taper,
-                symmetry: app.symmetry_ruler(),
-            };
-            let Some(mut session) =
-                PaintSession::begin_with(&mut app.doc, &brush, app.view.zoom, opts)
-            else {
+            let Some(mut session) = begin_paint(app) else {
                 app.status = "A camada ativa está oculta.".into();
                 return;
             };
@@ -779,11 +1000,12 @@ fn tool_down(
                     return;
                 };
                 heal.add(vp.x, vp.y);
-                app.view.stroke = Some(ActiveStroke {
-                    kind: ActiveKind::Heal(Box::new(heal)),
+                app.view.stroke = Some(ActiveStroke::new(
+                    ActiveKind::Heal(Box::new(heal)),
                     touch,
-                    started: time,
-                });
+                    time,
+                    p,
+                ));
                 return;
             }
             let clone = app.mix_kind == artapp_core::mix::MixKind::Clone;
@@ -930,10 +1152,12 @@ fn tool_down(
             }
         }
     };
-    app.view.stroke = kind.map(|kind| ActiveStroke {
-        kind,
-        touch,
-        started: time,
+    app.view.stroke = kind.map(|kind| {
+        let mut s = ActiveStroke::new(kind, touch, time, p);
+        if matches!(s.kind, ActiveKind::Paint(_)) {
+            s.path.push(pt);
+        }
+        s
     });
 }
 
@@ -949,6 +1173,25 @@ fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, t
         .is_some_and(|s| time - s.started > PANEL_CLOSE_SECS)
     {
         app.close_panels();
+    }
+    if let Some(s) = &mut app.view.stroke
+        && matches!(s.kind, ActiveKind::Paint(_))
+    {
+        let moved = p.distance(s.still.0);
+        if moved > HOLD_MOVE {
+            s.travel += moved;
+            s.still = (p, time);
+        }
+        match &s.quick {
+            // Depois da forma rápida, a reta segue a caneta; as outras formas ficam.
+            Some(artapp_core::quickshape::QuickShape::Line(a, _)) => {
+                let shape = artapp_core::quickshape::QuickShape::Line(*a, [pt.x, pt.y]);
+                redraw_quick(app, shape);
+                return;
+            }
+            Some(_) => return,
+            None => s.path.push(pt),
+        }
     }
     let Some(s) = &mut app.view.stroke else {
         return;

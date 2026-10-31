@@ -183,6 +183,8 @@ fn pen_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
     for (value, text) in [
         (&mut app.gesture_rotate, "Girar com dois dedos"),
         (&mut app.tap_undo, "2 dedos desfaz, 3 refaz"),
+        (&mut app.quick_shape, "Forma rápida (segurar no fim)"),
+        (&mut app.hold_eyedropper, "Segurar o dedo pega a cor"),
         (&mut app.autoclose_panels, "Fechar painéis ao desenhar"),
     ] {
         changed |= ui
@@ -399,6 +401,7 @@ fn color_button(app: &mut ArtApp, ui: &mut egui::Ui) {
         }
         Some(theme::ColorChip::Sub) => app.swap_colors(),
         Some(theme::ColorChip::Transparent) => app.transparent = !app.transparent,
+        Some(theme::ColorChip::Drop(at)) => crate::canvas::color_drop(app, at),
         None => {}
     }
 }
@@ -855,6 +858,26 @@ fn kit_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             }
         });
     }
+}
+
+/// Com a interface escondida: um botão discreto no canto para trazê-la de volta.
+pub fn show_ui_button(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) {
+    egui::Area::new(Id::unique("show_ui"))
+        .order(Order::Foreground)
+        .fixed_pos(canvas.min + Vec2::splat(8.0))
+        .show(ctx, |ui| {
+            ui.set_opacity(0.55);
+            if icon_button(
+                ui,
+                icon::MAXIMIZE,
+                false,
+                "Mostrar a interface (Tab ou 4 dedos)",
+            )
+            .clicked()
+            {
+                app.hide_ui = false;
+            }
+        });
 }
 
 /// Navegador no canto de baixo à direita, ao lado do painel de camadas se ele estiver aberto.

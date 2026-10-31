@@ -314,6 +314,12 @@ pub struct ArtApp {
     pub autoclose_panels: bool,
     /// Toque rápido com dois dedos desfaz; com três, refaz.
     pub tap_undo: bool,
+    /// Forma rápida: segurar a caneta parada no fim do traço endireita a forma (Procreate).
+    pub quick_shape: bool,
+    /// Segurar o dedo parado no começo do traço pega a cor (Procreate).
+    pub hold_eyedropper: bool,
+    /// Interface escondida (toque com quatro dedos ou Tab): só a tela de desenho.
+    pub hide_ui: bool,
     /// Se o dedo usa a ferramenta ou só mexe na vista (rejeição de palma).
     pub finger_mode: FingerMode,
     pub show_tools_panel: bool,
@@ -442,6 +448,9 @@ impl ArtApp {
             pen_button_tool: Some(Tool::Eraser),
             autoclose_panels: true,
             tap_undo: true,
+            quick_shape: true,
+            hold_eyedropper: true,
+            hide_ui: false,
             finger_mode: FingerMode::Auto,
             show_tools_panel: wide,
             show_layers_panel: wide,
@@ -495,6 +504,12 @@ impl ArtApp {
         if let Some(b) = flag("tap_undo") {
             self.tap_undo = b;
         }
+        if let Some(b) = flag("quick_shape") {
+            self.quick_shape = b;
+        }
+        if let Some(b) = flag("hold_eyedropper") {
+            self.hold_eyedropper = b;
+        }
         if let Some(b) = flag("color_triangle") {
             self.color_state.triangle = b;
         }
@@ -536,6 +551,8 @@ impl ArtApp {
             "gesture_rotate": self.gesture_rotate,
             "autoclose_panels": self.autoclose_panels,
             "tap_undo": self.tap_undo,
+            "quick_shape": self.quick_shape,
+            "hold_eyedropper": self.hold_eyedropper,
             "finger_mode": format!("{:?}", self.finger_mode),
             "pen_button_tool": self.pen_button_tool.map(|t| format!("{t:?}")),
             "color_triangle": self.color_state.triangle,
@@ -1015,6 +1032,9 @@ impl ArtApp {
             let tool = Tool::all().find(|t| i.consume_key(egui::Modifiers::NONE, t.key()));
             let bigger = i.consume_key(egui::Modifiers::NONE, egui::Key::CloseBracket);
             let smaller = i.consume_key(egui::Modifiers::NONE, egui::Key::OpenBracket);
+            if i.consume_key(egui::Modifiers::NONE, egui::Key::Tab) {
+                self.hide_ui = !self.hide_ui;
+            }
             (undo, redo, tool, bigger, smaller)
         });
         let (enter, escape) = ctx.input_mut(|i| {
@@ -1230,10 +1250,13 @@ impl eframe::App for ArtApp {
         let bar = egui::Frame::new()
             .fill(crate::theme::color::SURFACE)
             .inner_margin(egui::Margin::symmetric(6, 2));
-        egui::Panel::top("top_bar")
-            .frame(bar)
-            .show(ui, |ui| panels::top_bar(self, ui));
-        if portrait {
+        let hide = self.hide_ui;
+        if !hide {
+            egui::Panel::top("top_bar")
+                .frame(bar)
+                .show(ui, |ui| panels::top_bar(self, ui));
+        }
+        if portrait && !hide {
             egui::Panel::bottom("bottom_tools")
                 .frame(bar)
                 .show(ui, |ui| panels::bottom_tools(self, ui));
@@ -1241,6 +1264,13 @@ impl eframe::App for ArtApp {
         egui::CentralPanel::no_frame().show(ui, |ui| crate::canvas::show(self, ui));
 
         let canvas = self.canvas_rect;
+        if hide {
+            panels::show_ui_button(self, &ctx, canvas);
+            panels::toast(self, &ctx, canvas, 0.0);
+            crate::dialogs::show(self, &ctx);
+            crate::projects::show(self, &ctx);
+            return;
+        }
         if !portrait {
             panels::tool_rail(self, &ctx, canvas);
         }
