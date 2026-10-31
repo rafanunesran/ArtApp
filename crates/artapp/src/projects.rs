@@ -135,6 +135,13 @@ pub struct Browser {
     image_use: ImageUse,
 }
 
+/// Arquivos de amostras de cor.
+fn is_swatches(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "ase" | "aco"))
+}
+
 /// Imagens que dá para importar como camada.
 fn is_image(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
@@ -152,6 +159,8 @@ pub enum ImageUse {
     Layer,
     Reference,
     Palette,
+    /// Arquivo de amostras (ASE ou ACO).
+    Swatches,
 }
 
 struct Entry {
@@ -192,7 +201,9 @@ impl Browser {
             }
             let meta = e.metadata().ok();
             let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
-            let wanted = if self.import {
+            let wanted = if self.import && self.image_use == ImageUse::Swatches {
+                is_swatches(&path)
+            } else if self.import {
                 is_image(&path)
             } else {
                 kind_of(&path).is_some()
@@ -323,6 +334,7 @@ impl ArtApp {
         self.import_image_dialog();
         if let Some(FileDialog::Open(b)) = &mut self.projects.dialog {
             b.image_use = use_for;
+            b.refresh();
         }
     }
 
@@ -350,6 +362,35 @@ impl ArtApp {
         }
     }
 
+    /// Importa um arquivo ASE ou ACO como conjunto de cores.
+    pub fn import_swatches(&mut self, path: &Path) {
+        match std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|b| artapp_core::palette::read_swatches(&b))
+        {
+            Ok(colors) => {
+                let name = path
+                    .file_stem()
+                    .map_or("Amostras".into(), |s| s.to_string_lossy().into_owned());
+                self.add_color_set(name, &colors);
+            }
+            Err(e) => self.status = format!("Não foi possível importar: {e}"),
+        }
+    }
+
+    fn add_color_set(&mut self, name: String, colors: &[[u8; 3]]) {
+        let st = &mut self.color_state;
+        st.sets.push(crate::color_panel::ColorSet {
+            name,
+            colors: colors.iter().map(|c| [c[0], c[1], c[2], 255]).collect(),
+        });
+        st.set_index = st.sets.len() - 1;
+        st.tab = crate::color_panel::ColorTab::Sets;
+        crate::color_panel::save_sets(&st.sets);
+        self.show_color = true;
+        self.status = format!("Conjunto com {} cores criado.", colors.len());
+    }
+
     /// Cria um conjunto de cores com as cores principais da imagem.
     pub fn palette_from_image(&mut self, path: &Path) {
         let res = std::fs::read(path)
@@ -370,16 +411,7 @@ impl ArtApp {
         let name = path
             .file_stem()
             .map_or("Foto".into(), |s| s.to_string_lossy().into_owned());
-        let st = &mut self.color_state;
-        st.sets.push(crate::color_panel::ColorSet {
-            name,
-            colors: colors.iter().map(|c| [c[0], c[1], c[2], 255]).collect(),
-        });
-        st.set_index = st.sets.len() - 1;
-        st.tab = crate::color_panel::ColorTab::Sets;
-        crate::color_panel::save_sets(&st.sets);
-        self.show_color = true;
-        self.status = format!("Conjunto com {} cores criado.", colors.len());
+        self.add_color_set(name, &colors);
     }
 
     /// Lê a imagem e põe numa camada nova, no centro da tela.
@@ -741,6 +773,7 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
         (true, ImageUse::Layer) => "Importar imagem",
         (true, ImageUse::Reference) => "Imagem de referência",
         (true, ImageUse::Palette) => "Paleta de uma imagem",
+        (true, ImageUse::Swatches) => "Importar amostras",
     };
     window(title).open(&mut open).show(ctx, |ui| {
         ui.set_width(w);
@@ -785,7 +818,9 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
         ui.separator();
         egui::ScrollArea::vertical().max_height(h).show(ui, |ui| {
             if b.entries.is_empty() {
-                ui.label(muted(if b.import {
+                ui.label(muted(if b.import && b.image_use == ImageUse::Swatches {
+                    "Nenhum arquivo de amostras (ASE, ACO) nesta pasta."
+                } else if b.import {
                     "Nenhuma imagem (PNG, JPEG, WebP, GIF, BMP) nesta pasta."
                 } else {
                     "Nenhum projeto (.artapp) ou PSD nesta pasta."
@@ -852,7 +887,10 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
     if let Some(dir) = go_to {
         let image_use = b.image_use;
         *b = Browser::with_mode(dir, b.import);
-        b.image_use = image_use;
+        if image_use != ImageUse::Layer {
+            b.image_use = image_use;
+            b.refresh();
+        }
     }
     if let Some(path) = pick {
         if b.import {
@@ -860,6 +898,7 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
                 ImageUse::Layer => app.import_image(&path),
                 ImageUse::Reference => app.open_reference(&path),
                 ImageUse::Palette => app.palette_from_image(&path),
+                ImageUse::Swatches => app.import_swatches(&path),
             }
         } else {
             app.open_path(path);
