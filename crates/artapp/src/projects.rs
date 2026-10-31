@@ -53,6 +53,8 @@ enum Job {
         rx: Receiver<Result<Document, String>>,
         path: PathBuf,
         recovery: bool,
+        /// Abrindo um backup: vira um desenho sem arquivo com este nome.
+        backup: Option<String>,
     },
 }
 
@@ -289,7 +291,7 @@ pub fn recovery_path() -> PathBuf {
 }
 
 /// Tira do nome o que não pode ir num nome de arquivo.
-fn clean_name(name: &str) -> String {
+pub(crate) fn clean_name(name: &str) -> String {
     let s: String = name
         .trim()
         .chars()
@@ -312,7 +314,7 @@ fn suggest_name() -> String {
         .unwrap_or_else(|| "Desenho".into())
 }
 
-fn time_ago(t: Option<SystemTime>) -> String {
+pub(crate) fn time_ago(t: Option<SystemTime>) -> String {
     let Some(secs) = t
         .and_then(|t| SystemTime::now().duration_since(t).ok())
         .map(|d| d.as_secs())
@@ -547,6 +549,18 @@ impl ArtApp {
         });
     }
 
+    /// Abre um backup como desenho novo chamado `name` (o arquivo de backup fica intacto).
+    pub fn open_backup(&mut self, path: PathBuf, name: String) {
+        if self.projects.busy() {
+            self.status = "Aguarde: ainda gravando ou abrindo um arquivo.".into();
+            return;
+        }
+        self.open_path_as(path, false);
+        if let Some(Job::Open { backup, .. }) = &mut self.projects.job {
+            *backup = Some(name);
+        }
+    }
+
     /// Abre um arquivo (projeto ou PSD) em segundo plano.
     pub fn open_path(&mut self, path: PathBuf) {
         self.open_path_as(path, false);
@@ -574,7 +588,12 @@ impl ArtApp {
             let _ = tx.send(res);
         });
         self.status = "Abrindo…".into();
-        self.projects.job = Some(Job::Open { rx, path, recovery });
+        self.projects.job = Some(Job::Open {
+            rx,
+            path,
+            recovery,
+            backup: None,
+        });
     }
 
     /// Troca o desenho por um que acabou de abrir.
@@ -726,13 +745,24 @@ impl ArtApp {
                         if !auto {
                             self.projects.just_saved = true;
                             self.status = format!("Projeto salvo em {}", path.display());
+                            self.backup_after_save(&path);
                         }
                     }
                 }
             },
-            Job::Open { rx, path, recovery } => match rx.try_recv() {
+            Job::Open {
+                rx,
+                path,
+                recovery,
+                backup,
+            } => match rx.try_recv() {
                 Err(TryRecvError::Empty) => {
-                    self.projects.job = Some(Job::Open { rx, path, recovery });
+                    self.projects.job = Some(Job::Open {
+                        rx,
+                        path,
+                        recovery,
+                        backup,
+                    });
                 }
                 Err(TryRecvError::Disconnected) => {
                     self.status = "Não foi possível abrir (erro interno).".into();
@@ -747,7 +777,14 @@ impl ArtApp {
                         .file_stem()
                         .map(|s| s.to_string_lossy().into_owned())
                         .unwrap_or_default();
-                    if recovery {
+                    if let Some(name) = backup {
+                        // O backup não vira o arquivo do projeto: salvar pergunta onde gravar.
+                        self.projects.path = None;
+                        self.projects.name = name;
+                        self.projects.saved_edits = self.projects.edits.wrapping_sub(1);
+                        self.status =
+                            format!("Backup aberto ({layers} camada(s)). Salve para guardá-lo.");
+                    } else if recovery {
                         // Continua sem nome; o arquivo de recuperação segue valendo até salvar.
                         self.projects.path = None;
                         self.projects.name = "Sem título".into();

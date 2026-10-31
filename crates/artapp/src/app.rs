@@ -422,6 +422,7 @@ pub struct ArtApp {
     pub projects: crate::projects::Projects,
     /// Conferir, baixar e instalar versões novas (Android).
     pub updater: crate::updater::Updater,
+    pub backup: crate::backup::Backup,
 }
 
 impl ArtApp {
@@ -569,6 +570,7 @@ impl ArtApp {
             pending: Rect::EMPTY,
             projects: crate::projects::Projects::default(),
             updater: crate::updater::Updater::default(),
+            backup: crate::backup::Backup::default(),
         };
         app.load_prefs();
         app
@@ -675,6 +677,9 @@ impl ArtApp {
         {
             self.paper_color = c.map(|x| x.clamp(0.0, 1.0));
         }
+        if let Some(b) = v.get("backup") {
+            self.backup.load_json(b);
+        }
         if let Some(name) = v.get("finger_mode").and_then(serde_json::Value::as_str) {
             self.finger_mode = FingerMode::ALL
                 .into_iter()
@@ -716,6 +721,7 @@ impl ArtApp {
             "left_handed": self.left_handed,
             "undo_steps": self.undo_steps,
             "paper_color": self.paper_color,
+            "backup": self.backup.to_json(),
         });
         let path = prefs_path();
         let result = path
@@ -1527,6 +1533,7 @@ impl eframe::App for ArtApp {
         self.doc.set_undo_limit(self.undo_steps);
         self.shortcuts(&ctx);
         self.projects_tick(&ctx);
+        self.backup_tick(&ctx);
         self.updater_tick(&ctx);
         if self.status != self.last_status {
             self.last_status.clone_from(&self.status);
@@ -1570,6 +1577,7 @@ impl eframe::App for ArtApp {
             panels::toast(self, &ctx, canvas, 0.0);
             crate::dialogs::show(self, &ctx);
             crate::projects::show(self, &ctx);
+            crate::backup::show(self, &ctx);
             return;
         }
         if !portrait {

@@ -566,6 +566,219 @@ mod android_update {
     }
 }
 
+/// Pasta de backup escolhida pelo seletor do Android (Storage Access Framework): serve para
+/// qualquer provedor, inclusive o Google Drive, sem login no app. No desktop a pasta é um caminho
+/// comum e nada disso é usado (`SUPPORTED` é `false`).
+pub mod saf {
+    pub const SUPPORTED: bool = cfg!(target_os = "android");
+
+    /// Um arquivo da pasta: nome, tamanho em bytes e quando mudou (ms desde 1970).
+    pub type Item = (String, u64, i64);
+
+    #[cfg(target_os = "android")]
+    pub use super::android_saf::*;
+
+    #[cfg(not(target_os = "android"))]
+    mod desktop {
+        use std::path::Path;
+
+        use super::Item;
+
+        const NO: &str = "só no Android";
+
+        pub fn pick_folder() -> Result<(), String> {
+            Err(NO.into())
+        }
+        /// `None` = o seletor ainda está aberto; `Some(Ok(None))` = cancelado.
+        pub fn pick_result() -> Option<Result<Option<String>, String>> {
+            Some(Err(NO.into()))
+        }
+        pub fn folder_name(uri: &str) -> String {
+            uri.to_string()
+        }
+        pub fn put(_uri: &str, _src: &Path, _name: &str) -> Result<(), String> {
+            Err(NO.into())
+        }
+        pub fn list(_uri: &str) -> Result<Vec<Item>, String> {
+            Err(NO.into())
+        }
+        pub fn get(_uri: &str, _name: &str, _dest: &Path) -> Result<(), String> {
+            Err(NO.into())
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    pub use desktop::*;
+}
+
+/// JNI para `io.github.rafanunesran.artapp.Backup` (android/app/src/main/java).
+#[cfg(target_os = "android")]
+mod android_saf {
+    use std::path::Path;
+
+    use jni::objects::{JClass, JClassLoader, JObject, JString, JValue};
+    use jni::refs::LoaderContext;
+    use jni::{jni_sig, jni_str};
+
+    use super::android_files::with_activity;
+    use super::saf::Item;
+
+    fn backup<'l>(env: &mut jni::Env<'l>, act: &JObject) -> jni::errors::Result<JClass<'l>> {
+        let loader = env
+            .call_method(
+                act,
+                jni_str!("getClassLoader"),
+                jni_sig!(() -> java.lang.ClassLoader),
+                &[],
+            )?
+            .l()?;
+        let loader = env.cast_local::<JClassLoader>(loader)?;
+        LoaderContext::Loader(&loader).load_class(
+            env,
+            jni_str!("io.github.rafanunesran.artapp.Backup"),
+            true,
+        )
+    }
+
+    fn opt_string(env: &mut jni::Env, obj: JObject) -> jni::errors::Result<Option<String>> {
+        if obj.is_null() {
+            return Ok(None);
+        }
+        let s = JString::cast_local(env, obj)?;
+        Ok(Some(s.try_to_string(env)?))
+    }
+
+    fn result(r: Result<Option<String>, String>) -> Result<(), String> {
+        match r? {
+            None => Ok(()),
+            Some(e) => Err(e),
+        }
+    }
+
+    pub fn pick_folder() -> Result<(), String> {
+        result(with_activity(|env, act| {
+            let cls = backup(env, act)?;
+            let r = env
+                .call_static_method(
+                    &cls,
+                    jni_str!("pickFolder"),
+                    jni_sig!((c: android.content.Context) -> java.lang.String),
+                    &[JValue::Object(act)],
+                )?
+                .l()?;
+            opt_string(env, r)
+        }))
+    }
+
+    pub fn pick_result() -> Option<Result<Option<String>, String>> {
+        let r = with_activity(|env, act| {
+            let cls = backup(env, act)?;
+            let r = env
+                .call_static_method(
+                    &cls,
+                    jni_str!("pickResult"),
+                    jni_sig!(() -> java.lang.String),
+                    &[],
+                )?
+                .l()?;
+            opt_string(env, r)
+        });
+        match r {
+            Err(e) => Some(Err(e)),
+            Ok(None) => None,
+            Ok(Some(s)) if s.is_empty() => Some(Ok(None)),
+            Ok(Some(s)) => Some(match s.strip_prefix('!') {
+                Some(e) => Err(e.to_string()),
+                None => Ok(Some(s)),
+            }),
+        }
+    }
+
+    pub fn folder_name(uri: &str) -> String {
+        with_activity(|env, act| {
+            let cls = backup(env, act)?;
+            let u = env.new_string(uri)?;
+            let r = env
+                .call_static_method(
+                    &cls,
+                    jni_str!("folderName"),
+                    jni_sig!((c: android.content.Context, uri: java.lang.String) -> java.lang.String),
+                    &[JValue::Object(act), JValue::Object(&u)],
+                )?
+                .l()?;
+            opt_string(env, r)
+        })
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| uri.to_string())
+    }
+
+    pub fn put(uri: &str, src: &Path, name: &str) -> Result<(), String> {
+        result(with_activity(|env, act| {
+            let cls = backup(env, act)?;
+            let u = env.new_string(uri)?;
+            let s = env.new_string(src.to_string_lossy())?;
+            let n = env.new_string(name)?;
+            let r = env
+                .call_static_method(
+                    &cls,
+                    jni_str!("put"),
+                    jni_sig!((c: android.content.Context, uri: java.lang.String, src: java.lang.String, name: java.lang.String) -> java.lang.String),
+                    &[JValue::Object(act), JValue::Object(&u), JValue::Object(&s), JValue::Object(&n)],
+                )?
+                .l()?;
+            opt_string(env, r)
+        }))
+    }
+
+    pub fn list(uri: &str) -> Result<Vec<Item>, String> {
+        let text = with_activity(|env, act| {
+            let cls = backup(env, act)?;
+            let u = env.new_string(uri)?;
+            let r = env
+                .call_static_method(
+                    &cls,
+                    jni_str!("list"),
+                    jni_sig!((c: android.content.Context, uri: java.lang.String) -> java.lang.String),
+                    &[JValue::Object(act), JValue::Object(&u)],
+                )?
+                .l()?;
+            opt_string(env, r)
+        })?
+        .unwrap_or_default();
+        if let Some(e) = text.strip_prefix('!') {
+            return Err(e.to_string());
+        }
+        Ok(text
+            .lines()
+            .filter_map(|l| {
+                let mut p = l.split('\t');
+                let name = p.next()?.to_string();
+                let size = p.next()?.parse().unwrap_or(0);
+                let modified = p.next()?.parse().unwrap_or(0);
+                Some((name, size, modified))
+            })
+            .collect())
+    }
+
+    pub fn get(uri: &str, name: &str, dest: &Path) -> Result<(), String> {
+        result(with_activity(|env, act| {
+            let cls = backup(env, act)?;
+            let u = env.new_string(uri)?;
+            let n = env.new_string(name)?;
+            let d = env.new_string(dest.to_string_lossy())?;
+            let r = env
+                .call_static_method(
+                    &cls,
+                    jni_str!("get"),
+                    jni_sig!((c: android.content.Context, uri: java.lang.String, name: java.lang.String, dest: java.lang.String) -> java.lang.String),
+                    &[JValue::Object(act), JValue::Object(&u), JValue::Object(&n), JValue::Object(&d)],
+                )?
+                .l()?;
+            opt_string(env, r)
+        }))
+    }
+}
+
 /// O que se sabe da caneta que fez um toque.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PenInfo {

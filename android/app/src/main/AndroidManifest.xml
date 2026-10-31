@@ -39,6 +39,13 @@
             </intent-filter>
         </activity>
 
+        <!-- Escolher a pasta de backup (seletor do Android, inclusive Google Drive). -->
+        <activity
+            android:name=".FolderPicker"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
+
         <!-- Resultado da instalação da atualização (Updater.java). -->
         <receiver
             android:name=".UpdateReceiver"

@@ -451,6 +451,10 @@ fn file_group(app: &mut ArtApp, ui: &mut egui::Ui) {
     ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
         theme::switch(ui, &mut app.projects.autosave, "Salvar automaticamente")
     });
+    if item(ui, icon::COPY, "Backup…").clicked() {
+        app.backup.window = true;
+        ui.close();
+    }
     ui.separator();
     if item(ui, icon::IMAGE, "Importar imagem como camada…").clicked() {
         app.import_image_dialog();
