@@ -264,6 +264,12 @@ pub enum Dialog {
     LineWidth {
         delta: f32,
     },
+    /// Correção de linha da camada vetorial: simplificar (`connect` falso, `amount` =
+    /// tolerância) ou conectar pontas (`amount` = distância máxima), em pixels.
+    LineFix {
+        connect: bool,
+        amount: f64,
+    },
     /// Linhas de concentração ou de velocidade (quadrinho) numa camada vetorial nova.
     MangaLines(artapp_core::manga_lines::MangaLines),
     /// Brilho difuso, falha digital ou aberração cromática na camada ativa.
@@ -343,6 +349,7 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
         Dialog::CanvasSize { .. } => "Tamanho da tela",
         Dialog::Text { .. } => "Texto",
         Dialog::LineWidth { .. } => "Ajustar largura da linha",
+        Dialog::LineFix { .. } => "Correção de linha",
         Dialog::MangaLines(_) => "Linhas de efeito",
         Dialog::Frames(_) => "Requadros",
         Dialog::Effect(_) => "Efeitos",
@@ -378,6 +385,42 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
                         )
                         .size(12.0)
                         .color(color::TEXT_MUTED),
+                    );
+                }
+                Dialog::LineFix { connect, amount } => {
+                    ui.horizontal(|ui| {
+                        if ui.selectable_label(!*connect, "Simplificar").clicked() {
+                            *connect = false;
+                            *amount = 2.0;
+                        }
+                        if ui.selectable_label(*connect, "Conectar linhas").clicked() {
+                            *connect = true;
+                            *amount = 30.0;
+                        }
+                    });
+                    let (max, label, help) = if *connect {
+                        (
+                            artapp_core::line_fix::CONNECT_MAX,
+                            "Distância",
+                            "Junta as pontas soltas que estão a menos dessa distância, a mais perto primeiro.",
+                        )
+                    } else {
+                        (
+                            artapp_core::line_fix::SIMPLIFY_MAX,
+                            "Tolerância",
+                            "Tira pontos dos traços sem desviar mais que isso: tremidos ficam lisos.",
+                        )
+                    };
+                    ui.add(
+                        egui::Slider::new(amount, 0.5..=max)
+                            .logarithmic(true)
+                            .suffix(" px")
+                            .text(label),
+                    );
+                    ui.label(
+                        RichText::new(format!("{help} Vale para a camada vetorial ativa."))
+                            .size(12.0)
+                            .color(color::TEXT_MUTED),
                     );
                 }
                 Dialog::MangaLines(p) => manga_lines_ui(ui, p),
@@ -485,6 +528,30 @@ fn apply(app: &mut ArtApp, dialog: &Dialog) {
         app.doc.add_manga_lines(p, center, [r, g, b]);
         app.remember_color();
         app.invalidate_all();
+        return;
+    }
+    if let Dialog::LineFix { connect, amount } = *dialog {
+        app.commit_transform();
+        if !app.doc.active_is_vector() {
+            app.status = "Correção de linha funciona em camada vetorial.".into();
+            return;
+        }
+        let r = if connect {
+            let (n, r) = app.doc.vector_connect(amount);
+            app.status = match n {
+                0 => "Nenhuma ponta perto o bastante.".into(),
+                1 => "1 junção.".into(),
+                n => format!("{n} junções."),
+            };
+            r
+        } else {
+            let r = app.doc.vector_simplify(None, amount);
+            if r.is_empty() {
+                app.status = "Nada para simplificar.".into();
+            }
+            r
+        };
+        app.invalidate(r);
         return;
     }
     if let Dialog::LineWidth { delta } = *dialog {
@@ -595,6 +662,7 @@ fn apply(app: &mut ArtApp, dialog: &Dialog) {
         Dialog::CanvasSize { .. }
         | Dialog::Text { .. }
         | Dialog::LineWidth { .. }
+        | Dialog::LineFix { .. }
         | Dialog::MangaLines(_)
         | Dialog::Frames(_) => return,
     };

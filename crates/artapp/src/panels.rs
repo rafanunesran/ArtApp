@@ -520,6 +520,13 @@ fn layer_group(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.dialog = Some(crate::dialogs::Dialog::LineWidth { delta: 1.0 });
         ui.close();
     }
+    if item(ui, icon::SPLINE, "Correção de linha (vetor)…").clicked() {
+        app.dialog = Some(crate::dialogs::Dialog::LineFix {
+            connect: false,
+            amount: 2.0,
+        });
+        ui.close();
+    }
     if item(ui, icon::PALETTE, "Mudar cor da linha para a principal").clicked() {
         app.line_to_color();
         ui.close();

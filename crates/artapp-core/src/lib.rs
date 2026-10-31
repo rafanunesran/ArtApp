@@ -22,6 +22,7 @@ pub mod frames;
 pub mod heal;
 pub mod history;
 pub mod layer_mask;
+pub mod line_fix;
 pub mod line_width;
 pub mod liquify;
 pub mod manga_lines;
