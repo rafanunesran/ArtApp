@@ -125,6 +125,18 @@ impl TransformSession {
         r.union(&out_r)
     }
 
+    /// Põe o conteúdo de volta deformado pela malha `grid`. A seleção não acompanha (uma malha
+    /// curva não vira polígono certinho), então ela some.
+    pub fn end_warp(self, doc: &mut Document, grid: &crate::warp::Grid, interp: Interp) -> Rect {
+        let canvas = doc.bounds();
+        let Some(layer) = doc.layers.iter_mut().find(|l| l.id == self.layer_id) else {
+            return Rect::EMPTY;
+        };
+        let warped = crate::warp::warp_surface(&self.moving, self.rect, grid, interp, canvas);
+        let out_r = paste_over(&mut layer.surface, &warped, canvas);
+        self.rect.union(&out_r)
+    }
+
     /// Desiste: a camada volta como estava e o passo do desfazer some.
     pub fn cancel(self, doc: &mut Document) -> Rect {
         if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == self.layer_id) {

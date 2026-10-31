@@ -1,10 +1,12 @@
 //! Transformar na tela, como no Procreate: uma caixa com alças em volta do conteúdo da camada
 //! (ou da seleção). Arrastar dentro move, os cantos e os lados escalam, a alça de cima (ou
-//! arrastar fora da caixa) gira; no modo Distorcer cada canto anda sozinho. Aplicar ou Cancelar
-//! na barra de baixo (Enter / Esc no teclado).
+//! arrastar fora da caixa) gira; no modo Distorcer cada canto anda sozinho; no Deformar uma
+//! malha de 4×4 pontos curva a imagem. Aplicar ou Cancelar na barra de baixo (Enter / Esc no
+//! teclado).
 
 use artapp_core::VPoint;
 use artapp_core::transform::{self as tf, Homography, Interp, Quad, TransformSession};
+use artapp_core::warp::{self, Grid};
 use eframe::egui::{self, Color32, Pos2, RichText, Stroke, TextureHandle, TextureOptions};
 
 use crate::app::ArtApp;
@@ -15,6 +17,8 @@ pub enum Mode {
     Free,
     Uniform,
     Distort,
+    /// Malha de deformação.
+    Warp,
 }
 
 /// O que o dedo pegou.
@@ -26,6 +30,8 @@ pub enum Handle {
     Move,
     /// Fora da caixa: gira em volta do centro.
     Spin,
+    /// Um ponto da malha (Deformar).
+    Point(usize),
 }
 
 pub struct Transforming {
@@ -34,6 +40,10 @@ pub struct Transforming {
     pub mode: Mode,
     pub interp: Interp,
     texture: Option<TextureHandle>,
+    /// A malha, depois que o Deformar foi escolhido; manda no resultado a partir daí.
+    pub grid: Option<Grid>,
+    /// A malha de quando o toque começou.
+    grid_start: Option<Grid>,
 }
 
 /// Distância da alça de girar até o lado de cima, em pontos de tela.
@@ -59,6 +69,8 @@ impl ArtApp {
                     mode: Mode::Free,
                     interp: Interp::Bicubic,
                     texture: None,
+                    grid: None,
+                    grid_start: None,
                 });
             }
             None => self.status = "Nada para transformar: a camada está vazia ou oculta.".into(),
@@ -68,7 +80,10 @@ impl ArtApp {
     /// Aplica a transformação em andamento (se houver).
     pub fn commit_transform(&mut self) {
         if let Some(t) = self.transform.take() {
-            let r = t.session.end(&mut self.doc, t.quad, t.interp);
+            let r = match &t.grid {
+                Some(g) => t.session.end_warp(&mut self.doc, g, t.interp),
+                None => t.session.end(&mut self.doc, t.quad, t.interp),
+            };
             self.invalidate(r);
         }
     }
@@ -115,12 +130,28 @@ fn inside(q: &Quad, p: [f64; 2]) -> bool {
 }
 
 /// O toque começou: qual alça pegou. `tol` em pixels do documento.
-pub fn down(app: &ArtApp, vp: VPoint, tol: f64) -> Option<(Handle, Quad)> {
-    let t = app.transform.as_ref()?;
+pub fn down(app: &mut ArtApp, vp: VPoint, tol: f64) -> Option<(Handle, Quad)> {
+    let rot = app
+        .transform
+        .as_ref()
+        .map(|t| rotate_handle(app, &t.quad))?;
+    let t = app.transform.as_mut()?;
     let q = t.quad;
     let p = [vp.x, vp.y];
     let near = |h: [f64; 2]| (h[0] - p[0]).hypot(h[1] - p[1]) <= tol * 1.6;
-    let handle = if near(rotate_handle(app, &q)) && t.mode != Mode::Distort {
+    if let Some(g) = t.grid {
+        t.grid_start = Some(g);
+        let corners = [g[0], g[3], g[15], g[12]];
+        let handle = if let Some(k) = (0..g.len()).find(|&k| near(g[k])) {
+            Handle::Point(k)
+        } else if inside(&corners, p) {
+            Handle::Move
+        } else {
+            return None;
+        };
+        return Some((handle, q));
+    }
+    let handle = if near(rot) && t.mode != Mode::Distort {
         Handle::Rotate
     } else if let Some(i) = (0..4).find(|&i| near(q[i])) {
         Handle::Corner(i)
@@ -141,6 +172,14 @@ pub fn drag(app: &mut ArtApp, handle: Handle, from: VPoint, start: &Quad, vp: VP
     };
     let p = [vp.x, vp.y];
     let (dx, dy) = (vp.x - from.x, vp.y - from.y);
+    if let (Some(g), Some(g0)) = (&mut t.grid, t.grid_start) {
+        match handle {
+            Handle::Point(k) => g[k] = [g0[k][0] + dx, g0[k][1] + dy],
+            Handle::Move => *g = g0.map(|c| [c[0] + dx, c[1] + dy]),
+            _ => {}
+        }
+        return;
+    }
     let uniform = t.mode == Mode::Uniform;
     let next = match (handle, t.mode) {
         (Handle::Move, _) => Some(start.map(|c| [c[0] + dx, c[1] + dy])),
@@ -164,6 +203,7 @@ pub fn drag(app: &mut ArtApp, handle: Handle, from: VPoint, start: &Quad, vp: VP
         }
         (Handle::Corner(i), _) => tf::drag_corner(start, i, p, uniform),
         (Handle::Edge(i), _) => tf::drag_edge(start, i, p, uniform),
+        (Handle::Point(_), _) => None,
     };
     if let Some(q) = next {
         t.quad = q;
@@ -197,7 +237,20 @@ pub fn draw(app: &mut ArtApp, ctx: &egui::Context, painter: &egui::Painter, pane
         f64::from(r.y1),
     ];
     let map = Homography::rect_to_quad(src, q);
-    if let Some(h) = map {
+    let grid = t.grid;
+    let place = |u: f64, v: f64| -> Option<[f64; 2]> {
+        match &grid {
+            Some(g) => Some(warp::point(g, u, v)),
+            None => map.map(|h| {
+                let (x, y) = h.apply(
+                    src[0] + u * (src[2] - src[0]),
+                    src[1] + v * (src[3] - src[1]),
+                );
+                [x, y]
+            }),
+        }
+    };
+    if place(0.0, 0.0).is_some() {
         // Uma grade fina deixa a perspectiva certa (cada triângulo da malha é afim).
         const N: usize = 16;
         let mut mesh = egui::Mesh::with_texture(tex);
@@ -205,12 +258,9 @@ pub fn draw(app: &mut ArtApp, ctx: &egui::Context, painter: &egui::Painter, pane
         for j in 0..=N {
             for i in 0..=N {
                 let (u, v) = (i as f64 / N as f64, j as f64 / N as f64);
-                let (x, y) = h.apply(
-                    src[0] + u * (src[2] - src[0]),
-                    src[1] + v * (src[3] - src[1]),
-                );
+                let xy = place(u, v).unwrap_or_default();
                 mesh.vertices.push(egui::epaint::Vertex {
-                    pos: screen(app, panel, [x, y]),
+                    pos: screen(app, panel, xy),
                     uv: Pos2::new(u as f32, v as f32),
                     color: tint,
                 });
@@ -228,6 +278,10 @@ pub fn draw(app: &mut ArtApp, ctx: &egui::Context, painter: &egui::Painter, pane
     let Some(t) = &app.transform else {
         return;
     };
+    if let Some(g) = &t.grid {
+        draw_grid(app, painter, panel, g);
+        return;
+    }
     let pts: Vec<Pos2> = q.iter().map(|p| screen(app, panel, *p)).collect();
     painter.add(egui::Shape::closed_line(
         pts.clone(),
@@ -253,6 +307,36 @@ pub fn draw(app: &mut ArtApp, ctx: &egui::Context, painter: &egui::Painter, pane
     }
     for p in &pts {
         dot(*p, 7.5);
+    }
+}
+
+/// A malha do Deformar: as linhas da superfície e os 16 pontos.
+fn draw_grid(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect, g: &Grid) {
+    const N: usize = 24;
+    let line = |pts: Vec<Pos2>| {
+        painter.add(egui::Shape::line(
+            pts.clone(),
+            Stroke::new(2.5, Color32::from_black_alpha(110)),
+        ));
+        painter.add(egui::Shape::line(pts, Stroke::new(1.2, color::SELECTION)));
+    };
+    for k in 0..warp::SIDE {
+        let a = k as f64 / (warp::SIDE - 1) as f64;
+        line(
+            (0..=N)
+                .map(|i| screen(app, panel, warp::point(g, i as f64 / N as f64, a)))
+                .collect(),
+        );
+        line(
+            (0..=N)
+                .map(|i| screen(app, panel, warp::point(g, a, i as f64 / N as f64)))
+                .collect(),
+        );
+    }
+    for p in g {
+        let c = screen(app, panel, *p);
+        painter.circle_filled(c, 6.5, Color32::WHITE);
+        painter.circle_stroke(c, 6.5, Stroke::new(1.5, color::SELECTION));
     }
 }
 
@@ -282,27 +366,44 @@ pub fn toolbar(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) {
                         (Mode::Free, "Livre"),
                         (Mode::Uniform, "Uniforme"),
                         (Mode::Distort, "Distorcer"),
+                        (Mode::Warp, "Deformar"),
                     ] {
-                        ui.selectable_value(&mut t.mode, m, name);
+                        // Depois de curvar a malha, os outros modos não a representam mais:
+                        // só Redefinir volta para eles.
+                        let enabled = t.grid.is_none() || m == Mode::Warp;
+                        if ui
+                            .add_enabled(enabled, egui::Button::selectable(t.mode == m, name))
+                            .clicked()
+                        {
+                            t.mode = m;
+                        }
                     }
+                    if t.mode == Mode::Warp && t.grid.is_none() {
+                        t.grid = warp::grid_from_quad(t.session.rect, &t.quad);
+                    }
+                    let warping = t.grid.is_some();
                     ui.separator();
                     let c = tf::center(&t.quad);
-                    if ui.button("Espelhar horizontal").clicked() {
+                    if !warping && ui.button("Espelhar horizontal").clicked() {
                         let q = t.quad;
                         t.quad = [q[1], q[0], q[3], q[2]];
                     }
-                    if ui.button("Espelhar vertical").clicked() {
+                    if !warping && ui.button("Espelhar vertical").clicked() {
                         let q = t.quad;
                         t.quad = [q[3], q[2], q[1], q[0]];
                     }
-                    if ui.button("Girar 90°").clicked() {
+                    if !warping && ui.button("Girar 90°").clicked() {
                         t.quad = tf::rotate(&t.quad, c, std::f64::consts::FRAC_PI_2);
                     }
-                    if ui.button("Encaixar na tela").clicked() {
+                    if !warping && ui.button("Encaixar na tela").clicked() {
                         t.quad = tf::fit(t.session.rect, w, h);
                     }
                     if ui.button("Redefinir").clicked() {
                         t.quad = t.session.start_quad();
+                        t.grid = None;
+                        if t.mode == Mode::Warp {
+                            t.mode = Mode::Free;
+                        }
                     }
                     egui::ComboBox::from_id_salt("transform_interp")
                         .selected_text(match t.interp {
