@@ -488,7 +488,7 @@ fn advanced_tab(ui: &mut egui::Ui, b: &mut BrushSettings) {
     section(ui, "Mistura com a tela", None, |ui| {
         hint(
             ui,
-            "Vale para os pincéis da categoria Mistura: a tinta do pincel mistura com a da tela.",
+            "Vale para os pincéis que pintam marca a marca (categoria Mistura e Marcador de álcool): molhado pega a cor da tela; seco só acumula a própria tinta.",
         );
         let m = &mut b.mixer;
         pct(ui, &mut m.wet, "Molhado (quanto pega da tela)");

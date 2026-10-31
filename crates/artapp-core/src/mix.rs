@@ -454,6 +454,34 @@ mod tests {
     }
 
     #[test]
+    fn dry_marker_darkens_where_the_stroke_crosses_itself() {
+        let marker = crate::brushes::all()
+            .into_iter()
+            .find(|b| b.name == "Marcador de álcool")
+            .unwrap();
+        assert!(marker.mixes_paint());
+        let mut doc = Document::new(120, 120);
+        let mut s = MixSession::begin(&mut doc, MixKind::Paint, &marker.settings, 1.0)
+            .unwrap()
+            .with_paint([0.0, 0.0, 1.0, 1.0], marker.settings.mixer.clone());
+        // Um traço em cruz: horizontal e depois vertical, sem levantar a caneta.
+        let mut pts: Vec<_> = (0..=80)
+            .map(|i| StrokePoint::new(20.0 + i as f64, 60.0, 1.0))
+            .collect();
+        pts.extend((0..=80).map(|i| StrokePoint::new(100.0, 60.0 + i as f64 * 0.0, 1.0)));
+        pts.extend((0..=80).map(|i| StrokePoint::new(60.0, 20.0 + i as f64, 1.0)));
+        s.add(&mut doc, &pts);
+        s.end();
+        let once = doc.layers[0].surface.rgba(30, 60)[3];
+        let twice = doc.layers[0].surface.rgba(60, 60)[3];
+        assert!(once > 0.1 && once < 0.8, "uma passada: {once}");
+        assert!(
+            twice > once + 0.05,
+            "cruzamento {twice} não escureceu (uma passada {once})"
+        );
+    }
+
+    #[test]
     fn history_brush_paints_back_an_old_step() {
         let mut doc = Document::new(60, 40);
         let id = doc.layers[0].id;

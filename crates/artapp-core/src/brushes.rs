@@ -182,7 +182,9 @@ pub fn describe(name: &str) -> Option<&'static str> {
         "Lapiseira" => "Linha fina e clara para estudo e construção.",
         "Lápis de cor" => "Colorir com o grão do papel aparecendo.",
         "Marcador" => "Cor chapada semitransparente para preencher rápido.",
-        "Marcador de álcool" => "Ponta larga inclinada; passar de novo escurece, como no papel.",
+        "Marcador de álcool" => {
+            "Ponta larga inclinada; onde o traço passa de novo, até no mesmo traço, a cor escurece."
+        }
         "Marca-texto" => "Multiplica sobre o desenho: destaca sem cobrir a linha.",
         "Caneta de feltro" => "Linha média e quase opaca, boa para lettering e rabiscos.",
         "Caneta fina" => "Detalhes e hachuras finas, com estabilização.",
@@ -425,20 +427,31 @@ pub fn extra() -> Vec<BrushEntry> {
             },
         ),
         // Marcadores
-        ours(
-            "Marcador de álcool",
-            "Marcadores",
-            BrushSettings {
-                size: 26.0,
-                hardness: 0.85,
-                spacing: 0.04,
-                opacity: 0.45,
-                roundness: 0.6,
-                angle: 30.0,
-                shape_dynamics: ShapeDynamics::default(),
-                ..base.clone()
-            },
-        ),
+        // Cada marca pinta direto sobre a anterior (pelo misturador, seco e sem pegar cor), então
+        // onde o traço passa de novo, até dentro do mesmo traço, a cor escurece, como no papel.
+        BrushEntry {
+            mixes: true,
+            ..ours(
+                "Marcador de álcool",
+                "Marcadores",
+                BrushSettings {
+                    size: 26.0,
+                    hardness: 0.85,
+                    spacing: 0.2,
+                    roundness: 0.6,
+                    angle: 30.0,
+                    shape_dynamics: ShapeDynamics::default(),
+                    mixer: MixerSettings {
+                        wet: 0.0,
+                        load: 1.0,
+                        mix: 0.0,
+                        flow: 0.1,
+                        ..Default::default()
+                    },
+                    ..base.clone()
+                },
+            )
+        },
         ours(
             "Marca-texto",
             "Marcadores",
