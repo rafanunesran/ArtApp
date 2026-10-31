@@ -81,6 +81,12 @@ enum ActiveKind {
     },
     /// Pincel corretivo: o traço marca a área; ao soltar, ela é refeita.
     Heal(Box<artapp_core::heal::HealSession>),
+    /// Transformar na tela: a alça pegada e o quadrilátero de quando o toque começou.
+    Transform {
+        handle: crate::transform_tool::Handle,
+        from: VPoint,
+        start: artapp_core::transform::Quad,
+    },
 }
 
 /// Acompanha os dedos desde que o primeiro encostou, para reconhecer o toque de vários dedos.
@@ -319,6 +325,7 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
     } else {
         Vec::new()
     };
+    crate::transform_tool::draw(app, ui.ctx(), &painter, panel);
     if app.show_grid {
         draw_grid(app, &painter, panel);
     }
@@ -953,6 +960,20 @@ fn tool_down(
     let vector_layer = app.doc.active_is_vector();
     // Tolerância de toque em pixels do documento (uns 12 pontos de tela).
     let tol = 12.0 / app.view.zoom.max(0.01) as f64;
+    if app.transform.is_some() {
+        // Sem a régua: o transformar usa o ponto de verdade.
+        let raw = point(app, panel, p, force, time);
+        let from = VPoint::new(raw.x, raw.y);
+        if let Some((handle, start)) = crate::transform_tool::down(app, from, tol) {
+            let kind = ActiveKind::Transform {
+                handle,
+                from,
+                start,
+            };
+            app.view.stroke = Some(ActiveStroke::new(kind, touch, time, p));
+        }
+        return;
+    }
     let kind = match app.tool {
         Tool::Eraser if vector_layer => {
             // Borracha vetorial: apaga o objeto tocado inteiro.
@@ -1216,6 +1237,15 @@ fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, t
             app.invalidate(r);
         }
         ActiveKind::Heal(heal) => heal.add(vp.x, vp.y),
+        ActiveKind::Transform {
+            handle,
+            from,
+            start,
+        } => {
+            let (handle, from, start) = (*handle, *from, *start);
+            let raw = point(app, panel, p, force, time);
+            crate::transform_tool::drag(app, handle, from, &start, VPoint::new(raw.x, raw.y));
+        }
         ActiveKind::Ruler { handle, from } => {
             let (handle, from) = (*handle, *from);
             ruler_drag(app, handle, from, vp);
@@ -1283,7 +1313,7 @@ fn end_stroke(app: &mut ArtApp) {
         ActiveKind::BezierHandle => Rect::EMPTY,
         ActiveKind::Kit(last, pressure) => kit_pointer(app, PointerKind::Up, last, pressure),
         ActiveKind::Liquify(session) => session.end(),
-        ActiveKind::Ruler { .. } => return,
+        ActiveKind::Ruler { .. } | ActiveKind::Transform { .. } => return,
         ActiveKind::Heal(heal) => heal.end(&mut app.doc),
         ActiveKind::Marquee { tool, from, to } => {
             let (w, h) = (app.doc.width, app.doc.height);
@@ -1352,6 +1382,11 @@ fn cancel_stroke(app: &mut ArtApp) {
             let r = kit_pointer(app, PointerKind::Up, last, pressure);
             app.invalidate(r);
             app.kit_key(artapp_core::vectorkit::ToolKey::Escape);
+        }
+        ActiveKind::Transform { start, .. } => {
+            if let Some(t) = &mut app.transform {
+                t.quad = start;
+            }
         }
         _ => {}
     }

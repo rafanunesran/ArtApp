@@ -327,7 +327,11 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         ui.close();
     }
     ui.separator();
-    if item(ui, icon::SCALING, "Transformar camada…").clicked() {
+    if item(ui, icon::SCALING, "Transformar (Ctrl+T)").clicked() {
+        app.start_transform();
+        ui.close();
+    }
+    if item(ui, icon::SCALING, "Transformar por valores…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::transform());
         ui.close();
     }
@@ -1042,6 +1046,9 @@ fn selection_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
         }
     };
     ui.label(RichText::new(hint).size(12.5).color(color::TEXT_MUTED));
+    if app.tool == Tool::MoveLayer && ui.button("Transformar com alças").clicked() {
+        app.start_transform();
+    }
     if app.tool != Tool::MoveLayer {
         use artapp_core::selection::SelectMode;
         section(ui, "Modo");

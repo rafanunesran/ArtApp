@@ -297,6 +297,8 @@ pub struct ArtApp {
     /// Régua de simetria (`None` = desligada) e o giro dela em graus.
     pub symmetry: Option<artapp_core::paint::symmetry::SymmetryMode>,
     pub symmetry_angle: f64,
+    /// Transformar na tela em andamento.
+    pub transform: Option<crate::transform_tool::Transforming>,
     /// Diálogo aberto no momento (transformar, filtros, ajustes).
     pub dialog: Option<crate::dialogs::Dialog>,
     /// O motor do VectorCraft e a ferramenta dele escolhida.
@@ -440,6 +442,7 @@ impl ArtApp {
             symmetry: None,
             symmetry_angle: 0.0,
             dialog: None,
+            transform: None,
             kit: artapp_core::vectorkit::VectorKit::new(),
             kit_tool: "directSelection",
             kit_overlays: Vec::new(),
@@ -905,12 +908,19 @@ impl ArtApp {
     }
 
     pub fn undo(&mut self) {
+        if self.transform.is_some() {
+            self.cancel_transform();
+            return;
+        }
         if self.doc.undo() {
             self.invalidate_all();
         }
     }
 
     pub fn redo(&mut self) {
+        if self.transform.is_some() {
+            return;
+        }
         if self.doc.redo() {
             self.invalidate_all();
         }
@@ -925,6 +935,7 @@ impl ArtApp {
     }
 
     pub fn export_png(&mut self, with_paper: bool) {
+        self.commit_transform();
         self.status = match artapp_core::export::png(&self.doc, with_paper)
             .and_then(|bytes| platform::save_file("png", &bytes))
         {
@@ -1107,6 +1118,17 @@ impl ArtApp {
         if clear && self.doc.selection.is_some() {
             self.clear_selection();
         }
+        if self.transform.is_some() && (enter || escape) {
+            if enter {
+                self.commit_transform();
+            } else {
+                self.cancel_transform();
+            }
+            return;
+        }
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::T)) {
+            self.start_transform();
+        }
         if enter {
             self.finish_bezier(false);
         }
@@ -1264,6 +1286,7 @@ impl eframe::App for ArtApp {
         egui::CentralPanel::no_frame().show(ui, |ui| crate::canvas::show(self, ui));
 
         let canvas = self.canvas_rect;
+        crate::transform_tool::toolbar(self, &ctx, canvas);
         if hide {
             panels::show_ui_button(self, &ctx, canvas);
             panels::toast(self, &ctx, canvas, 0.0);

@@ -11,6 +11,7 @@ mod panels;
 pub mod platform;
 mod projects;
 mod theme;
+mod transform_tool;
 mod updater;
 
 pub use app::ArtApp;
