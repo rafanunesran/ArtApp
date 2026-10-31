@@ -343,6 +343,14 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.dialog = Some(crate::dialogs::Dialog::transform());
         ui.close();
     }
+    if item(ui, icon::SQUARE_PEN, "Texto…").clicked() {
+        app.dialog = Some(crate::dialogs::Dialog::Text {
+            text: String::new(),
+            size: 64.0,
+            editable: false,
+        });
+        ui.close();
+    }
     if item(ui, icon::SCALING, "Tamanho da tela…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::canvas_size(
             app.doc.width,

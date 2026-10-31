@@ -254,6 +254,56 @@ impl Document {
     }
 
     /// Acrescenta uma forma à camada vetorial ativa.
+    /// Texto numa camada nova, com o começo da linha de base em `at`. Com `raster`, a camada
+    /// já sai rasterizada (texto em camada raster); senão continua editável no Vetor pro.
+    pub fn add_text(
+        &mut self,
+        text: &str,
+        at: [f64; 2],
+        size: f64,
+        color: [f32; 3],
+        raster: bool,
+    ) -> Rect {
+        if text.trim().is_empty() || !(size.is_finite() && size > 0.0) {
+            return Rect::EMPTY;
+        }
+        self.add_vector_layer();
+        if let Some(l) = self.active_layer_mut() {
+            l.name = format!(
+                "Texto: {}",
+                text.lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(20)
+                    .collect::<String>()
+            );
+        }
+        let style = vectorcraft_doc::CharStyle {
+            size,
+            fill: paint(color),
+            ..Default::default()
+        };
+        let r = self.edit_vector(false, |art| {
+            let Some(parent) = art.target() else {
+                return false;
+            };
+            let id = art.doc.alloc_id();
+            let obj = vectorcraft_doc::TextObject::point(Point::new(at[0], at[1]), text, style);
+            art.doc
+                .insert(
+                    Some(parent),
+                    usize::MAX,
+                    Node::new(id, vectorcraft_doc::NodeKind::Text(Box::new(obj))),
+                )
+                .is_ok()
+        });
+        if raster && let Some(l) = self.active_layer_mut() {
+            l.vector = None;
+        }
+        r
+    }
+
     pub fn vector_add(&mut self, shape: &Shape, style: &VectorStyle) -> Rect {
         let Some(path) = shape.to_path() else {
             return Rect::EMPTY;
@@ -395,6 +445,23 @@ mod tests {
         let mut d = Document::new(200, 200);
         d.add_vector_layer();
         d
+    }
+
+    #[test]
+    fn text_layer_draws_letters() {
+        let mut doc = Document::new(300, 120);
+        let r = doc.add_text("Olá ArtApp", [20.0, 80.0], 48.0, [0.0, 0.0, 0.0], true);
+        assert!(!r.is_empty());
+        let l = doc.active_layer().unwrap();
+        assert!(!l.is_vector());
+        assert!(
+            !l.surface.content_bounds().is_empty(),
+            "nenhuma letra desenhada"
+        );
+        assert!(
+            doc.add_text("  ", [0.0, 0.0], 10.0, [0.0; 3], true)
+                .is_empty()
+        );
     }
 
     #[test]

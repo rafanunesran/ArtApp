@@ -236,6 +236,12 @@ pub enum Dialog {
     Adjust(Adjust),
     /// Tamanho da tela: `scale` escala o desenho; senão só a área muda, presa em `anchor`
     /// (0..9, da esquerda para a direita e de cima para baixo).
+    /// Texto numa camada nova (raster, ou vetorial para editar depois).
+    Text {
+        text: String,
+        size: f32,
+        editable: bool,
+    },
     CanvasSize {
         width: u32,
         height: u32,
@@ -300,6 +306,7 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
         Dialog::Filter { .. } => "Filtro",
         Dialog::Adjust(_) => "Correção de cor",
         Dialog::CanvasSize { .. } => "Tamanho da tela",
+        Dialog::Text { .. } => "Texto",
     };
     let mut outcome = Outcome::Keep;
     let mut open = true;
@@ -319,6 +326,32 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
                 Dialog::Filter { index, params } => filter_ui(ui, index, params),
                 Dialog::Adjust(adj) => adjust_ui(ui, adj),
                 Dialog::CanvasSize { .. } => canvas_size_ui(app, ui, &mut dialog),
+                Dialog::Text {
+                    text,
+                    size,
+                    editable,
+                } => {
+                    ui.add(
+                        egui::TextEdit::multiline(text)
+                            .hint_text("Escreva o texto")
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(3),
+                    );
+                    ui.add(
+                        egui::Slider::new(size, 6.0..=600.0)
+                            .logarithmic(true)
+                            .suffix(" px")
+                            .text("Tamanho"),
+                    );
+                    ui.checkbox(editable, "Manter editável (camada vetorial)");
+                    ui.label(
+                        RichText::new(
+                            "Usa a cor principal. Em camada raster, a caixa de transformar abre para posicionar.",
+                        )
+                        .size(12.0)
+                        .color(color::TEXT_MUTED),
+                    );
+                }
             }
             ui.add_space(6.0);
             ui.horizontal(|ui| {
@@ -329,7 +362,9 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
                     outcome = Outcome::Close;
                 }
             });
-            if app.doc.selection.is_some() && !matches!(dialog, Dialog::CanvasSize { .. }) {
+            if app.doc.selection.is_some()
+                && !matches!(dialog, Dialog::CanvasSize { .. } | Dialog::Text { .. })
+            {
                 ui.label(
                     RichText::new("Age só dentro da seleção.")
                         .size(12.0)
@@ -348,6 +383,30 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
 }
 
 fn apply(app: &mut ArtApp, dialog: &Dialog) {
+    if let Dialog::Text {
+        text,
+        size,
+        editable,
+    } = dialog
+    {
+        app.commit_transform();
+        let [r, g, b, _] = color_to_f32(app.color);
+        let (w, h) = (f64::from(app.doc.width), f64::from(app.doc.height));
+        let at = [w * 0.1, h * 0.5];
+        let dirty = app
+            .doc
+            .add_text(text, at, f64::from(*size), [r, g, b], !*editable);
+        if dirty.is_empty() {
+            app.status = "Escreva algum texto.".into();
+            return;
+        }
+        app.remember_color();
+        app.invalidate_all();
+        if !*editable {
+            app.start_transform();
+        }
+        return;
+    }
     if let Dialog::CanvasSize {
         width,
         height,
@@ -405,7 +464,7 @@ fn apply(app: &mut ArtApp, dialog: &Dialog) {
             }
         }
         Dialog::Adjust(adj) => app.doc.adjust(*adj),
-        Dialog::CanvasSize { .. } => return,
+        Dialog::CanvasSize { .. } | Dialog::Text { .. } => return,
     };
     if r.is_empty() {
         app.status = "Escolha uma camada raster visível com desenho.".into();
