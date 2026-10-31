@@ -330,6 +330,8 @@ pub struct ArtApp {
     pub quick_menu: Option<Pos2>,
     /// Painel de histórico aberto.
     pub history_open: bool,
+    /// Barra do ColorDrop aberta (limite e continuar preenchendo).
+    pub drop_fill: Option<crate::canvas::DropFill>,
     /// Interface escondida (toque com quatro dedos ou Tab): só a tela de desenho.
     pub hide_ui: bool,
     /// Se o dedo usa a ferramenta ou só mexe na vista (rejeição de palma).
@@ -468,6 +470,7 @@ impl ArtApp {
             hold_quickmenu: false,
             quick_menu: None,
             history_open: false,
+            drop_fill: None,
             hide_ui: false,
             finger_mode: FingerMode::Auto,
             show_tools_panel: wide,
@@ -875,6 +878,7 @@ impl ArtApp {
     }
 
     pub fn set_tool(&mut self, t: Tool) {
+        self.drop_fill = None;
         if t == Tool::Eyedropper && self.tool != Tool::Eyedropper {
             self.previous_tool = self.tool;
         }
@@ -1372,6 +1376,7 @@ impl eframe::App for ArtApp {
         crate::transform_tool::toolbar(self, &ctx, canvas);
         crate::quick_menu::show(self, &ctx);
         crate::history_panel::show(self, &ctx);
+        crate::canvas::drop_fill_bar(self, &ctx, canvas);
         if hide {
             panels::show_ui_button(self, &ctx, canvas);
             panels::toast(self, &ctx, canvas, 0.0);

@@ -14,10 +14,13 @@ pub type Snapshot = (Vec<Layer>, usize, (u32, u32));
 pub struct History {
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
+    /// Muda a cada passo guardado, desfeito ou refeito.
+    version: u64,
 }
 
 impl History {
     pub fn push(&mut self, snap: Snapshot) {
+        self.version += 1;
         self.undo.push(snap);
         if self.undo.len() > MAX_UNDO {
             self.undo.remove(0);
@@ -28,18 +31,25 @@ impl History {
     /// Troca o estado atual pelo último instantâneo, guardando o atual para refazer.
     pub fn undo(&mut self, current: Snapshot) -> Option<Snapshot> {
         let prev = self.undo.pop()?;
+        self.version += 1;
         self.redo.push(current);
         Some(prev)
     }
 
     pub fn redo(&mut self, current: Snapshot) -> Option<Snapshot> {
         let next = self.redo.pop()?;
+        self.version += 1;
         self.undo.push(current);
         Some(next)
     }
 
     pub fn drop_last(&mut self) {
+        self.version += 1;
         self.undo.pop();
+    }
+
+    pub fn version(&self) -> u64 {
+        self.version
     }
 
     pub fn can_undo(&self) -> bool {

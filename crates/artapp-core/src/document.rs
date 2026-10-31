@@ -397,6 +397,11 @@ impl Document {
         self.history.drop_last();
     }
 
+    /// Muda a cada passo guardado, desfeito ou refeito: diz se o desenho mudou desde que foi lido.
+    pub fn history_version(&self) -> u64 {
+        self.history.version()
+    }
+
     /// Linha do tempo para o painel de histórico: o nome de cada passo (o primeiro é "Início") e
     /// a posição do estado atual nela.
     pub fn history_steps(&self) -> (Vec<String>, usize) {
