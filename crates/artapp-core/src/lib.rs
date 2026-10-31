@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod brushes;
+pub mod canvas_size;
 pub mod composite;
 pub mod document;
 pub mod edit;

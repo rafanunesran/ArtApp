@@ -234,9 +234,28 @@ pub enum Dialog {
         params: serde_json::Value,
     },
     Adjust(Adjust),
+    /// Tamanho da tela: `scale` escala o desenho; senão só a área muda, presa em `anchor`
+    /// (0..9, da esquerda para a direita e de cima para baixo).
+    CanvasSize {
+        width: u32,
+        height: u32,
+        keep_ratio: bool,
+        scale: bool,
+        anchor: usize,
+    },
 }
 
 impl Dialog {
+    pub fn canvas_size(width: u32, height: u32) -> Self {
+        Dialog::CanvasSize {
+            width,
+            height,
+            keep_ratio: true,
+            scale: false,
+            anchor: 4,
+        }
+    }
+
     pub fn transform() -> Self {
         Dialog::Transform {
             scale_x: 100.0,
@@ -280,6 +299,7 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
         Dialog::Transform { .. } => "Transformar",
         Dialog::Filter { .. } => "Filtro",
         Dialog::Adjust(_) => "Correção de cor",
+        Dialog::CanvasSize { .. } => "Tamanho da tela",
     };
     let mut outcome = Outcome::Keep;
     let mut open = true;
@@ -298,6 +318,7 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
                 Dialog::Transform { .. } => transform_ui(app, ui, &mut dialog, &mut outcome),
                 Dialog::Filter { index, params } => filter_ui(ui, index, params),
                 Dialog::Adjust(adj) => adjust_ui(ui, adj),
+                Dialog::CanvasSize { .. } => canvas_size_ui(app, ui, &mut dialog),
             }
             ui.add_space(6.0);
             ui.horizontal(|ui| {
@@ -308,7 +329,7 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
                     outcome = Outcome::Close;
                 }
             });
-            if app.doc.selection.is_some() {
+            if app.doc.selection.is_some() && !matches!(dialog, Dialog::CanvasSize { .. }) {
                 ui.label(
                     RichText::new("Age só dentro da seleção.")
                         .size(12.0)
@@ -327,6 +348,33 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
 }
 
 fn apply(app: &mut ArtApp, dialog: &Dialog) {
+    if let Dialog::CanvasSize {
+        width,
+        height,
+        scale,
+        anchor,
+        ..
+    } = *dialog
+    {
+        app.commit_transform();
+        let (ow, oh) = (app.doc.width as i64, app.doc.height as i64);
+        let changed = if scale {
+            app.doc
+                .resize_image(width, height, artapp_core::transform::Interp::Bicubic)
+        } else {
+            let at = |extra: i64, k: usize| (extra * k as i64 / 2) as i32;
+            app.doc.resize_canvas(
+                width,
+                height,
+                at(i64::from(width) - ow, anchor % 3),
+                at(i64::from(height) - oh, anchor / 3),
+            )
+        };
+        if changed {
+            app.canvas_resized();
+        }
+        return;
+    }
     let r = match dialog {
         Dialog::Transform {
             scale_x,
@@ -357,6 +405,7 @@ fn apply(app: &mut ArtApp, dialog: &Dialog) {
             }
         }
         Dialog::Adjust(adj) => app.doc.adjust(*adj),
+        Dialog::CanvasSize { .. } => return,
     };
     if r.is_empty() {
         app.status = "Escolha uma camada raster visível com desenho.".into();
@@ -430,6 +479,94 @@ fn transform_ui(app: &mut ArtApp, ui: &mut egui::Ui, dialog: &mut Dialog, outcom
             a.doc.transform_layer(1.0, 1.0, -90.0, 0.0, 0.0)
         });
     });
+}
+
+fn canvas_size_ui(app: &ArtApp, ui: &mut egui::Ui, dialog: &mut Dialog) {
+    let Dialog::CanvasSize {
+        width,
+        height,
+        keep_ratio,
+        scale,
+        anchor,
+    } = dialog
+    else {
+        return;
+    };
+    let (ow, oh) = (app.doc.width, app.doc.height);
+    ui.horizontal(|ui| {
+        ui.selectable_value(scale, false, "Mudar a área");
+        ui.selectable_value(scale, true, "Escalar o desenho");
+    });
+    ui.label(
+        RichText::new(if *scale {
+            "Todas as camadas crescem ou encolhem junto com a tela."
+        } else {
+            "O desenho fica do mesmo tamanho; a tela ganha ou perde borda em volta do ponto fixo."
+        })
+        .size(12.5)
+        .color(color::TEXT_MUTED),
+    );
+    ui.checkbox(keep_ratio, "Manter a proporção");
+    let max = artapp_core::document::MAX_CANVAS_SIDE;
+    ui.horizontal(|ui| {
+        ui.label("Largura");
+        if ui
+            .add(egui::DragValue::new(width).range(1..=max).suffix(" px"))
+            .changed()
+            && *keep_ratio
+        {
+            *height = ((f64::from(*width) * f64::from(oh) / f64::from(ow)).round() as u32)
+                .clamp(1, max);
+        }
+        ui.label("Altura");
+        if ui
+            .add(egui::DragValue::new(height).range(1..=max).suffix(" px"))
+            .changed()
+            && *keep_ratio
+        {
+            *width = ((f64::from(*height) * f64::from(ow) / f64::from(oh)).round() as u32)
+                .clamp(1, max);
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        for pct in [50u32, 75, 150, 200] {
+            if ui.button(format!("{pct}%")).clicked() {
+                *width = (ow * pct / 100).clamp(1, max);
+                *height = (oh * pct / 100).clamp(1, max);
+            }
+        }
+        if ui.button("Original").clicked() {
+            *width = ow;
+            *height = oh;
+        }
+    });
+    if !*scale {
+        ui.label(RichText::new("Ponto fixo").size(12.5).color(color::TEXT_MUTED));
+        egui::Grid::new("anchor").spacing([4.0, 4.0]).show(ui, |ui| {
+            for i in 0..9 {
+                let on = *anchor == i;
+                let resp = ui.add_sized([34.0, 28.0], egui::Button::new("").selected(on));
+                let c = resp.rect.center();
+                if on {
+                    ui.painter().circle_filled(c, 5.0, color::TEXT);
+                } else {
+                    let st = egui::Stroke::new(1.2, color::TEXT_MUTED);
+                    ui.painter().circle_stroke(c, 4.0, st);
+                }
+                if resp.clicked() {
+                    *anchor = i;
+                }
+                if i % 3 == 2 {
+                    ui.end_row();
+                }
+            }
+        });
+    }
+    ui.label(
+        RichText::new(format!("Agora: {ow} × {oh} px"))
+            .size(12.0)
+            .color(color::TEXT_MUTED),
+    );
 }
 
 fn filter_ui(ui: &mut egui::Ui, index: &mut usize, params: &mut serde_json::Value) {
