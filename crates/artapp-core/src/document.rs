@@ -30,6 +30,12 @@ pub struct Layer {
     /// Máscara da camada logo abaixo: o cinza dela esconde (preto) ou mostra (branco, ou sem
     /// tinta) a camada dona. Fica sempre colada acima da dona.
     pub mask: bool,
+    /// Pasta (grupo): não tem tinta; as camadas de dentro ficam logo abaixo dela na pilha.
+    pub folder: bool,
+    /// Pasta fechada no painel (só a aparência da lista).
+    pub collapsed: bool,
+    /// A pasta em que a camada está (id), se estiver numa.
+    pub parent: Option<u64>,
     /// Camadas vetoriais: a arte editável. `surface` guarda a cópia rasterizada dela.
     pub vector: Option<crate::vector::VectorArt>,
     pub surface: Surface,
@@ -48,6 +54,9 @@ impl Layer {
             reference: false,
             draft: false,
             mask: false,
+            folder: false,
+            collapsed: false,
+            parent: None,
             vector: None,
             surface: Surface::new(PixelFormat::RGBA8),
         }
@@ -103,6 +112,7 @@ impl Document {
                 layers[i].mask = false;
             }
         }
+        crate::folders::sanitize(&mut layers);
         let next_id = layers.iter().map(|l| l.id).max().unwrap_or(0) + 1;
         let mut doc = Self {
             width: width.clamp(1, MAX_CANVAS_SIDE),
@@ -154,9 +164,16 @@ impl Document {
     /// Nova camada acima da ativa, que passa a ser a ativa.
     pub fn add_layer(&mut self) {
         self.checkpoint();
-        let layer = self.make_layer();
-        // Acima da camada ativa e da máscara dela (nunca entre as duas).
-        let at = (self.unit(self.active).1 + 1).min(self.layers.len());
+        let mut layer = self.make_layer();
+        // Acima da camada ativa e da máscara dela (nunca entre as duas), na mesma pasta. Com uma
+        // pasta ativa, entra nela, em cima das outras.
+        let (at, parent) = match self.layers.get(self.active) {
+            Some(l) if l.folder => (self.active, Some(l.id)),
+            Some(l) => (self.unit(self.active).1 + 1, l.parent),
+            None => (self.layers.len(), None),
+        };
+        layer.parent = parent;
+        let at = at.min(self.layers.len());
         self.layers.insert(at, layer);
         self.active = at;
     }
@@ -166,7 +183,7 @@ impl Document {
         let Some(src) = self.layers.get(self.active).cloned() else {
             return;
         };
-        if src.mask {
+        if src.mask || src.folder {
             return;
         }
         let (_, end) = self.unit(self.active);
@@ -180,6 +197,7 @@ impl Document {
         copy.clip = src.clip;
         copy.draft = src.draft;
         copy.vector = src.vector;
+        copy.parent = src.parent;
         let at = end + 1;
         self.layers.insert(at, copy);
         if let Some(mut m) = mask {
@@ -203,16 +221,17 @@ impl Document {
             return;
         }
         // Apagar a dona leva a máscara junto.
-        let (start, end) = self.unit(self.active);
         let (start, end) = if self.layers[self.active].mask {
             (self.active, self.active)
         } else {
-            (start, end)
+            self.block(self.active)
         };
         if end - start + 1 >= self.layers.len() {
             self.layers.truncate(1);
             self.layers[0].surface = Surface::new(PixelFormat::RGBA8);
             self.layers[0].mask = false;
+            self.layers[0].folder = false;
+            self.layers[0].parent = None;
             self.active = 0;
             return;
         }
@@ -220,33 +239,61 @@ impl Document {
         self.active = start.saturating_sub(1).min(self.layers.len() - 1);
     }
 
-    /// Move a camada ativa (com a máscara dela) para cima (`up`) ou para baixo na pilha, passando
-    /// por cima da camada vizinha inteira (com a máscara dela).
+    /// Move a camada ativa (com a máscara dela, ou a pasta com tudo dentro) para cima (`up`) ou
+    /// para baixo, passando por cima da vizinha inteira. Na beira da pasta, a camada sai dela.
     pub fn move_layer(&mut self, up: bool) {
         if self.layers.get(self.active).is_none_or(|l| l.mask) {
             return;
         }
-        let (start, end) = self.unit(self.active);
-        let (other_start, other_end) = if up {
-            if end + 1 >= self.layers.len() {
+        let (start, end) = self.block(self.active);
+        let len = end - start + 1;
+        // A pasta de quem está se movendo (a da própria pasta, se é uma pasta que se move).
+        let head = if self.layers[end].folder { end } else { start };
+        let parent = self.layers[head].parent;
+        let offset = self.active - start;
+        if up {
+            let above = end + 1;
+            let Some(next) = self.layers.get(above) else {
+                return;
+            };
+            let exits = parent.is_some() && next.folder && Some(next.id) == parent;
+            self.checkpoint();
+            if exits {
+                // Topo da pasta: sai por cima dela.
+                for l in &mut self.layers[start..=end] {
+                    l.parent = None;
+                }
+                self.layers[start..=above].rotate_left(len);
+                self.active = start + 1 + offset;
                 return;
             }
-            self.unit(end + 1)
+            let (_, other_end) = if parent.is_none() {
+                self.top_block(above)
+            } else {
+                self.block(above)
+            };
+            self.layers[start..=other_end].rotate_left(len);
+            self.active = other_end + 1 - len + offset;
         } else {
             if start == 0 {
                 return;
             }
-            self.unit(self.owner(start - 1))
-        };
-        self.checkpoint();
-        let lo = start.min(other_start);
-        let hi = end.max(other_end);
-        if up {
-            self.layers[lo..=hi].rotate_left(end - start + 1);
-            self.active = hi - (end - start);
-        } else {
-            self.layers[lo..=hi].rotate_right(end - start + 1);
-            self.active = lo;
+            let below = start - 1;
+            self.checkpoint();
+            if parent.is_some() && self.layers[below].parent != parent {
+                // Fundo da pasta: sai por baixo (fica onde está, mas fora dela).
+                for l in &mut self.layers[start..=end] {
+                    l.parent = None;
+                }
+                return;
+            }
+            let (other_start, _) = if parent.is_none() {
+                self.top_block(below)
+            } else {
+                self.block(below)
+            };
+            self.layers[other_start..=end].rotate_right(len);
+            self.active = other_start + offset;
         }
     }
 
@@ -259,9 +306,14 @@ impl Document {
             self.apply_mask();
             return;
         }
-        // Mescla na camada (dona) de baixo, nunca na máscara dela.
+        if self.layers[self.active].folder {
+            self.flatten_folder();
+            return;
+        }
+        // Mescla na camada (dona) de baixo, nunca na máscara dela, nem fora da pasta.
         let below = self.owner(self.active - 1);
-        if self.layers[below].mask {
+        let b = &self.layers[below];
+        if b.mask || b.folder || b.parent != self.layers[self.active].parent {
             return;
         }
         self.checkpoint();

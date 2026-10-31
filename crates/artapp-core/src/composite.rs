@@ -52,7 +52,13 @@ pub fn composite_pass(
             Pass::Final => !layer.draft,
             Pass::Reference => layer.reference,
         };
-        let shown = included && layer.visible && layer.opacity > 0.0;
+        // Pastas não têm tinta: só escondem e esmaecem o que está dentro.
+        if layer.folder {
+            continue;
+        }
+        let fold = doc.folder_mix(i);
+        let opacity = layer.opacity * fold.unwrap_or(0.0);
+        let shown = included && layer.visible && opacity > 0.0;
         if !layer.clip {
             clip_base = None;
         }
@@ -78,12 +84,8 @@ pub fn composite_pass(
             for ((dst, src), m) in acc.iter_mut().zip(&row).zip(mask) {
                 let a = src[3] * m;
                 if a > 0.0 {
-                    *dst = blend::composite(
-                        layer.blend,
-                        *dst,
-                        [src[0], src[1], src[2], a],
-                        layer.opacity,
-                    );
+                    *dst =
+                        blend::composite(layer.blend, *dst, [src[0], src[1], src[2], a], opacity);
                 }
             }
             continue;
@@ -91,7 +93,7 @@ pub fn composite_pass(
         clip_base = Some(row.iter().map(|p| p[3]).collect());
         for (dst, src) in acc.iter_mut().zip(&row) {
             if src[3] > 0.0 {
-                *dst = blend::composite(layer.blend, *dst, *src, layer.opacity);
+                *dst = blend::composite(layer.blend, *dst, *src, opacity);
             }
         }
     }

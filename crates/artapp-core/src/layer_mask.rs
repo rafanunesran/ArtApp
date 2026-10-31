@@ -80,10 +80,14 @@ impl Document {
             self.active = end;
             return false;
         }
+        if self.layers[o].folder {
+            return false;
+        }
         self.checkpoint();
         let mut m = self.make_layer();
         m.name = "Máscara".into();
         m.mask = true;
+        m.parent = self.layers[o].parent;
         self.layers.insert(o + 1, m);
         self.active = o + 1;
         true

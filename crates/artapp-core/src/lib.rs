@@ -15,6 +15,7 @@ pub mod document;
 pub mod edit;
 pub mod export;
 pub mod fill;
+pub mod folders;
 pub mod heal;
 pub mod history;
 pub mod layer_mask;

@@ -962,6 +962,14 @@ fn tool_down(
     if app.quick_menu.is_some() {
         return;
     }
+    // Pasta não tem tinta: só as ferramentas que não pintam funcionam com ela ativa.
+    if app.doc.active_layer().is_some_and(|l| l.folder)
+        && !(app.tool.is_selection()
+            || matches!(app.tool, Tool::Hand | Tool::Eyedropper | Tool::Ruler))
+    {
+        app.status = "É uma pasta: escolha uma camada dentro dela para desenhar.".into();
+        return;
+    }
     let mut pt = point(app, panel, p, force, time);
     snap_to_ruler(app, &mut pt);
     let (x, y) = (pt.x.floor() as i32, pt.y.floor() as i32);
