@@ -4,8 +4,10 @@
 
 use crate::document::Layer;
 
-/// Quantos passos de desfazer guardar.
+/// Quantos passos de desfazer guardar, se a preferência não disser outro número.
 pub const MAX_UNDO: usize = 100;
+/// Limites da preferência de passos.
+pub const UNDO_RANGE: std::ops::RangeInclusive<usize> = 10..=500;
 
 /// Camadas, camada ativa e tamanho da tela (cortar e redimensionar também se desfazem).
 pub type Snapshot = (Vec<Layer>, usize, (u32, u32));
@@ -16,16 +18,41 @@ pub struct History {
     redo: Vec<Snapshot>,
     /// Muda a cada passo guardado, desfeito ou refeito.
     version: u64,
+    /// Passos guardados no máximo (0 = [`MAX_UNDO`]).
+    limit: usize,
 }
 
 impl History {
     pub fn push(&mut self, snap: Snapshot) {
         self.version += 1;
         self.undo.push(snap);
-        if self.undo.len() > MAX_UNDO {
-            self.undo.remove(0);
-        }
+        self.trim();
         self.redo.clear();
+    }
+
+    fn max(&self) -> usize {
+        if self.limit == 0 {
+            MAX_UNDO
+        } else {
+            self.limit
+        }
+    }
+
+    fn trim(&mut self) {
+        let max = self.max();
+        if self.undo.len() > max {
+            let extra = self.undo.len() - max;
+            self.undo.drain(..extra);
+        }
+    }
+
+    /// Muda quantos passos guardar (descarta os mais antigos se passar).
+    pub fn set_limit(&mut self, n: usize) {
+        let n = n.clamp(*UNDO_RANGE.start(), *UNDO_RANGE.end());
+        if n != self.max() {
+            self.limit = n;
+            self.trim();
+        }
     }
 
     /// Troca o estado atual pelo último instantâneo, guardando o atual para refazer.
@@ -132,5 +159,19 @@ mod tests {
         assert_eq!(doc.history_steps().1, 0);
         assert!(doc.jump_history(2));
         assert_eq!(doc.layers[1].opacity, 0.5);
+    }
+
+    #[test]
+    fn limit_drops_the_oldest_steps() {
+        let mut h = super::History::default();
+        for _ in 0..30 {
+            h.push((Vec::new(), 0, (1, 1)));
+        }
+        h.set_limit(12);
+        assert_eq!(h.undo.len(), 12);
+        for _ in 0..5 {
+            h.push((Vec::new(), 0, (1, 1)));
+        }
+        assert_eq!(h.undo.len(), 12);
     }
 }

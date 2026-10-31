@@ -371,6 +371,12 @@ pub struct ArtApp {
     /// Lado da roda flutuante e onde ela estava (canto de cima à esquerda).
     pub color_float_size: f32,
     pub color_float_pos: Option<Pos2>,
+    /// Preferências: tamanho da interface, ferramentas à direita (canhoto), passos de desfazer e
+    /// cor do papel das telas novas.
+    pub ui_scale: f32,
+    pub left_handed: bool,
+    pub undo_steps: usize,
+    pub paper_color: [f32; 4],
     /// Quando `status` mudou (o aviso some depois de alguns segundos).
     pub status_since: f64,
     last_status: String,
@@ -500,6 +506,10 @@ impl ArtApp {
             color_float: false,
             color_float_collapsed: false,
             color_float_size: 190.0,
+            ui_scale: 1.0,
+            left_handed: false,
+            undo_steps: artapp_core::history::MAX_UNDO,
+            paper_color: [1.0, 1.0, 1.0, 1.0],
             color_float_pos: None,
             status_since: 0.0,
             last_status: String::new(),
@@ -581,6 +591,22 @@ impl ArtApp {
         {
             self.color_float_pos = Some(Pos2::new(x, y));
         }
+        if let Some(n) = v.get("ui_scale").and_then(serde_json::Value::as_f64) {
+            self.ui_scale = (n as f32).clamp(UI_SCALE.0, UI_SCALE.1);
+        }
+        if let Some(b) = flag("left_handed") {
+            self.left_handed = b;
+        }
+        if let Some(n) = v.get("undo_steps").and_then(serde_json::Value::as_u64) {
+            let r = artapp_core::history::UNDO_RANGE;
+            self.undo_steps = (n as usize).clamp(*r.start(), *r.end());
+        }
+        if let Some(c) = v
+            .get("paper_color")
+            .and_then(|c| serde_json::from_value::<[f32; 4]>(c.clone()).ok())
+        {
+            self.paper_color = c.map(|x| x.clamp(0.0, 1.0));
+        }
         if let Some(name) = v.get("finger_mode").and_then(serde_json::Value::as_str) {
             self.finger_mode = FingerMode::ALL
                 .into_iter()
@@ -613,6 +639,10 @@ impl ArtApp {
             "color_float_collapsed": self.color_float_collapsed,
             "color_float_size": self.color_float_size,
             "color_float_pos": self.color_float_pos.map(|p| [p.x, p.y]),
+            "ui_scale": self.ui_scale,
+            "left_handed": self.left_handed,
+            "undo_steps": self.undo_steps,
+            "paper_color": self.paper_color,
         });
         let path = prefs_path();
         let result = path
@@ -1025,6 +1055,7 @@ impl ArtApp {
 
     pub fn new_canvas(&mut self, w: u32, h: u32) {
         self.doc = Document::new(w, h);
+        self.doc.paper = self.paper_color;
         self.view = CanvasView::default();
         self.selected = None;
         self.invalidate_all();
@@ -1368,9 +1399,16 @@ pub fn color_from_f32(c: [f32; 4]) -> Color32 {
     Color32::from_rgba_unmultiplied(q(c[0]), q(c[1]), q(c[2]), q(c[3]))
 }
 
+/// Limites do tamanho da interface.
+pub const UI_SCALE: (f32, f32) = (0.75, 1.5);
+
 impl eframe::App for ArtApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if (ctx.zoom_factor() - self.ui_scale).abs() > 1e-3 {
+            ctx.set_zoom_factor(self.ui_scale);
+        }
+        self.doc.set_undo_limit(self.undo_steps);
         self.shortcuts(&ctx);
         self.projects_tick(&ctx);
         self.updater_tick(&ctx);
