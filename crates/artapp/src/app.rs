@@ -62,6 +62,10 @@ pub enum Tool {
     Line,
     Rectangle,
     Ellipse,
+    /// Balão de quadrinho com rabicho (vetorial).
+    Balloon,
+    /// Dividir quadro: arraste atravessando um requadro.
+    FrameSplit,
     /// Liquefazer: empurrar, torcer, inflar… a camada raster.
     Liquify,
     /// Todas as ferramentas do VectorCraft (a escolhida fica em `ArtApp::kit_tool`).
@@ -92,7 +96,7 @@ impl Tool {
         Tool::MagicWand,
     ];
     /// Ferramentas vetoriais, no menu "Vetor".
-    pub const VECTOR: [Tool; 7] = [
+    pub const VECTOR: [Tool; 9] = [
         Tool::VectorKit,
         Tool::Select,
         Tool::VectorPen,
@@ -100,6 +104,8 @@ impl Tool {
         Tool::Line,
         Tool::Rectangle,
         Tool::Ellipse,
+        Tool::Balloon,
+        Tool::FrameSplit,
     ];
 
     /// O que o botão lateral da caneta pode virar (ferramentas sem estado pela metade).
@@ -135,6 +141,8 @@ impl Tool {
             Tool::Line => "Linha",
             Tool::Rectangle => "Retângulo",
             Tool::Ellipse => "Elipse",
+            Tool::Balloon => "Balão",
+            Tool::FrameSplit => "Dividir quadro",
             Tool::VectorKit => "Vetor pro",
             Tool::Liquify => "Liquefazer",
             Tool::Ruler => "Régua",
@@ -162,6 +170,8 @@ impl Tool {
             Tool::Line => icon::MINUS,
             Tool::Rectangle => icon::SQUARE,
             Tool::Ellipse => icon::CIRCLE,
+            Tool::Balloon => icon::MESSAGE_CIRCLE,
+            Tool::FrameSplit => icon::SCISSORS,
             Tool::VectorKit => icon::SPLINE_POINTER,
             Tool::Liquify => icon::SPLINE,
             Tool::Ruler => icon::RULER,
@@ -209,6 +219,8 @@ impl Tool {
             Tool::Line => egui::Key::L,
             Tool::Rectangle => egui::Key::M,
             Tool::Ellipse => egui::Key::O,
+            Tool::Balloon => egui::Key::C,
+            Tool::FrameSplit => egui::Key::T,
             Tool::VectorKit => egui::Key::Y,
             Tool::Liquify => egui::Key::Q,
             Tool::Ruler => egui::Key::R,
@@ -397,6 +409,13 @@ pub struct ArtApp {
     pub selected: Option<NodeId>,
     /// Pontos do caminho Bézier em construção.
     pub bezier: Vec<Anchor>,
+    /// Forma do balão de quadrinho.
+    pub balloon_shape: artapp_core::balloon::BalloonShape,
+    /// Balão já desenhado, esperando o rabicho: o retângulo (pixels da tela de desenho).
+    pub balloon_pending: Option<[f64; 4]>,
+    /// Calha ao dividir quadros (pixels) e se a reta gruda na horizontal/vertical.
+    pub frame_gap: f32,
+    pub frame_snap: bool,
     /// Seletor de cor aberto.
     pub show_color: bool,
     /// Roda de cores flutuante: sempre na tela (não fecha ao desenhar), arrastável e
@@ -560,6 +579,10 @@ impl ArtApp {
             vector_pen: PenPressure::default(),
             selected: None,
             bezier: Vec::new(),
+            balloon_shape: Default::default(),
+            balloon_pending: None,
+            frame_gap: 30.0,
+            frame_snap: true,
             show_color: false,
             color_float: false,
             color_float_collapsed: false,
@@ -1083,6 +1106,24 @@ impl ArtApp {
             self.doc.add_vector_layer();
             self.status = "Nova camada vetorial criada.".into();
         }
+    }
+
+    /// Põe o balão que esperava o rabicho, apontando para `tail` (ou sem rabicho). Traço preto
+    /// na espessura do vetor, por dentro branco.
+    pub fn finish_balloon(&mut self, tail: Option<[f64; 2]>) {
+        let Some(r) = self.balloon_pending.take() else {
+            return;
+        };
+        let paths = artapp_core::balloon::balloon(self.balloon_shape, r, tail);
+        let style = VectorStyle {
+            stroke: Some([0.0, 0.0, 0.0]),
+            width: self.vector_width,
+            fill: Some([1.0, 1.0, 1.0]),
+            opacity: 1.0,
+        };
+        self.ensure_vector_layer();
+        let dirty = self.doc.vector_add_paths(paths, &style);
+        self.invalidate(dirty);
     }
 
     /// Termina o caminho Bézier em construção (`closed` fecha no primeiro ponto).
