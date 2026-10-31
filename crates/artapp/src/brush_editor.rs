@@ -202,7 +202,7 @@ pub fn tab_bar(ui: &mut egui::Ui, id: &str, tabs: &[BrushTab]) -> BrushTab {
             let on = cur == t;
             let text = RichText::new(t.label()).size(13.5);
             let text = if on {
-                text.strong().color(color::ACCENT)
+                text.strong().color(color::ON_ACCENT)
             } else {
                 text
             };
