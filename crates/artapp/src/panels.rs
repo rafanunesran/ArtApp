@@ -527,6 +527,10 @@ fn layer_group(app: &mut ArtApp, ui: &mut egui::Ui) {
         });
         ui.close();
     }
+    if item(ui, icon::SPLINE_POINTER, "Vetorizar camada…").clicked() {
+        app.dialog = Some(crate::dialogs::Dialog::Trace(0));
+        ui.close();
+    }
     if item(ui, icon::PALETTE, "Mudar cor da linha para a principal").clicked() {
         app.line_to_color();
         ui.close();

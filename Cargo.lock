@@ -184,6 +184,7 @@ dependencies = [
  "vectorcraft-pathops",
  "vectorcraft-render",
  "vectorcraft-tools",
+ "vectorcraft-trace",
 ]
 
 [[package]]

@@ -28,6 +28,7 @@ vectorcraft-pathops = { git = "https://github.com/storytold/vectorcraft", rev = 
 vectorcraft-tools = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
 vectorcraft-color = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
 vectorcraft-render = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
+vectorcraft-trace = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10" }
 vectorcraft-engine = { git = "https://github.com/storytold/vectorcraft", rev = "60833ae800afaefa24193daa5ae1690d489c9f10", features = ["bundled-fonts"] }
 kurbo = "0.13"
 artapp-core = { path = "crates/artapp-core" }

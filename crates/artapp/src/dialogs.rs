@@ -270,6 +270,8 @@ pub enum Dialog {
         connect: bool,
         amount: f64,
     },
+    /// Vetorizar a camada raster ativa: índice em `artapp_core::trace::PRESETS`.
+    Trace(usize),
     /// Linhas de concentração ou de velocidade (quadrinho) numa camada vetorial nova.
     MangaLines(artapp_core::manga_lines::MangaLines),
     /// Brilho difuso, falha digital ou aberração cromática na camada ativa.
@@ -350,6 +352,7 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
         Dialog::Text { .. } => "Texto",
         Dialog::LineWidth { .. } => "Ajustar largura da linha",
         Dialog::LineFix { .. } => "Correção de linha",
+        Dialog::Trace(_) => "Vetorizar camada",
         Dialog::MangaLines(_) => "Linhas de efeito",
         Dialog::Frames(_) => "Requadros",
         Dialog::Effect(_) => "Efeitos",
@@ -421,6 +424,22 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
                         RichText::new(format!("{help} Vale para a camada vetorial ativa."))
                             .size(12.0)
                             .color(color::TEXT_MUTED),
+                    );
+                }
+                Dialog::Trace(k) => {
+                    ui.horizontal_wrapped(|ui| {
+                        for (i, (name, _)) in artapp_core::trace::PRESETS.iter().enumerate() {
+                            if ui.selectable_label(*k == i, *name).clicked() {
+                                *k = i;
+                            }
+                        }
+                    });
+                    ui.label(
+                        RichText::new(
+                            "Traça a camada raster ativa em formas vetoriais, numa camada nova acima. O transparente conta como branco.",
+                        )
+                        .size(12.0)
+                        .color(color::TEXT_MUTED),
                     );
                 }
                 Dialog::MangaLines(p) => manga_lines_ui(ui, p),
@@ -527,6 +546,19 @@ fn apply(app: &mut ArtApp, dialog: &Dialog) {
         let [r, g, b, _] = color_to_f32(app.color);
         app.doc.add_manga_lines(p, center, [r, g, b]);
         app.remember_color();
+        app.invalidate_all();
+        return;
+    }
+    if let Dialog::Trace(k) = *dialog {
+        app.commit_transform();
+        let Some((_, preset)) = artapp_core::trace::PRESETS.get(k) else {
+            return;
+        };
+        let (n, _) = app.doc.trace_layer(preset);
+        app.status = match n {
+            0 => "Nada para vetorizar: escolha uma camada raster com desenho.".into(),
+            n => format!("{n} formas numa camada vetorial nova."),
+        };
         app.invalidate_all();
         return;
     }
@@ -663,6 +695,7 @@ fn apply(app: &mut ArtApp, dialog: &Dialog) {
         | Dialog::Text { .. }
         | Dialog::LineWidth { .. }
         | Dialog::LineFix { .. }
+        | Dialog::Trace(_)
         | Dialog::MangaLines(_)
         | Dialog::Frames(_) => return,
     };
