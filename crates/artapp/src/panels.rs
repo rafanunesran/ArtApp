@@ -1484,17 +1484,36 @@ pub fn layers_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, p
                     let active = app.doc.active;
                     let mut select = None;
                     let mut toggle = None;
+                    let mut fold = None;
+                    let closed: Vec<u64> = app
+                        .doc
+                        .layers
+                        .iter()
+                        .filter(|l| l.folder && l.collapsed)
+                        .map(|l| l.id)
+                        .collect();
                     for i in (0..app.doc.layers.len()).rev() {
                         let Some(layer) = app.doc.layers.get(i) else {
                             continue;
                         };
-                        let (sel, tog) = layer_row(ui, layer, thumbs.get(&layer.id), i == active);
+                        // Pasta fechada: as de dentro não aparecem na lista.
+                        if layer.parent.is_some_and(|p| closed.contains(&p)) {
+                            continue;
+                        }
+                        let (sel, tog, f) =
+                            layer_row(ui, layer, thumbs.get(&layer.id), i == active);
                         if sel {
                             select = Some(i);
                         }
                         if tog {
                             toggle = Some(i);
                         }
+                        if f {
+                            fold = Some(i);
+                        }
+                    }
+                    if let Some(l) = fold.and_then(|i| app.doc.layers.get_mut(i)) {
+                        l.collapsed = !l.collapsed;
                     }
                     if let Some(i) = toggle {
                         app.doc.checkpoint();
@@ -1513,6 +1532,10 @@ pub fn layers_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, p
             ui.separator();
             let n = app.doc.layers.len();
             let is_vector = app.doc.active_is_vector();
+            let (is_folder, in_folder) = app
+                .doc
+                .active_layer()
+                .map_or((false, false), |l| (l.folder, l.parent.is_some()));
             let b = |ui: &mut egui::Ui, g: char, tip: &str, enabled: bool| {
                 ui.add_enabled_ui(enabled, |ui| icon_button(ui, g, false, tip))
                     .inner
@@ -1531,7 +1554,12 @@ pub fn layers_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, p
                     app.doc.duplicate_layer();
                     changed = true;
                 }
-                if b(ui, icon::MERGE_DOWN, "Mesclar abaixo", app.doc.active > 0) {
+                let merge_tip = if is_folder {
+                    "Achatar a pasta"
+                } else {
+                    "Mesclar abaixo"
+                };
+                if b(ui, icon::MERGE_DOWN, merge_tip, app.doc.active > 0) {
                     app.doc.merge_down();
                     changed = true;
                 }
@@ -1553,8 +1581,22 @@ pub fn layers_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, p
                 if b(ui, icon::IMAGE, "Rasterizar camada vetorial", is_vector) {
                     app.doc.rasterize_layer();
                 }
-                if b(ui, icon::ERASER, "Limpar camada", true) {
+                if b(ui, icon::ERASER, "Limpar camada", !is_folder) {
                     app.doc.clear_layer();
+                    changed = true;
+                }
+                if is_folder {
+                    if b(
+                        ui,
+                        icon::FOLDER_OPEN,
+                        "Desfazer a pasta (tira as camadas)",
+                        true,
+                    ) {
+                        app.doc.ungroup();
+                        changed = true;
+                    }
+                } else if b(ui, icon::FOLDER_OPEN, "Pôr numa pasta nova", !in_folder) {
+                    app.doc.new_folder();
                     changed = true;
                 }
             });
@@ -1574,7 +1616,7 @@ fn layer_row(
     layer: &artapp_core::Layer,
     thumb: Option<&TextureHandle>,
     active: bool,
-) -> (bool, bool) {
+) -> (bool, bool, bool) {
     let w = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 52.0), Sense::click());
     let p = ui.painter();
@@ -1596,10 +1638,15 @@ fn layer_row(
     }
     // Camada recortada: recuada, com uma barra ligando-a à base embaixo (como no Clip Studio).
     // Máscara: recuada também, com a barra azul da seleção.
-    let indent = if layer.clip || layer.mask { 14.0 } else { 0.0 };
+    // Dentro de pasta: mais recuada ainda.
+    let nest = if layer.parent.is_some() { 16.0 } else { 0.0 };
+    let indent = nest + if layer.clip || layer.mask { 14.0 } else { 0.0 };
     if layer.clip || layer.mask {
         p.rect_filled(
-            egui::Rect::from_min_size(rect.left_top() + Vec2::new(8.0, 4.0), Vec2::new(3.0, 48.0)),
+            egui::Rect::from_min_size(
+                rect.left_top() + Vec2::new(8.0 + nest, 4.0),
+                Vec2::new(3.0, 48.0),
+            ),
             CornerRadius::same(1),
             if layer.mask {
                 color::SELECTION
@@ -1610,8 +1657,30 @@ fn layer_row(
     }
     let thumb_rect =
         egui::Rect::from_min_size(rect.left_top() + Vec2::new(6.0 + indent, 6.0), THUMB);
-    p.rect_filled(thumb_rect, CornerRadius::same(4), Color32::WHITE);
-    if let Some(t) = thumb {
+    if layer.folder {
+        // Pasta: o ícone no lugar da miniatura, e uma seta para abrir e fechar.
+        p.text(
+            thumb_rect.center() - Vec2::new(4.0, 0.0),
+            Align2::CENTER_CENTER,
+            icon::FOLDER_OPEN,
+            theme::icon_font(24.0),
+            color::ACCENT,
+        );
+        p.text(
+            Pos2::new(thumb_rect.max.x - 2.0, thumb_rect.center().y),
+            Align2::CENTER_CENTER,
+            if layer.collapsed {
+                icon::CHEVRON_UP
+            } else {
+                icon::CHEVRON_DOWN
+            },
+            theme::icon_font(14.0),
+            color::TEXT_MUTED,
+        );
+    } else {
+        p.rect_filled(thumb_rect, CornerRadius::same(4), Color32::WHITE);
+    }
+    if let Some(t) = thumb.filter(|_| !layer.folder) {
         p.image(
             t.id(),
             thumb_rect,
@@ -1619,12 +1688,14 @@ fn layer_row(
             Color32::WHITE,
         );
     }
-    p.rect_stroke(
-        thumb_rect,
-        CornerRadius::same(4),
-        Stroke::new(1.0, color::BORDER),
-        egui::StrokeKind::Outside,
-    );
+    if !layer.folder {
+        p.rect_stroke(
+            thumb_rect,
+            CornerRadius::same(4),
+            Stroke::new(1.0, color::BORDER),
+            egui::StrokeKind::Outside,
+        );
+    }
     let text_x = thumb_rect.max.x + 10.0;
     let fg = if layer.visible {
         color::TEXT
@@ -1698,7 +1769,15 @@ fn layer_row(
         theme::icon_font(18.0),
         eye_col,
     );
-    (resp.clicked() && !eye.clicked(), eye.clicked())
+    let on_icon = resp
+        .interact_pointer_pos()
+        .is_some_and(|p| thumb_rect.expand(6.0).contains(p));
+    let fold = layer.folder && resp.clicked() && on_icon;
+    (
+        resp.clicked() && !eye.clicked() && !fold,
+        eye.clicked(),
+        fold,
+    )
 }
 
 /// Opacidade, mesclagem e bloqueio da camada ativa. Devolve se algo mudou.
@@ -1722,6 +1801,13 @@ fn active_layer_settings(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
     if r.changed() {
         layer.opacity = pct / 100.0;
         changed = true;
+    }
+    if layer.folder {
+        // Numa pasta só valem o nome, a opacidade e a visibilidade.
+        if checkpoint {
+            app.doc.checkpoint();
+        }
+        return changed;
     }
     let mut blend = layer.blend;
     let mut lock = layer.lock_alpha;

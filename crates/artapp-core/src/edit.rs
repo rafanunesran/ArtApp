@@ -98,7 +98,7 @@ impl Document {
     /// recortados à seleção.
     pub(crate) fn edit_area(&self, whole: bool) -> Option<Rect> {
         let layer = self.active_layer()?;
-        if !layer.visible || layer.is_vector() {
+        if !layer.visible || layer.is_vector() || layer.folder {
             return None;
         }
         let mut r = if whole {

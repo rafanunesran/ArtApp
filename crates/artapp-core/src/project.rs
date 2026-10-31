@@ -92,6 +92,12 @@ struct LayerEntry {
     draft: bool,
     #[serde(default)]
     mask: bool,
+    #[serde(default)]
+    folder: bool,
+    #[serde(default)]
+    collapsed: bool,
+    #[serde(default)]
+    parent: Option<u64>,
     /// Pixels: o retângulo pintado e o PNG dele. `None` = camada vazia.
     #[serde(default)]
     pixels: Option<Pixels>,
@@ -170,6 +176,9 @@ pub fn save(doc: &Document) -> Result<Vec<u8>, String> {
             reference: l.reference,
             draft: l.draft,
             mask: l.mask,
+            folder: l.folder,
+            collapsed: l.collapsed,
+            parent: l.parent,
             pixels,
             vector,
         });
@@ -261,6 +270,9 @@ pub fn load(bytes: &[u8]) -> Result<Document, String> {
         layer.reference = e.reference;
         layer.draft = e.draft;
         layer.mask = e.mask;
+        layer.folder = e.folder;
+        layer.collapsed = e.collapsed;
+        layer.parent = e.parent;
         if let Some(p) = &e.pixels {
             let (w, h, px) = decode_rgba(slice(data, &p.png)?)?;
             if (w, h) != (p.w, p.h) {

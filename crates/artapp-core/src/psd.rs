@@ -47,9 +47,11 @@ pub fn export(doc: &Document) -> Result<Vec<u8>, String> {
     }
     for (i, l) in doc.layers.iter().enumerate() {
         // A máscara vai aplicada na dona.
-        if l.mask {
+        if l.mask || l.folder {
             continue;
         }
+        // Pasta: aplicada na camada (o PSD sai sem pastas).
+        let fold = doc.folder_mix(i);
         let surface = doc.masked_surface(i);
         let r = surface.content_bounds();
         let (x, y, lw, lh, px) = if r.is_empty() {
@@ -59,8 +61,8 @@ pub fn export(doc: &Document) -> Result<Vec<u8>, String> {
         };
         let mut spec = LayerSpec::new(l.name.clone(), x, y, lw, lh, PixelData::Rgba8(px));
         spec.blend_mode = to_psd_blend(l.blend);
-        spec.opacity = q(l.opacity);
-        spec.visible = l.visible && !l.draft;
+        spec.opacity = q(l.opacity * fold.unwrap_or(1.0));
+        spec.visible = l.visible && !l.draft && fold.is_some();
         spec.clipping = l.clip;
         b.push_layer(spec);
     }
