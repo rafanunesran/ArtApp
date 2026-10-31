@@ -310,6 +310,10 @@ mod android_files {
 /// O que se sabe da caneta que fez um toque.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PenInfo {
+    /// O toque veio de uma caneta (não de um dedo).
+    pub stylus: bool,
+    /// O sistema marcou o toque como palma da mão.
+    pub palm: bool,
     /// A ponta de borracha (ou a caneta virada).
     pub eraser: bool,
     /// O botão lateral apertado.
@@ -322,6 +326,8 @@ pub fn pen_info(id: u64) -> PenInfo {
     #[cfg(target_os = "android")]
     if let Some(p) = winit::platform::android::stylus::pointer_info(id) {
         return PenInfo {
+            stylus: p.stylus,
+            palm: p.palm,
             eraser: p.eraser,
             button: p.button,
         };

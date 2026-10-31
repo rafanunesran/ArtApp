@@ -188,7 +188,7 @@ fn walk(
 /// Multiplica o alfa (RGBA em `left, top, width`) pela máscara de camada.
 fn apply_mask(data: &mut [u8], left: i32, top: i32, width: u32, mask: &photocraft_psd::GrayImage) {
     let width = width.max(1) as usize;
-    for (i, px) in data.chunks_exact_mut(4).enumerate() {
+    for (i, px) in data.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         let x = left + (i % width) as i32 - mask.left;
         let y = top + (i / width) as i32 - mask.top;
         let m = if x >= 0 && y >= 0 && (x as u32) < mask.width && (y as u32) < mask.height {

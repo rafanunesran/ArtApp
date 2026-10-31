@@ -490,7 +490,8 @@ fn filter_ui(ui: &mut egui::Ui, index: &mut usize, params: &mut serde_json::Valu
 }
 
 fn adjust_ui(ui: &mut egui::Ui, adj: &mut Adjust) {
-    let kinds: [(&str, Adjust); 7] = [
+    use artapp_core::edit::CURVE_IDENTITY;
+    let kinds: [(&str, Adjust); 10] = [
         (
             "Matiz/Saturação/Luminosidade",
             Adjust::HueSatLight {
@@ -518,6 +519,25 @@ fn adjust_ui(ui: &mut egui::Ui, adj: &mut Adjust) {
         ("Binarizar (limiar)", Adjust::Threshold { level: 0.5 }),
         ("Inverter cores", Adjust::Invert),
         ("Tirar a saturação", Adjust::Desaturate),
+        (
+            "Curvas",
+            Adjust::Curves {
+                ys: [CURVE_IDENTITY; 4],
+            },
+        ),
+        (
+            "Mapa de gradiente",
+            Adjust::GradientMap {
+                dark: [0.1, 0.05, 0.25],
+                light: [1.0, 0.85, 0.55],
+            },
+        ),
+        (
+            "Equilíbrio de cores",
+            Adjust::ColorBalance {
+                tones: [[0.0; 3]; 3],
+            },
+        ),
     ];
     let same = |a: &Adjust, b: &Adjust| std::mem::discriminant(a) == std::mem::discriminant(b);
     let name = kinds
@@ -569,5 +589,89 @@ fn adjust_ui(ui: &mut egui::Ui, adj: &mut Adjust) {
         Adjust::Invert | Adjust::Desaturate => {
             ui.label(RichText::new("Sem ajustes.").color(color::TEXT_MUTED));
         }
+        Adjust::Curves { ys } => curves_ui(ui, ys),
+        Adjust::GradientMap { dark, light } => {
+            ui.horizontal(|ui| {
+                ui.color_edit_button_rgb(dark);
+                ui.label("Sombras");
+                ui.add_space(16.0);
+                ui.color_edit_button_rgb(light);
+                ui.label("Luzes");
+            });
+            if ui.button("Inverter").clicked() {
+                std::mem::swap(dark, light);
+            }
+        }
+        Adjust::ColorBalance { tones } => {
+            let id = egui::Id::unique("balance-range");
+            let mut range: usize = ui.data(|d| d.get_temp(id)).unwrap_or(1);
+            ui.horizontal(|ui| {
+                for (i, n) in ["Sombras", "Meios-tons", "Realces"].into_iter().enumerate() {
+                    ui.selectable_value(&mut range, i, n);
+                }
+            });
+            ui.data_mut(|d| d.insert_temp(id, range));
+            let t = &mut tones[range];
+            ui.add(egui::Slider::new(&mut t[0], -1.0..=1.0).text("Ciano / Vermelho"));
+            ui.add(egui::Slider::new(&mut t[1], -1.0..=1.0).text("Magenta / Verde"));
+            ui.add(egui::Slider::new(&mut t[2], -1.0..=1.0).text("Amarelo / Azul"));
+        }
+    }
+}
+
+/// Editor de curvas: um canal por vez, cinco pontos arrastáveis na vertical.
+fn curves_ui(ui: &mut egui::Ui, ys: &mut [[f32; 5]; 4]) {
+    use artapp_core::edit::{CURVE_IDENTITY, curve_eval};
+    let id = egui::Id::unique("curves-channel");
+    let mut ch: usize = ui.data(|d| d.get_temp(id)).unwrap_or(0);
+    ui.horizontal(|ui| {
+        for (i, n) in ["RGB", "Vermelho", "Verde", "Azul"].into_iter().enumerate() {
+            ui.selectable_value(&mut ch, i, n);
+        }
+    });
+    ui.data_mut(|d| d.insert_temp(id, ch));
+    let size = egui::vec2(260.0, 200.0);
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, egui::Color32::from_gray(28));
+    let grid = egui::Stroke::new(1.0, egui::Color32::from_gray(55));
+    for i in 1..4 {
+        let f = i as f32 / 4.0;
+        painter.vline(rect.left() + rect.width() * f, rect.y_range(), grid);
+        painter.hline(rect.x_range(), rect.top() + rect.height() * f, grid);
+    }
+    let at = |x: f32, y: f32| {
+        egui::pos2(
+            rect.left() + x * rect.width(),
+            rect.bottom() - y * rect.height(),
+        )
+    };
+    let line_color = [
+        egui::Color32::from_gray(230),
+        egui::Color32::from_rgb(240, 80, 80),
+        egui::Color32::from_rgb(90, 210, 90),
+        egui::Color32::from_rgb(90, 140, 250),
+    ][ch];
+    let curve = &mut ys[ch];
+    // Arrasta o ponto mais perto na horizontal.
+    if let Some(p) = resp.interact_pointer_pos()
+        && (resp.dragged() || resp.clicked())
+    {
+        let x = ((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+        let i = (x * 4.0).round() as usize;
+        curve[i.min(4)] = ((rect.bottom() - p.y) / rect.height()).clamp(0.0, 1.0);
+    }
+    let pts: Vec<egui::Pos2> = (0..=64)
+        .map(|i| {
+            let x = i as f32 / 64.0;
+            at(x, curve_eval(curve, x))
+        })
+        .collect();
+    painter.add(egui::Shape::line(pts, egui::Stroke::new(2.0, line_color)));
+    for (i, y) in curve.iter().enumerate() {
+        painter.circle_filled(at(i as f32 / 4.0, *y), 5.0, line_color);
+    }
+    if ui.button("Restaurar canal").clicked() {
+        *curve = CURVE_IDENTITY;
     }
 }

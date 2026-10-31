@@ -10,6 +10,30 @@ use eframe::egui::{self, Color32, Pos2, TextureHandle};
 use crate::canvas::CanvasView;
 use crate::{panels, platform};
 
+/// O que um dedo faz na tela quando há caneta.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FingerMode {
+    /// O dedo desenha como a caneta.
+    Draw,
+    /// Só a caneta desenha; o dedo move a tela.
+    PenOnly,
+    /// O dedo desenha até a caneta tocar a tela pela primeira vez; depois, só a caneta.
+    #[default]
+    Auto,
+}
+
+impl FingerMode {
+    pub const ALL: [FingerMode; 3] = [FingerMode::Auto, FingerMode::PenOnly, FingerMode::Draw];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            FingerMode::Draw => "Dedo desenha",
+            FingerMode::PenOnly => "Só caneta desenha",
+            FingerMode::Auto => "Automático",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tool {
     Brush,
@@ -193,12 +217,16 @@ impl Tool {
 }
 
 /// Tamanhos de tela oferecidos em "Nova tela".
-pub const CANVAS_PRESETS: [(&str, u32, u32); 5] = [
+pub const CANVAS_PRESETS: [(&str, u32, u32); 9] = [
     ("Retrato 1536×2048", 1536, 2048),
     ("Quadrado 2048×2048", 2048, 2048),
     ("Celular 1080×1920", 1080, 1920),
     ("Paisagem 1920×1080", 1920, 1080),
     ("A4 150 dpi", 1240, 1754),
+    ("A4 300 dpi (impressão)", 2480, 3508),
+    ("Página de quadrinho 1988×3075", 1988, 3075),
+    ("Ilustração 3000×3000", 3000, 3000),
+    ("4K 3840×2160", 3840, 2160),
 ];
 
 pub struct ArtApp {
@@ -215,6 +243,8 @@ pub struct ArtApp {
     /// Nome para "Salvar como pincel".
     pub new_brush_name: String,
     pub eraser: BrushSettings,
+    /// Borracha mágica: um toque apaga a área de cor parecida.
+    pub eraser_magic: bool,
     /// Ferramenta Misturar: modo, ponta e força.
     pub mix_kind: artapp_core::mix::MixKind,
     pub mix_brush: BrushSettings,
@@ -284,6 +314,8 @@ pub struct ArtApp {
     pub autoclose_panels: bool,
     /// Toque rápido com dois dedos desfaz; com três, refaz.
     pub tap_undo: bool,
+    /// Se o dedo usa a ferramenta ou só mexe na vista (rejeição de palma).
+    pub finger_mode: FingerMode,
     pub show_tools_panel: bool,
     pub show_layers_panel: bool,
     /// Painel do pincel, camadas e cor no quadro anterior, para saber qual acabou de abrir.
@@ -388,6 +420,7 @@ impl ArtApp {
             color_state: Default::default(),
             grid_size: 64.0,
             ruler: None,
+            eraser_magic: false,
             ruler_kind: 0,
             ruler_snap: true,
             ruler_live: None,
@@ -407,6 +440,7 @@ impl ArtApp {
             pen_button_tool: Some(Tool::Eraser),
             autoclose_panels: true,
             tap_undo: true,
+            finger_mode: FingerMode::Auto,
             show_tools_panel: wide,
             show_layers_panel: wide,
             panels_before: [false; 3],
@@ -479,6 +513,12 @@ impl ArtApp {
         {
             self.color_float_pos = Some(Pos2::new(x, y));
         }
+        if let Some(name) = v.get("finger_mode").and_then(serde_json::Value::as_str) {
+            self.finger_mode = FingerMode::ALL
+                .into_iter()
+                .find(|m| format!("{m:?}") == name)
+                .unwrap_or_default();
+        }
         if let Some(name) = v.get("pen_button_tool").and_then(serde_json::Value::as_str) {
             self.pen_button_tool = Tool::PEN_BUTTON
                 .into_iter()
@@ -493,6 +533,7 @@ impl ArtApp {
             "gesture_rotate": self.gesture_rotate,
             "autoclose_panels": self.autoclose_panels,
             "tap_undo": self.tap_undo,
+            "finger_mode": format!("{:?}", self.finger_mode),
             "pen_button_tool": self.pen_button_tool.map(|t| format!("{t:?}")),
             "color_triangle": self.color_state.triangle,
             "color_float": self.color_float,
