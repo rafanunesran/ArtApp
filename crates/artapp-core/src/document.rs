@@ -27,6 +27,9 @@ pub struct Layer {
     pub reference: bool,
     /// Camada de rascunho: aparece na tela, mas fica fora da exportação e do balde.
     pub draft: bool,
+    /// Máscara da camada logo abaixo: o cinza dela esconde (preto) ou mostra (branco, ou sem
+    /// tinta) a camada dona. Fica sempre colada acima da dona.
+    pub mask: bool,
     /// Camadas vetoriais: a arte editável. `surface` guarda a cópia rasterizada dela.
     pub vector: Option<crate::vector::VectorArt>,
     pub surface: Surface,
@@ -44,6 +47,7 @@ impl Layer {
             clip: false,
             reference: false,
             draft: false,
+            mask: false,
             vector: None,
             surface: Surface::new(PixelFormat::RGBA8),
         }
@@ -92,6 +96,13 @@ impl Document {
         layers: Vec<Layer>,
         active: usize,
     ) -> Self {
+        let mut layers = layers;
+        // Máscara só vale colada numa camada que não é máscara.
+        for i in 0..layers.len() {
+            if layers[i].mask && (i == 0 || layers[i - 1].mask) {
+                layers[i].mask = false;
+            }
+        }
         let next_id = layers.iter().map(|l| l.id).max().unwrap_or(0) + 1;
         let mut doc = Self {
             width: width.clamp(1, MAX_CANVAS_SIDE),
@@ -134,7 +145,7 @@ impl Document {
         self.layers.get_mut(self.active)
     }
 
-    fn make_layer(&mut self) -> Layer {
+    pub(crate) fn make_layer(&mut self) -> Layer {
         let id = self.next_id;
         self.next_id += 1;
         Layer::new(id, format!("Camada {id}"))
@@ -144,7 +155,8 @@ impl Document {
     pub fn add_layer(&mut self) {
         self.checkpoint();
         let layer = self.make_layer();
-        let at = (self.active + 1).min(self.layers.len());
+        // Acima da camada ativa e da máscara dela (nunca entre as duas).
+        let at = (self.unit(self.active).1 + 1).min(self.layers.len());
         self.layers.insert(at, layer);
         self.active = at;
     }
@@ -154,6 +166,11 @@ impl Document {
         let Some(src) = self.layers.get(self.active).cloned() else {
             return;
         };
+        if src.mask {
+            return;
+        }
+        let (_, end) = self.unit(self.active);
+        let mask = (end > self.active).then(|| self.layers[end].clone());
         self.checkpoint();
         let mut copy = self.make_layer();
         copy.name = format!("{} cópia", src.name);
@@ -163,8 +180,13 @@ impl Document {
         copy.clip = src.clip;
         copy.draft = src.draft;
         copy.vector = src.vector;
-        let at = self.active + 1;
+        let at = end + 1;
         self.layers.insert(at, copy);
+        if let Some(mut m) = mask {
+            m.id = self.next_id;
+            self.next_id += 1;
+            self.layers.insert(at + 1, m);
+        }
         self.active = at;
     }
 
@@ -180,23 +202,52 @@ impl Document {
             }
             return;
         }
-        self.layers.remove(self.active);
-        self.active = self.active.min(self.layers.len().saturating_sub(1));
-    }
-
-    /// Move a camada ativa para cima (`up`) ou para baixo na pilha.
-    pub fn move_layer(&mut self, up: bool) {
-        let to = if up {
-            self.active + 1
+        // Apagar a dona leva a máscara junto.
+        let (start, end) = self.unit(self.active);
+        let (start, end) = if self.layers[self.active].mask {
+            (self.active, self.active)
         } else {
-            self.active.wrapping_sub(1)
+            (start, end)
         };
-        if to >= self.layers.len() || self.active >= self.layers.len() {
+        if end - start + 1 >= self.layers.len() {
+            self.layers.truncate(1);
+            self.layers[0].surface = Surface::new(PixelFormat::RGBA8);
+            self.layers[0].mask = false;
+            self.active = 0;
             return;
         }
+        self.layers.drain(start..=end);
+        self.active = start.saturating_sub(1).min(self.layers.len() - 1);
+    }
+
+    /// Move a camada ativa (com a máscara dela) para cima (`up`) ou para baixo na pilha, passando
+    /// por cima da camada vizinha inteira (com a máscara dela).
+    pub fn move_layer(&mut self, up: bool) {
+        if self.layers.get(self.active).is_none_or(|l| l.mask) {
+            return;
+        }
+        let (start, end) = self.unit(self.active);
+        let (other_start, other_end) = if up {
+            if end + 1 >= self.layers.len() {
+                return;
+            }
+            self.unit(end + 1)
+        } else {
+            if start == 0 {
+                return;
+            }
+            self.unit(self.owner(start - 1))
+        };
         self.checkpoint();
-        self.layers.swap(self.active, to);
-        self.active = to;
+        let lo = start.min(other_start);
+        let hi = end.max(other_end);
+        if up {
+            self.layers[lo..=hi].rotate_left(end - start + 1);
+            self.active = hi - (end - start);
+        } else {
+            self.layers[lo..=hi].rotate_right(end - start + 1);
+            self.active = lo;
+        }
     }
 
     /// Mescla a camada ativa na de baixo (respeitando opacidade e modo de mesclagem).
@@ -204,9 +255,26 @@ impl Document {
         if self.active == 0 || self.active >= self.layers.len() {
             return;
         }
+        if self.layers[self.active].mask {
+            self.apply_mask();
+            return;
+        }
+        // Mescla na camada (dona) de baixo, nunca na máscara dela.
+        let below = self.owner(self.active - 1);
+        if self.layers[below].mask {
+            return;
+        }
         self.checkpoint();
-        let top = self.layers.remove(self.active);
-        let below = self.active - 1;
+        let mut top = self.layers[self.active].clone();
+        top.surface = self.masked_surface(self.active);
+        let (start, end) = self.unit(self.active);
+        self.layers.drain(start..=end);
+        // A dona de baixo tem máscara: ela entra na tinta antes de mesclar.
+        if self.layers.get(below + 1).is_some_and(|l| l.mask) {
+            let baked = self.masked_surface(below);
+            self.layers[below].surface = baked;
+            self.layers.remove(below + 1);
+        }
         if let Some(dst) = self.layers.get_mut(below) {
             // Mesclar numa camada vetorial a transforma em raster.
             dst.vector = None;

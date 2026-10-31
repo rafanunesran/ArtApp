@@ -16,6 +16,7 @@ pub mod edit;
 pub mod export;
 pub mod fill;
 pub mod heal;
+pub mod layer_mask;
 pub mod history;
 pub mod liquify;
 pub mod mask;

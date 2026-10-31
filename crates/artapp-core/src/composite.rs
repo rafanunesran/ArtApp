@@ -41,7 +41,12 @@ pub fn composite_pass(
     let mut row = vec![[0.0f32; 4]; n];
     // Alfa da camada base do grupo de recorte atual (`None` = a base não aparece).
     let mut clip_base: Option<Vec<f32>> = None;
-    for layer in &doc.layers {
+    let mut mask_row = Vec::new();
+    for (i, layer) in doc.layers.iter().enumerate() {
+        // A máscara entra junto com a camada de baixo, não sozinha.
+        if layer.mask {
+            continue;
+        }
         let included = match pass {
             Pass::Display => true,
             Pass::Final => !layer.draft,
@@ -59,6 +64,13 @@ pub fn composite_pass(
             continue;
         }
         layer.surface.read_rgba_into(r, &mut row);
+        if let Some(m) = doc.mask_above(i) {
+            mask_row.resize(n, [0.0f32; 4]);
+            m.surface.read_rgba_into(r, &mut mask_row);
+            for (p, k) in row.iter_mut().zip(&mask_row) {
+                p[3] *= mask_visibility(*k);
+            }
+        }
         if layer.clip {
             let Some(mask) = &clip_base else {
                 continue;
@@ -90,6 +102,13 @@ pub fn composite_pass(
             .map(|p| [q(p[0]), q(p[1]), q(p[2]), q(p[3])])
             .collect(),
     )
+}
+
+/// Quanto um pixel da máscara deixa ver: o cinza dele sobre branco (sem tinta = tudo aparece,
+/// preto = some).
+pub fn mask_visibility(p: [f32; 4]) -> f32 {
+    let l = 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2];
+    (l * p[3] + 1.0 - p[3]).clamp(0.0, 1.0)
 }
 
 /// Cor composta (com papel) num pixel da tela, para o conta-gotas.
