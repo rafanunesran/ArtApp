@@ -39,6 +39,7 @@ pub mod stroke;
 pub mod subject;
 pub mod symmetry;
 pub mod tone;
+pub mod trace;
 pub mod transform;
 pub mod vector;
 pub mod vectorkit;

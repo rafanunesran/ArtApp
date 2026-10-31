@@ -204,7 +204,7 @@ impl VectorArt {
     }
 
     /// A camada (do VectorCraft) onde os objetos novos entram.
-    fn target(&self) -> Option<NodeId> {
+    pub(crate) fn target(&self) -> Option<NodeId> {
         self.doc.layers.last().map(|l| l.id)
     }
 }
