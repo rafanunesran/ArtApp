@@ -719,8 +719,9 @@ fn point(app: &ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, time: f64
     let (x, y) = app.view.to_canvas(panel, p);
     let pressure = force
         .filter(|f| app.use_pressure && f.is_finite() && *f > 0.0)
-        .unwrap_or(1.0)
-        .clamp(0.0, 1.0);
+        .map_or(1.0, |f| {
+            artapp_core::pressure::apply(&app.pressure_curve, f)
+        });
     StrokePoint {
         time: time * 1000.0,
         ..StrokePoint::new(x, y, pressure)

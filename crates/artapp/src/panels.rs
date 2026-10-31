@@ -1216,6 +1216,121 @@ pub fn selection_launcher(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::R
         });
 }
 
+/// Editor da curva de pressão: arraste os pontos; toque num lugar vazio para pôr um ponto;
+/// arraste um ponto para fora da caixa para tirá-lo. Devolve se é hora de gravar.
+fn pressure_curve(ui: &mut egui::Ui, points: &mut Vec<[f32; 2]>) -> bool {
+    use artapp_core::pressure;
+    let mut save = false;
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new("Curva de pressão")
+                .size(12.0)
+                .color(color::TEXT_MUTED),
+        );
+        if !points.is_empty() && ui.small_button("Redefinir").clicked() {
+            points.clear();
+            save = true;
+        }
+    });
+    let side = ui.available_width().min(220.0);
+    let (rect, resp) =
+        ui.allocate_exact_size(Vec2::new(side, side * 0.62), Sense::click_and_drag());
+    let to_screen = |p: [f32; 2]| {
+        Pos2::new(
+            rect.left() + p[0] * rect.width(),
+            rect.bottom() - p[1] * rect.height(),
+        )
+    };
+    let from_screen = |q: Pos2| {
+        [
+            (q.x - rect.left()) / rect.width(),
+            (rect.bottom() - q.y) / rect.height(),
+        ]
+    };
+    let drag_id = ui.scope_id().with("pcurve_drag");
+    if resp.drag_started()
+        && let Some(q) = resp.interact_pointer_pos()
+    {
+        let near = points.iter().position(|p| to_screen(*p).distance(q) < 16.0);
+        let idx = near.or_else(|| {
+            (points.len() < pressure::MAX_POINTS).then(|| {
+                points.push(from_screen(q));
+                pressure::sanitize(points);
+                let x = from_screen(q)[0];
+                points
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| (a.1[0] - x).abs().total_cmp(&(b.1[0] - x).abs()))
+                    .map_or(0, |(i, _)| i)
+            })
+        });
+        ui.ctx().memory_mut(|m| m.data.insert_temp(drag_id, idx));
+    }
+    let dragging = ui
+        .ctx()
+        .memory(|m| m.data.get_temp::<Option<usize>>(drag_id))
+        .flatten();
+    let mut outside = false;
+    if let (Some(i), Some(q)) = (dragging, resp.interact_pointer_pos())
+        && i < points.len()
+    {
+        outside = !rect.expand(24.0).contains(q);
+        // O ponto fica entre os vizinhos, então a curva nunca desce enquanto arrasta.
+        let lo = if i == 0 { [0.0, 0.0] } else { points[i - 1] };
+        let hi = points.get(i + 1).copied().unwrap_or([1.0, 1.0]);
+        let p = from_screen(q);
+        points[i] = [
+            p[0].clamp(lo[0] + 0.02, hi[0] - 0.02),
+            p[1].clamp(lo[1], hi[1]),
+        ];
+    }
+    if resp.drag_stopped() {
+        if let Some(i) = dragging
+            && outside
+            && i < points.len()
+        {
+            points.remove(i);
+        }
+        pressure::sanitize(points);
+        ui.ctx()
+            .memory_mut(|m| m.data.remove::<Option<usize>>(drag_id));
+        save = true;
+    }
+    if resp.clicked()
+        && let Some(q) = resp.interact_pointer_pos()
+        && points.len() < pressure::MAX_POINTS
+        && !points.iter().any(|p| to_screen(*p).distance(q) < 16.0)
+    {
+        points.push(from_screen(q));
+        pressure::sanitize(points);
+        save = true;
+    }
+    let painter = ui.painter_at(rect.expand(8.0));
+    painter.rect_filled(rect, 6.0, color::SURFACE);
+    for k in 1..4 {
+        let t = k as f32 / 4.0;
+        let stroke = Stroke::new(1.0, color::BORDER);
+        painter.line_segment([to_screen([t, 0.0]), to_screen([t, 1.0])], stroke);
+        painter.line_segment([to_screen([0.0, t]), to_screen([1.0, t])], stroke);
+    }
+    let curve: Vec<Pos2> = (0..=48)
+        .map(|k| {
+            let x = k as f32 / 48.0;
+            to_screen([x, pressure::apply(points, x)])
+        })
+        .collect();
+    painter.add(egui::Shape::line(curve, Stroke::new(2.0, color::ACCENT)));
+    for (i, p) in points.iter().enumerate() {
+        let fill = if dragging == Some(i) && outside {
+            color::TEXT_MUTED
+        } else {
+            color::ACCENT
+        };
+        painter.circle(to_screen(*p), 6.0, fill, Stroke::new(1.5, color::TEXT));
+    }
+    save
+}
+
 fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
     let max = photocraft_max_size().min(1000.0);
     let use_pressure = &mut app.use_pressure;
@@ -1257,6 +1372,9 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
     }
     let pressure_changed = theme::switch(ui, use_pressure, "Usar pressão da caneta").changed();
     if pressure_changed {
+        app.save_prefs();
+    }
+    if app.use_pressure && pressure_curve(ui, &mut app.pressure_curve) {
         app.save_prefs();
     }
     ui.add_space(4.0);
