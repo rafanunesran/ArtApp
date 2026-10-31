@@ -1142,6 +1142,36 @@ impl ArtApp {
     }
 
     /// Guarda o pincel atual (com todos os ajustes) em "Meus pincéis".
+    /// Copia o pincel `i` para "Meus pincéis" com o nome "<nome> (cópia)", para mexer sem
+    /// estragar o original.
+    pub fn duplicate_brush(&mut self, i: usize) {
+        let Some(src) = self.brushes.get(i).cloned() else {
+            return;
+        };
+        let mut name = format!("{} (cópia)", src.name);
+        let mut n = 2;
+        while self
+            .brushes
+            .iter()
+            .any(|b| b.group == brushes::CUSTOM_GROUP && b.name == name)
+        {
+            name = format!("{} (cópia {n})", src.name);
+            n += 1;
+        }
+        self.brushes.push(BrushEntry {
+            name: name.clone(),
+            group: brushes::CUSTOM_GROUP.into(),
+            settings: src.settings,
+        });
+        self.brush_previews.clear();
+        let last = self.brushes.len() - 1;
+        self.select_brush(last);
+        self.status = match brushes::save_custom(&brushes_path(), &self.brushes) {
+            Ok(()) => format!("\"{name}\" criado em Meus pincéis."),
+            Err(e) => format!("Pincel copiado, mas não foi possível gravar: {e}"),
+        };
+    }
+
     pub fn save_brush(&mut self) {
         let name = self.new_brush_name.trim();
         let name = if name.is_empty() {

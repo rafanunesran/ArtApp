@@ -2511,6 +2511,7 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
     let mut picked = None;
     let mut remove = None;
     let mut star = None;
+    let mut dup = None;
     let previews = app.brush_previews(ui.ctx());
     for &i in &shown {
         let entry = &app.brushes[i];
@@ -2538,6 +2539,10 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
                 star = Some(i);
                 ui.close();
             }
+            if ui.button(format!("{}  Duplicar", icon::COPY)).clicked() {
+                dup = Some(i);
+                ui.close();
+            }
             if custom
                 && ui
                     .button(format!("{}  Apagar pincel", icon::TRASH))
@@ -2557,7 +2562,7 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
         ui.label(RichText::new(msg).size(12.0).color(color::TEXT_MUTED));
     } else if query.is_empty() && cat != FAVORITES {
         ui.label(
-            RichText::new("Segure um pincel para favoritar.")
+            RichText::new("Segure um pincel para favoritar ou duplicar.")
                 .size(11.5)
                 .color(color::TEXT_MUTED),
         );
@@ -2571,6 +2576,9 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
     }
     if let Some(i) = star {
         app.toggle_favorite(i);
+    }
+    if let Some(i) = dup {
+        app.duplicate_brush(i);
     }
     if let Some(i) = picked {
         app.select_brush(i);
