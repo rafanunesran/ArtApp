@@ -2218,8 +2218,27 @@ fn brush_general(app: &mut ArtApp, ui: &mut egui::Ui) {
     if theme::switch(ui, &mut app.use_pressure, "Usar pressão da caneta").changed() {
         app.save_prefs();
     }
-    if app.use_pressure && pressure_curve(ui, &mut app.pressure_curve) {
-        app.save_prefs();
+    if app.use_pressure {
+        let key = app.current_brush_key();
+        if let Some(k) = &key {
+            let mut own = app.brush_curves.contains_key(k);
+            if theme::switch(ui, &mut own, "Curva própria deste pincel").changed() {
+                if own {
+                    app.brush_curves
+                        .insert(k.clone(), app.pressure_curve.clone());
+                } else {
+                    app.brush_curves.remove(k);
+                }
+                app.save_prefs();
+            }
+        }
+        let curve = match key.filter(|k| app.brush_curves.contains_key(k)) {
+            Some(k) => app.brush_curves.get_mut(&k),
+            None => Some(&mut app.pressure_curve),
+        };
+        if curve.is_some_and(|c| pressure_curve(ui, c)) {
+            app.save_prefs();
+        }
     }
     if theme::switch(
         ui,

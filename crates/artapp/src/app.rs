@@ -354,6 +354,9 @@ pub struct ArtApp {
     pub speed_pressure: bool,
     /// Pontos do meio da curva de pressão (vazio = linear).
     pub pressure_curve: Vec<[f32; 2]>,
+    /// Curvas de pressão próprias de alguns pincéis (chave de [`brush_key`]); os outros usam
+    /// `pressure_curve`.
+    pub brush_curves: std::collections::BTreeMap<String, Vec<[f32; 2]>>,
     /// Girar a vista com dois dedos (além de zoom e mover).
     pub gesture_rotate: bool,
     /// Ferramenta usada enquanto o botão lateral da caneta fica apertado (`None` = desligado).
@@ -554,6 +557,7 @@ impl ArtApp {
             use_pressure: true,
             speed_pressure: false,
             pressure_curve: Vec::new(),
+            brush_curves: Default::default(),
             gesture_rotate: true,
             pen_button_tool: Some(Tool::Eraser),
             autoclose_panels: true,
@@ -637,6 +641,12 @@ impl ArtApp {
         }
         if let Some(b) = flag("speed_pressure") {
             self.speed_pressure = b;
+        }
+        if let Some(m) = v
+            .get("brush_curves")
+            .and_then(|m| serde_json::from_value(m.clone()).ok())
+        {
+            self.brush_curves = m;
         }
         if let Some(c) = v
             .get("pressure_curve")
@@ -768,6 +778,7 @@ impl ArtApp {
             "use_pressure": self.use_pressure,
             "speed_pressure": self.speed_pressure,
             "pressure_curve": self.pressure_curve,
+            "brush_curves": self.brush_curves,
             "vector_pen_size": self.vector_pen.size,
             "vector_pen_min_size": self.vector_pen.min_size,
             "vector_pen_opacity": self.vector_pen.opacity,
@@ -931,6 +942,20 @@ impl ArtApp {
                 self.save_prefs();
             }
         }
+    }
+
+    /// Chave do pincel em uso (para curva própria), só com a ferramenta Pincel.
+    pub fn current_brush_key(&self) -> Option<String> {
+        (self.tool == Tool::Brush)
+            .then(|| self.brushes.get(self.brush_index).map(brush_key))
+            .flatten()
+    }
+
+    /// A curva de pressão do traço: a do pincel em uso, se ele tem uma, ou a geral.
+    pub fn active_pressure_curve(&self) -> &[[f32; 2]] {
+        self.current_brush_key()
+            .and_then(|k| self.brush_curves.get(&k))
+            .map_or(&self.pressure_curve, |c| c)
     }
 
     /// O pincel atual mistura com a tela (categoria Mistura, ferramenta Pincel, cor não transparente).

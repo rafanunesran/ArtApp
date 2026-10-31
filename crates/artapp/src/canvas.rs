@@ -769,7 +769,7 @@ fn point(app: &ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, time: f64
     let pressure = force
         .filter(|f| app.use_pressure && f.is_finite() && *f > 0.0)
         .map_or(1.0, |f| {
-            artapp_core::pressure::apply(&app.pressure_curve, f)
+            artapp_core::pressure::apply(app.active_pressure_curve(), f)
         });
     StrokePoint {
         time: time * 1000.0,
@@ -1060,7 +1060,7 @@ fn tool_down(
     }
     let mut pt = point(app, panel, p, force, time);
     if speed_pressure_on(app, touch) {
-        pt.pressure = artapp_core::pressure::apply(&app.pressure_curve, SPEED_START);
+        pt.pressure = artapp_core::pressure::apply(app.active_pressure_curve(), SPEED_START);
     }
     if app.drop_fill.as_ref().is_some_and(|d| d.continuing) {
         drop_fill_at(app, pt.x, pt.y);
@@ -1368,7 +1368,7 @@ fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, t
         let dt = (time - t0).max(1e-3) as f32;
         let k = artapp_core::pressure::from_speed(p.distance(last) / dt, prev);
         s.speed = Some((p, time, k));
-        pt.pressure = artapp_core::pressure::apply(&app.pressure_curve, k);
+        pt.pressure = artapp_core::pressure::apply(app.active_pressure_curve(), k);
     }
     snap_to_ruler(app, &mut pt);
     let vp = VPoint::new(pt.x, pt.y);
