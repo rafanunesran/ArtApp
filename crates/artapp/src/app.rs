@@ -254,6 +254,10 @@ pub struct ArtApp {
     pub brush_index: usize,
     /// Pincéis usados por último (chave de [`brush_key`]), o mais recente primeiro.
     pub brush_recent: Vec<String>,
+    /// Mostra no canto o tempo de cada quadro (diagnóstico de lentidão).
+    pub show_perf: bool,
+    /// Duração dos últimos quadros, em segundos (o mais novo no fim).
+    pub frame_times: std::collections::VecDeque<f32>,
     /// Passo do tour aberto (`None` = fechado).
     pub tour_step: Option<usize>,
     /// O tour da primeira abertura já foi visto ou pulado.
@@ -602,6 +606,8 @@ impl ArtApp {
             eyedropper_from: Default::default(),
             brush_recent: Vec::new(),
             tour_step: None,
+            show_perf: false,
+            frame_times: Default::default(),
             tour_done: false,
             spring: None,
             brush_favorites: Vec::new(),
@@ -669,6 +675,9 @@ impl ArtApp {
         }
         // Sem a chave (prefs de antes do tour) também conta como visto: só app novo mostra.
         self.tour_done = flag("tour_done").unwrap_or(true);
+        if let Some(b) = flag("show_perf") {
+            self.show_perf = b;
+        }
         if let Some(b) = flag("speed_pressure") {
             self.speed_pressure = b;
         }
@@ -819,6 +828,7 @@ impl ArtApp {
             "use_pressure": self.use_pressure,
             "speed_pressure": self.speed_pressure,
             "tour_done": self.tour_done,
+            "show_perf": self.show_perf,
             "pressure_curve": self.pressure_curve,
             "brush_curves": self.brush_curves,
             "vector_pen_size": self.vector_pen.size,
@@ -1997,6 +2007,9 @@ impl eframe::App for ArtApp {
         crate::backup::show(self, &ctx);
         crate::updater::show(self, &ctx);
         crate::tour::show(self, &ctx);
+        if self.show_perf {
+            panels::perf_overlay(self, &ctx, canvas);
+        }
         if self.show_new_dialog {
             panels::new_canvas_dialog(self, &ctx);
         }

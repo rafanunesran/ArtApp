@@ -264,6 +264,11 @@ fn app_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             theme::switch(ui, &mut app.left_handed, "Ferramentas à direita (canhoto)")
         })
         .changed();
+    changed |= ui
+        .add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
+            theme::switch(ui, &mut app.show_perf, "Mostrar desempenho (ms por quadro)")
+        })
+        .changed();
     let r = artapp_core::history::UNDO_RANGE;
     let resp = ui.add(
         egui::Slider::new(&mut app.undo_steps, *r.start()..=*r.end())
@@ -3637,6 +3642,50 @@ fn color_body(app: &mut ArtApp, ui: &mut egui::Ui) {
 }
 
 /// Aviso curto embaixo, que some sozinho.
+/// Quadros guardados para a média do diagnóstico de desempenho.
+const PERF_FRAMES: usize = 120;
+
+/// Canto de diagnóstico: tempo médio e pior tempo de quadro dos últimos quadros, quadros por
+/// segundo, camadas e tamanho da tela. Acima de ~16 ms o traço começa a parecer atrasado.
+pub fn perf_overlay(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) {
+    let dt = ctx.input(|i| i.unstable_dt);
+    // Pausas sem nada acontecendo (o egui só redesenha quando precisa) não contam.
+    if dt.is_finite() && dt > 0.0 && dt < 0.25 {
+        app.frame_times.push_back(dt);
+        while app.frame_times.len() > PERF_FRAMES {
+            app.frame_times.pop_front();
+        }
+    }
+    let n = app.frame_times.len().max(1) as f32;
+    let avg = app.frame_times.iter().sum::<f32>() / n * 1000.0;
+    let worst = app.frame_times.iter().copied().fold(0.0f32, f32::max) * 1000.0;
+    let text = format!(
+        "{avg:.1} ms (pior {worst:.0} ms) · {:.0} qps\n{} camadas · {} × {} px",
+        if avg > 0.0 { 1000.0 / avg } else { 0.0 },
+        app.doc.layers.len(),
+        app.doc.width,
+        app.doc.height
+    );
+    let warn = avg > 20.0;
+    egui::Area::new(Id::unique("perf"))
+        .order(Order::Tooltip)
+        .interactable(false)
+        .fixed_pos(canvas.left_top() + Vec2::new(8.0, 8.0))
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(Color32::from_black_alpha(160))
+                .corner_radius(CornerRadius::same(6))
+                .inner_margin(6.0)
+                .show(ui, |ui| {
+                    ui.label(RichText::new(text).size(11.5).monospace().color(if warn {
+                        color::ACCENT
+                    } else {
+                        Color32::WHITE
+                    }));
+                });
+        });
+}
+
 pub fn toast(app: &ArtApp, ctx: &egui::Context, canvas: egui::Rect, bottom_offset: f32) {
     let now = ctx.input(|i| i.time);
     let age = now - app.status_since;
