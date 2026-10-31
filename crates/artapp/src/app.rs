@@ -258,6 +258,8 @@ pub struct ArtApp {
     /// Carimbo: a origem, e se o próximo toque escolhe uma nova.
     pub clone_source: Option<[f64; 2]>,
     pub clone_picking: bool,
+    /// Pincel histórico: o passo da linha do tempo de onde ele pinta (0 = o mais antigo).
+    pub history_brush_step: usize,
     /// Cor principal (a de pintar).
     pub color: Color32,
     /// Cor secundária (troca com a principal pelo X ou tocando nela).
@@ -446,6 +448,7 @@ impl ArtApp {
             liquify_pressure: 0.6,
             clone_source: None,
             clone_picking: false,
+            history_brush_step: 0,
             eraser: BrushSettings {
                 size: 30.0,
                 hardness: 0.8,

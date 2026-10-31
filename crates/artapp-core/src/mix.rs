@@ -33,6 +33,9 @@ pub enum MixKind {
     /// Borracha de fundo: apaga a cor que está sob o centro do pincel (e as parecidas, pela
     /// força como tolerância), deixando as outras cores.
     BgErase,
+    /// Pincel histórico: pinta de volta a camada como ela estava num passo do histórico (a
+    /// origem fica em `MixSession::with_history`).
+    History,
 }
 
 type DabEffect = Box<dyn FnMut(&mut Region, &photocraft_paint::retouch::Footprint)>;
@@ -55,6 +58,8 @@ pub struct MixSession {
     offset: Option<(i32, i32)>,
     /// Borracha de fundo: o efeito de cada marca (lê a camada de antes do traço).
     bg: Option<DabEffect>,
+    /// Pincel histórico: a camada no passo escolhido.
+    history: Option<Surface>,
 }
 
 impl MixSession {
@@ -62,6 +67,17 @@ impl MixSession {
     pub fn with_source(mut self, source: [f64; 2]) -> Self {
         self.source = Some(source);
         self
+    }
+
+    /// Pincel histórico: pinta a partir de `surface` (a camada num passo anterior).
+    pub fn with_history(mut self, surface: Surface) -> Self {
+        self.history = Some(surface);
+        self
+    }
+
+    /// A camada que está sendo pintada.
+    pub fn layer_id(&self) -> u64 {
+        self.layer_id
     }
 
     pub fn begin(
@@ -104,6 +120,7 @@ impl MixSession {
             selection,
             source: None,
             offset: None,
+            history: None,
         })
     }
 
@@ -166,6 +183,11 @@ impl MixSession {
                 MixKind::BgErase => {
                     if let Some(e) = &mut self.bg {
                         e(&mut work, &fp);
+                    }
+                }
+                MixKind::History => {
+                    if let Some(h) = &self.history {
+                        clone_dab(&mut work, h, &fp, k, 0, 0)
                     }
                 }
                 MixKind::Clone => {
@@ -363,6 +385,38 @@ mod tests {
             assert!(doc.undo());
             assert_eq!(doc.layers[0].surface.rgba(52, 20)[3], 0.0);
         }
+    }
+
+    #[test]
+    fn history_brush_paints_back_an_old_step() {
+        let mut doc = Document::new(60, 40);
+        let id = doc.layers[0].id;
+        doc.checkpoint();
+        doc.layers[0]
+            .surface
+            .fill_rect(Rect::new(0, 0, 60, 40), &[1.0, 0.0, 0.0, 1.0]);
+        // Passo 0: vazio; passo 1 (o atual): vermelho.
+        let old = doc.history_surface(0, id).unwrap();
+        assert_eq!(old.rgba(30, 20)[3], 0.0);
+        assert_eq!(doc.history_surface(1, id).unwrap().rgba(30, 20)[3], 1.0);
+        let brush = BrushSettings {
+            size: 12.0,
+            ..Default::default()
+        };
+        let mut s = MixSession::begin(&mut doc, MixKind::History, &brush, 1.0)
+            .unwrap()
+            .with_history(old);
+        let pts: Vec<_> = (0..20)
+            .map(|i| StrokePoint::new(20.0 + i as f64, 20.0, 1.0))
+            .collect();
+        assert!(!s.add(&mut doc, &pts).is_empty());
+        s.end();
+        // No caminho o vermelho saiu; longe dele continua.
+        assert!(doc.layers[0].surface.rgba(30, 20)[3] < 0.2);
+        assert_eq!(doc.layers[0].surface.rgba(5, 5)[3], 1.0);
+        // O passo de antes do pincel ainda está na linha do tempo, e é desfazível.
+        assert!(doc.undo());
+        assert_eq!(doc.layers[0].surface.rgba(30, 20)[3], 1.0);
     }
 
     #[test]

@@ -1152,6 +1152,17 @@ fn tool_down(
                 app.status = "Origem do carimbo marcada. Agora pinte onde quer copiar.".into();
                 return;
             }
+            let history = if app.mix_kind == artapp_core::mix::MixKind::History {
+                let id = app.doc.active_layer().map(|l| l.id);
+                let src = id.and_then(|id| app.doc.history_surface(app.history_brush_step, id));
+                if src.is_none() {
+                    app.status = "Essa camada não existia nesse passo do histórico (ou a tela mudou de tamanho).".into();
+                    return;
+                }
+                src
+            } else {
+                None
+            };
             let Some(mut session) = artapp_core::mix::MixSession::begin(
                 &mut app.doc,
                 app.mix_kind,
@@ -1163,6 +1174,9 @@ fn tool_down(
             };
             if let Some(src) = app.clone_source.filter(|_| clone) {
                 session = session.with_source(src);
+            }
+            if let Some(h) = history {
+                session = session.with_history(h);
             }
             let dirty = session.add(&mut app.doc, &[pt]);
             app.invalidate(dirty);
