@@ -477,6 +477,10 @@ fn file_group(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.export_psd();
         ui.close();
     }
+    if item(ui, icon::ROTATE_3D, "Abrir modelo 3D (OBJ)…").clicked() {
+        app.pick_image_for(crate::projects::ImageUse::Model);
+        ui.close();
+    }
     if item(ui, icon::IMAGE_DOWN, "Exportar PDF").clicked() {
         app.export_pdf();
         ui.close();

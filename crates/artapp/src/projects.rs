@@ -186,6 +186,8 @@ pub enum ImageUse {
     Swatches,
     /// Pincéis: `.abr` ou uma imagem para ponta.
     Brushes,
+    /// Modelo 3D (`.obj`) para pintar.
+    Model,
 }
 
 struct Entry {
@@ -231,6 +233,9 @@ impl Browser {
             let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
             let wanted = if self.import && self.image_use == ImageUse::Swatches {
                 is_swatches(&path)
+            } else if self.import && self.image_use == ImageUse::Model {
+                path.extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("obj"))
             } else if self.import && self.image_use == ImageUse::Brushes {
                 is_image(&path)
                     || path
@@ -872,6 +877,7 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
         (true, ImageUse::Palette) => "Paleta de uma imagem",
         (true, ImageUse::Swatches) => "Importar amostras",
         (true, ImageUse::Brushes) => "Importar pincéis",
+        (true, ImageUse::Model) => "Abrir modelo 3D",
     };
     window(title).open(&mut open).show(ctx, |ui| {
         ui.set_width(w);
@@ -959,6 +965,8 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
             if b.entries.is_empty() {
                 ui.label(muted(if b.import && b.image_use == ImageUse::Swatches {
                     "Nenhum arquivo de amostras (ASE, ACO) nesta pasta."
+                } else if b.import && b.image_use == ImageUse::Model {
+                    "Nenhum modelo 3D (.obj) nesta pasta."
                 } else if b.import && b.image_use == ImageUse::Brushes {
                     "Nenhum pincel (.abr) nem imagem nesta pasta."
                 } else if b.import {
@@ -1153,6 +1161,7 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
                 ImageUse::Palette => app.palette_from_image(&path),
                 ImageUse::Swatches => app.import_swatches(&path),
                 ImageUse::Brushes => app.import_brushes(&path),
+                ImageUse::Model => app.open_model(&path),
             }
         } else {
             app.open_path(path);

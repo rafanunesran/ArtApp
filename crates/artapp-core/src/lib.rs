@@ -30,6 +30,7 @@ pub mod liquify;
 pub mod manga_lines;
 pub mod mask;
 pub mod mix;
+pub mod model3d;
 pub mod palette;
 pub mod pdf;
 pub mod pressure;
