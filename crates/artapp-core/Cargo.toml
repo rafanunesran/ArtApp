@@ -27,6 +27,7 @@ vectorcraft-color = { workspace = true }
 vectorcraft-trace = { workspace = true }
 vectorcraft-engine = { workspace = true }
 kurbo = { workspace = true }
+pdf-writer = "0.15"
 
 [lints]
 workspace = true

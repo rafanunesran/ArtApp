@@ -24,6 +24,9 @@ pub const ONION_MAX: u8 = 12;
 #[serde(default)]
 pub struct Animation {
     pub enabled: bool,
+    /// Páginas (Page Assist) em vez de animação: cada quadro é uma página, sem pele de cebola
+    /// nem fundo e primeiro plano fixos.
+    pub pages: bool,
     pub fps: f32,
     pub playback: Playback,
     /// Quadros de pele de cebola antes e depois do atual.
@@ -46,6 +49,7 @@ impl Default for Animation {
     fn default() -> Self {
         Self {
             enabled: false,
+            pages: false,
             fps: 12.0,
             playback: Playback::Loop,
             onion_before: 1,
@@ -105,7 +109,13 @@ impl Document {
         let Some(k) = self.frame_of(i) else {
             return FrameLook::Shown;
         };
-        if k == current || (a.background && k == 0) || (a.foreground && n > 1 && k == n - 1) {
+        if k == current {
+            return FrameLook::Shown;
+        }
+        if a.pages {
+            return FrameLook::Hidden;
+        }
+        if (a.background && k == 0) || (a.foreground && n > 1 && k == n - 1) {
             return FrameLook::Shown;
         }
         if !onion {
@@ -163,8 +173,13 @@ impl Document {
         self.active = self.layers.len().saturating_sub(1);
         self.add_layer();
         let n = self.frames().len();
+        let kind = if self.animation.pages {
+            "Página"
+        } else {
+            "Quadro"
+        };
         if let Some(l) = self.active_layer_mut() {
-            l.name = format!("Quadro {n}");
+            l.name = format!("{kind} {n}");
         }
         self.follow_active_frame();
     }

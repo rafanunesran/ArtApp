@@ -167,6 +167,7 @@ dependencies = [
  "image",
  "kurbo",
  "log",
+ "pdf-writer",
  "photocraft-algo",
  "photocraft-color",
  "photocraft-geom",

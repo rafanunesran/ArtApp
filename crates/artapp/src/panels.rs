@@ -477,6 +477,10 @@ fn file_group(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.export_psd();
         ui.close();
     }
+    if item(ui, icon::IMAGE_DOWN, "Exportar PDF").clicked() {
+        app.export_pdf();
+        ui.close();
+    }
     if item(ui, icon::FILM, "Timelapse…").clicked() {
         app.timelapse.open = true;
         ui.close();
@@ -655,11 +659,25 @@ fn view_group(app: &mut ArtApp, ui: &mut egui::Ui) {
         ui.close();
     }
     ui.separator();
-    let was = app.doc.animation.enabled;
+    // Animação e páginas usam a mesma linha do tempo: uma liga, a outra desliga.
+    let a = &app.doc.animation;
+    let was = (a.enabled && !a.pages, a.enabled && a.pages);
+    let (mut anim, mut pages) = was;
     ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
-        theme::switch(ui, &mut app.doc.animation.enabled, "Animação")
+        theme::switch(ui, &mut anim, "Animação")
     });
-    if app.doc.animation.enabled != was {
+    ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
+        theme::switch(ui, &mut pages, "Páginas")
+    });
+    if (anim, pages) != was {
+        let a = &mut app.doc.animation;
+        if anim != was.0 {
+            a.enabled = anim;
+            a.pages = false;
+        } else {
+            a.enabled = pages;
+            a.pages = pages;
+        }
         app.doc.follow_active_frame();
         app.anim_playing = false;
         app.redraw_canvas();

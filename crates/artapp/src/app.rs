@@ -1177,6 +1177,17 @@ impl ArtApp {
         };
     }
 
+    /// Exporta PDF: uma página, ou uma por página com as páginas ligadas.
+    pub fn export_pdf(&mut self) {
+        self.commit_transform();
+        self.status = match artapp_core::pdf::export(&self.doc)
+            .and_then(|bytes| platform::save_file("pdf", &bytes))
+        {
+            Ok(path) => format!("PDF salvo em {}", path.display()),
+            Err(e) => format!("Não foi possível salvar: {e}"),
+        };
+    }
+
     pub fn export_png(&mut self, with_paper: bool) {
         self.commit_transform();
         self.status = match artapp_core::export::png(&self.doc, with_paper)

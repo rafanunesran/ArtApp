@@ -32,8 +32,8 @@ pub fn composite_pass(
     with_paper: bool,
     pass: Pass,
 ) -> (Rect, Vec<[u8; 4]>) {
-    let view =
-        (pass == Pass::Display && doc.animation.enabled).then_some((doc.animation.current, true));
+    let a = &doc.animation;
+    let view = (pass == Pass::Display && a.enabled).then_some((a.current, !a.pages));
     composite_view(doc, r, with_paper, pass, view)
 }
 
