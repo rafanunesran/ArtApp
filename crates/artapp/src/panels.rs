@@ -393,6 +393,7 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
                 ui.data_mut(|d| d.insert_temp(menu_group_id(), g));
             }
         }
+        update_menu_item(app, ui);
         return;
     };
     ui.horizontal(|ui| {
@@ -687,18 +688,23 @@ fn view_group(app: &mut ArtApp, ui: &mut egui::Ui) {
 /// Preferências gerais e atualização do app.
 fn prefs_group(app: &mut ArtApp, ui: &mut egui::Ui) {
     app_settings(app, ui);
-    if crate::platform::update::SUPPORTED {
-        ui.separator();
-        if menu_item(ui, icon::ROTATE_CW, "Atualizar app").clicked() {
-            app.check_update();
-            ui.close();
-        }
-        ui.label(
-            RichText::new(format!("Build instalado: {}", app.updater.installed()))
-                .size(12.0)
-                .color(crate::theme::color::TEXT_MUTED),
-        );
+}
+
+/// "Atualizar app" fica direto na lista principal do menu, fora dos grupos.
+fn update_menu_item(app: &mut ArtApp, ui: &mut egui::Ui) {
+    if !crate::platform::update::SUPPORTED {
+        return;
     }
+    ui.separator();
+    if menu_item(ui, icon::ROTATE_CW, "Atualizar app").clicked() {
+        app.check_update();
+        ui.close();
+    }
+    ui.label(
+        RichText::new(format!("Build instalado: {}", app.updater.installed()))
+            .size(12.0)
+            .color(crate::theme::color::TEXT_MUTED),
+    );
 }
 
 // ---------- Ferramentas ----------
