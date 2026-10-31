@@ -89,6 +89,9 @@ pub struct Document {
     pub timelapse: crate::timelapse::Timelapse,
     /// Modelo 3D (texto OBJ) pintado com este desenho como textura.
     pub model: Option<std::sync::Arc<String>>,
+    /// Cores usadas neste desenho, da mais recente à mais antiga (RGBA sRGB 8 bits). Vão
+    /// gravadas no projeto para o histórico de cores voltar quando ele abre.
+    pub colors: Vec<[u8; 4]>,
     pub(crate) history: History,
     next_id: u64,
 }
@@ -110,6 +113,7 @@ impl Document {
             animation: Default::default(),
             timelapse: Default::default(),
             model: None,
+            colors: Vec::new(),
             history: History::default(),
             next_id: 1,
         };
@@ -147,6 +151,7 @@ impl Document {
             animation: Default::default(),
             timelapse: Default::default(),
             model: None,
+            colors: Vec::new(),
             history: History::default(),
             next_id,
         };
@@ -171,6 +176,7 @@ impl Document {
         d.animation = self.animation.clone();
         d.timelapse = self.timelapse.clone();
         d.model = self.model.clone();
+        d.colors = self.colors.clone();
         d
     }
 

@@ -288,6 +288,10 @@ pub struct ArtApp {
     /// Cor transparente escolhida: pincel e balde apagam.
     pub transparent: bool,
     pub recent_colors: Vec<Color32>,
+    /// De onde o conta-gotas pega a cor (tudo, sem referência, só a camada atual).
+    pub eyedropper_from: artapp_core::composite::SampleFrom,
+    /// Pegar um lugar transparente escolhe a cor transparente (o pincel passa a apagar).
+    pub eyedropper_erase: bool,
     pub fill_tolerance: f32,
     /// O balde recolore (troca a cor tocada pela principal) em vez de preencher.
     pub fill_recolor: bool,
@@ -558,6 +562,8 @@ impl ArtApp {
             copy_menu: None,
             drop_fill: None,
             hide_ui: false,
+            eyedropper_from: Default::default(),
+            eyedropper_erase: false,
             finger_mode: FingerMode::Auto,
             show_tools_panel: wide,
             show_layers_panel: wide,
@@ -637,6 +643,15 @@ impl ArtApp {
         }
         if let Some(f) = num("vector_pen_min_opacity") {
             self.vector_pen.min_opacity = f.clamp(0.0, 1.0);
+        }
+        if let Some(m) = v
+            .get("eyedropper_from")
+            .and_then(|m| serde_json::from_value(m.clone()).ok())
+        {
+            self.eyedropper_from = m;
+        }
+        if let Some(b) = flag("eyedropper_erase") {
+            self.eyedropper_erase = b;
         }
         if let Some(f) = num("vector_opacity") {
             self.vector_opacity = f.clamp(0.01, 1.0);
@@ -729,6 +744,8 @@ impl ArtApp {
             "vector_pen_opacity": self.vector_pen.opacity,
             "vector_pen_min_opacity": self.vector_pen.min_opacity,
             "vector_opacity": self.vector_opacity,
+            "eyedropper_from": self.eyedropper_from,
+            "eyedropper_erase": self.eyedropper_erase,
             "gesture_rotate": self.gesture_rotate,
             "autoclose_panels": self.autoclose_panels,
             "tap_undo": self.tap_undo,
@@ -1130,6 +1147,41 @@ impl ArtApp {
         self.recent_colors.retain(|x| *x != c);
         self.recent_colors.insert(0, c);
         self.recent_colors.truncate(12);
+        // O histórico vai junto com o desenho, para voltar quando ele abrir de novo.
+        self.doc.colors = self
+            .recent_colors
+            .iter()
+            .take(artapp_core::project::MAX_COLORS)
+            .map(|c| c.to_srgba_unmultiplied())
+            .collect();
+    }
+
+    /// Conta-gotas no pixel `(x, y)` da tela, olhando as camadas escolhidas nas opções. Devolve
+    /// uma frase para a barra de status, ou `None` se o ponto está fora do desenho.
+    pub fn pick_color_at(&mut self, x: i32, y: i32) -> Option<&'static str> {
+        let c = artapp_core::composite::sample_from(&self.doc, x, y, self.eyedropper_from)?;
+        if self.eyedropper_erase && c[3] < 0.02 {
+            self.transparent = true;
+            return Some("Transparente: o pincel e o balde apagam");
+        }
+        self.color = color_from_f32(c);
+        self.transparent = false;
+        self.remember_color();
+        Some("Cor pega")
+    }
+
+    /// O histórico de cores salvo no desenho que acabou de abrir volta para a lista de recentes.
+    pub fn load_colors_from_document(&mut self) {
+        if self.doc.colors.is_empty() {
+            return;
+        }
+        self.recent_colors = self
+            .doc
+            .colors
+            .iter()
+            .take(12)
+            .map(|c| Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]))
+            .collect();
     }
 
     /// A tela mudou de tamanho: recompõe tudo e reencaixa a vista.
