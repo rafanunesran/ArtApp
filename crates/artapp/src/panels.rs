@@ -185,6 +185,10 @@ fn pen_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
         (&mut app.tap_undo, "2 dedos desfaz, 3 refaz"),
         (&mut app.quick_shape, "Forma rápida (segurar no fim)"),
         (&mut app.hold_eyedropper, "Segurar o dedo pega a cor"),
+        (
+            &mut app.hold_quickmenu,
+            "Segurar o dedo abre o QuickMenu (tecla F)",
+        ),
         (&mut app.autoclose_panels, "Fechar painéis ao desenhar"),
     ] {
         changed |= ui

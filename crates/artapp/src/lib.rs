@@ -10,6 +10,7 @@ mod dialogs;
 mod panels;
 pub mod platform;
 mod projects;
+mod quick_menu;
 mod theme;
 mod transform_tool;
 mod updater;

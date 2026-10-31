@@ -322,6 +322,10 @@ pub struct ArtApp {
     pub quick_shape: bool,
     /// Segurar o dedo parado no começo do traço pega a cor (Procreate).
     pub hold_eyedropper: bool,
+    /// Segurar o dedo abre o QuickMenu (no lugar do conta-gotas).
+    pub hold_quickmenu: bool,
+    /// QuickMenu aberto, centrado neste ponto da tela.
+    pub quick_menu: Option<Pos2>,
     /// Interface escondida (toque com quatro dedos ou Tab): só a tela de desenho.
     pub hide_ui: bool,
     /// Se o dedo usa a ferramenta ou só mexe na vista (rejeição de palma).
@@ -456,6 +460,8 @@ impl ArtApp {
             tap_undo: true,
             quick_shape: true,
             hold_eyedropper: true,
+            hold_quickmenu: false,
+            quick_menu: None,
             hide_ui: false,
             finger_mode: FingerMode::Auto,
             show_tools_panel: wide,
@@ -516,6 +522,9 @@ impl ArtApp {
         if let Some(b) = flag("hold_eyedropper") {
             self.hold_eyedropper = b;
         }
+        if let Some(b) = flag("hold_quickmenu") {
+            self.hold_quickmenu = b;
+        }
         if let Some(b) = flag("color_triangle") {
             self.color_state.triangle = b;
         }
@@ -559,6 +568,7 @@ impl ArtApp {
             "tap_undo": self.tap_undo,
             "quick_shape": self.quick_shape,
             "hold_eyedropper": self.hold_eyedropper,
+            "hold_quickmenu": self.hold_quickmenu,
             "finger_mode": format!("{:?}", self.finger_mode),
             "pen_button_tool": self.pen_button_tool.map(|t| format!("{t:?}")),
             "color_triangle": self.color_state.triangle,
@@ -1167,6 +1177,13 @@ impl ArtApp {
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::T)) {
             self.start_transform();
         }
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F)) {
+            let at = ctx.input(|i| i.pointer.hover_pos());
+            self.quick_menu = match self.quick_menu {
+                Some(_) => None,
+                None => Some(at.unwrap_or(self.canvas_rect.center())),
+            };
+        }
         if enter {
             self.finish_bezier(false);
         }
@@ -1325,6 +1342,7 @@ impl eframe::App for ArtApp {
 
         let canvas = self.canvas_rect;
         crate::transform_tool::toolbar(self, &ctx, canvas);
+        crate::quick_menu::show(self, &ctx);
         if hide {
             panels::show_ui_button(self, &ctx, canvas);
             panels::toast(self, &ctx, canvas, 0.0);
