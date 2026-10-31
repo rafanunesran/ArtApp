@@ -131,6 +131,8 @@ pub struct Browser {
     thumbs: HashMap<PathBuf, Option<TextureHandle>>,
     /// Escolhendo uma imagem para importar como camada (em vez de abrir um projeto).
     import: bool,
+    /// Para que serve a imagem escolhida (com `import`).
+    image_use: ImageUse,
 }
 
 /// Imagens que dá para importar como camada.
@@ -141,6 +143,15 @@ fn is_image(path: &Path) -> bool {
             "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp"
         )
     })
+}
+
+/// Para que a imagem escolhida vai servir.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ImageUse {
+    #[default]
+    Layer,
+    Reference,
+    Palette,
 }
 
 struct Entry {
@@ -157,6 +168,7 @@ impl Browser {
 
     fn with_mode(dir: PathBuf, import: bool) -> Self {
         let mut b = Self {
+            image_use: ImageUse::Layer,
             dir,
             shared_access: platform::can_read_shared_files(),
             entries: Vec::new(),
@@ -306,6 +318,14 @@ impl ArtApp {
     }
 
     /// Escolher uma imagem (PNG, JPEG, WebP…) para virar camada nova.
+    /// Escolher uma imagem para `use_for` (camada nova, referência ou paleta).
+    pub fn pick_image_for(&mut self, use_for: ImageUse) {
+        self.import_image_dialog();
+        if let Some(FileDialog::Open(b)) = &mut self.projects.dialog {
+            b.image_use = use_for;
+        }
+    }
+
     pub fn import_image_dialog(&mut self) {
         // Começa em Imagens (ou Downloads), se existir.
         let dir = platform::browse_roots()
@@ -315,6 +335,51 @@ impl ArtApp {
             .next()
             .unwrap_or_else(platform::projects_dir);
         self.projects.dialog = Some(FileDialog::Open(Browser::with_mode(dir, true)));
+    }
+
+    /// Abre a imagem na janela de referência.
+    pub fn open_reference(&mut self, path: &Path) {
+        match std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|b| artapp_core::edit::decode_image(&b))
+        {
+            Ok((w, h, px)) => {
+                self.reference = Some(crate::reference::Reference::new(w, h, px));
+            }
+            Err(e) => self.status = format!("Não foi possível abrir a referência: {e}"),
+        }
+    }
+
+    /// Cria um conjunto de cores com as cores principais da imagem.
+    pub fn palette_from_image(&mut self, path: &Path) {
+        let res = std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|b| artapp_core::edit::decode_image(&b));
+        let (_, _, px) = match res {
+            Ok(v) => v,
+            Err(e) => {
+                self.status = format!("Não foi possível ler a imagem: {e}");
+                return;
+            }
+        };
+        let colors = artapp_core::palette::from_pixels(&px, 12);
+        if colors.is_empty() {
+            self.status = "A imagem não tem cores (está transparente).".into();
+            return;
+        }
+        let name = path
+            .file_stem()
+            .map_or("Foto".into(), |s| s.to_string_lossy().into_owned());
+        let st = &mut self.color_state;
+        st.sets.push(crate::color_panel::ColorSet {
+            name,
+            colors: colors.iter().map(|c| [c[0], c[1], c[2], 255]).collect(),
+        });
+        st.set_index = st.sets.len() - 1;
+        st.tab = crate::color_panel::ColorTab::Sets;
+        crate::color_panel::save_sets(&st.sets);
+        self.show_color = true;
+        self.status = format!("Conjunto com {} cores criado.", colors.len());
     }
 
     /// Lê a imagem e põe numa camada nova, no centro da tela.
@@ -670,7 +735,12 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
     let screen = ctx.content_rect();
     let w = (screen.width() - 32.0).clamp(280.0, 520.0);
     let h = (screen.height() - 140.0).clamp(220.0, 560.0);
-    let title = if b.import { "Importar imagem" } else { "Abrir" };
+    let title = match (b.import, b.image_use) {
+        (false, _) => "Abrir",
+        (true, ImageUse::Layer) => "Importar imagem",
+        (true, ImageUse::Reference) => "Imagem de referência",
+        (true, ImageUse::Palette) => "Paleta de uma imagem",
+    };
     window(title).open(&mut open).show(ctx, |ui| {
         ui.set_width(w);
         ui.set_max_width(w);
@@ -779,11 +849,17 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
         });
     });
     if let Some(dir) = go_to {
+        let image_use = b.image_use;
         *b = Browser::with_mode(dir, b.import);
+        b.image_use = image_use;
     }
     if let Some(path) = pick {
         if b.import {
-            app.import_image(&path);
+            match b.image_use {
+                ImageUse::Layer => app.import_image(&path),
+                ImageUse::Reference => app.open_reference(&path),
+                ImageUse::Palette => app.palette_from_image(&path),
+            }
         } else {
             app.open_path(path);
         }
