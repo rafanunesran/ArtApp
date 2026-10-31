@@ -8,6 +8,7 @@
 //! inteira).
 #![forbid(unsafe_code)]
 
+pub mod border;
 pub mod brushes;
 pub mod canvas_size;
 pub mod composite;

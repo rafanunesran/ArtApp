@@ -98,6 +98,11 @@ struct LayerEntry {
     collapsed: bool,
     #[serde(default)]
     parent: Option<u64>,
+    /// Borda da camada: espessura (0 = sem) e cor.
+    #[serde(default)]
+    border_width: f32,
+    #[serde(default)]
+    border_color: [f32; 3],
     /// Pixels: o retângulo pintado e o PNG dele. `None` = camada vazia.
     #[serde(default)]
     pixels: Option<Pixels>,
@@ -179,6 +184,8 @@ pub fn save(doc: &Document) -> Result<Vec<u8>, String> {
             folder: l.folder,
             collapsed: l.collapsed,
             parent: l.parent,
+            border_width: l.border.map_or(0.0, |b| b.width),
+            border_color: l.border.map_or([0.0; 3], |b| b.color),
             pixels,
             vector,
         });
@@ -273,6 +280,10 @@ pub fn load(bytes: &[u8]) -> Result<Document, String> {
         layer.folder = e.folder;
         layer.collapsed = e.collapsed;
         layer.parent = e.parent;
+        layer.border = (e.border_width > 0.0).then(|| crate::border::Border {
+            width: e.border_width.min(crate::border::MAX_WIDTH),
+            color: e.border_color.map(|c| c.clamp(0.0, 1.0)),
+        });
         if let Some(p) = &e.pixels {
             let (w, h, px) = decode_rgba(slice(data, &p.png)?)?;
             if (w, h) != (p.w, p.h) {

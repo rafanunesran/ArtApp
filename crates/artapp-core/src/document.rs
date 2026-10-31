@@ -36,6 +36,8 @@ pub struct Layer {
     pub collapsed: bool,
     /// A pasta em que a camada está (id), se estiver numa.
     pub parent: Option<u64>,
+    /// Borda em volta da tinta (propriedade de camada do Clip Studio).
+    pub border: Option<crate::border::Border>,
     /// Camadas vetoriais: a arte editável. `surface` guarda a cópia rasterizada dela.
     pub vector: Option<crate::vector::VectorArt>,
     pub surface: Surface,
@@ -57,6 +59,7 @@ impl Layer {
             folder: false,
             collapsed: false,
             parent: None,
+            border: None,
             vector: None,
             surface: Surface::new(PixelFormat::RGBA8),
         }
@@ -325,6 +328,8 @@ impl Document {
         if self.layers.get(below + 1).is_some_and(|l| l.mask) {
             let baked = self.masked_surface(below);
             self.layers[below].surface = baked;
+            // A borda foi junto para a tinta.
+            self.layers[below].border = None;
             self.layers.remove(below + 1);
         }
         if let Some(dst) = self.layers.get_mut(below) {
