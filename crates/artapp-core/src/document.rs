@@ -83,6 +83,8 @@ pub struct Document {
     /// Resolução de impressão (pontos por polegada). Não muda os pixels: só diz o tamanho em
     /// cm/pol e vai gravada no projeto e no PSD.
     pub dpi: f32,
+    /// Assistente de animação: cada camada de cima (ou pasta) é um quadro.
+    pub animation: crate::animation::Animation,
     pub(crate) history: History,
     next_id: u64,
 }
@@ -101,6 +103,7 @@ impl Document {
             active: 0,
             selection: None,
             dpi: DEFAULT_DPI,
+            animation: Default::default(),
             history: History::default(),
             next_id: 1,
         };
@@ -135,6 +138,7 @@ impl Document {
             active: 0,
             selection: None,
             dpi: DEFAULT_DPI,
+            animation: Default::default(),
             history: History::default(),
             next_id,
         };

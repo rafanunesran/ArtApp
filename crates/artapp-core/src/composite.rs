@@ -24,13 +24,33 @@ pub fn composite_rgba8(doc: &Document, r: Rect, with_paper: bool) -> (Rect, Vec<
     composite_pass(doc, r, with_paper, Pass::Display)
 }
 
-/// Como [`composite_rgba8`], escolhendo as camadas pelo `pass`.
+/// Como [`composite_rgba8`], escolhendo as camadas pelo `pass`. Com a animação ligada, a tela
+/// (`Pass::Display`) mostra só o quadro atual e a pele de cebola.
 pub fn composite_pass(
     doc: &Document,
     r: Rect,
     with_paper: bool,
     pass: Pass,
 ) -> (Rect, Vec<[u8; 4]>) {
+    let view =
+        (pass == Pass::Display && doc.animation.enabled).then_some((doc.animation.current, true));
+    composite_view(doc, r, with_paper, pass, view)
+}
+
+/// O quadro `k` inteiro da animação, sem pele de cebola (exportar).
+pub fn composite_frame(doc: &Document, k: usize, with_paper: bool) -> Vec<[u8; 4]> {
+    composite_view(doc, doc.bounds(), with_paper, Pass::Final, Some((k, false))).1
+}
+
+/// `view`: quadro mostrado e se há pele de cebola.
+fn composite_view(
+    doc: &Document,
+    r: Rect,
+    with_paper: bool,
+    pass: Pass,
+    view: Option<(usize, bool)>,
+) -> (Rect, Vec<[u8; 4]>) {
+    use crate::animation::FrameLook;
     let r = r.intersect(&doc.bounds());
     if r.is_empty() {
         return (r, Vec::new());
@@ -57,7 +77,13 @@ pub fn composite_pass(
             continue;
         }
         let fold = doc.folder_mix(i);
-        let opacity = layer.opacity * fold.unwrap_or(0.0);
+        let look = view.map_or(FrameLook::Shown, |(k, onion)| doc.frame_look(i, k, onion));
+        let (look_k, tint) = match look {
+            FrameLook::Shown => (1.0, None),
+            FrameLook::Onion(o, t) => (o, t),
+            FrameLook::Hidden => (0.0, None),
+        };
+        let opacity = layer.opacity * fold.unwrap_or(0.0) * look_k;
         let shown = included && layer.visible && opacity > 0.0;
         if !layer.clip {
             clip_base = None;
@@ -78,6 +104,14 @@ pub fn composite_pass(
         }
         if let Some(t) = &layer.tone {
             crate::tone::apply(t, r, &mut row);
+        }
+        if let Some(c) = tint {
+            // Pele de cebola colorida: a tinta vira a cor do lado (mantendo o alfa).
+            for p in row.iter_mut() {
+                p[0] = c[0];
+                p[1] = c[1];
+                p[2] = c[2];
+            }
         }
         if let Some(m) = doc.mask_above(i) {
             mask_row.resize(n, [0.0f32; 4]);

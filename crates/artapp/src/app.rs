@@ -258,6 +258,11 @@ pub struct ArtApp {
     /// Carimbo: a origem, e se o próximo toque escolhe uma nova.
     pub clone_source: Option<[f64; 2]>,
     pub clone_picking: bool,
+    /// Animação tocando, direção (ida e volta) e quando trocar de quadro.
+    pub anim_playing: bool,
+    pub anim_dir: i8,
+    pub anim_next: f64,
+    pub anim_settings_open: bool,
     /// Pincel histórico: o passo da linha do tempo de onde ele pinta (0 = o mais antigo).
     pub history_brush_step: usize,
     /// Cor principal (a de pintar).
@@ -448,6 +453,10 @@ impl ArtApp {
             liquify_pressure: 0.6,
             clone_source: None,
             clone_picking: false,
+            anim_playing: false,
+            anim_dir: 1,
+            anim_next: 0.0,
+            anim_settings_open: false,
             history_brush_step: 0,
             eraser: BrushSettings {
                 size: 30.0,
@@ -707,6 +716,11 @@ impl ArtApp {
             r
         };
         self.pending = self.pending.union(&r);
+    }
+
+    /// Recompõe a tela inteira sem marcar o desenho como alterado (trocar o quadro mostrado).
+    pub fn redraw_canvas(&mut self) {
+        self.pending = self.doc.bounds();
     }
 
     pub fn invalidate_all(&mut self) {
@@ -1111,6 +1125,22 @@ impl ArtApp {
         };
     }
 
+    /// Exporta a animação como GIF ou PNG animado (lado maior até 1080 px).
+    pub fn export_animation(&mut self, apng: bool) {
+        self.commit_transform();
+        let res = if apng {
+            artapp_core::animation::export_apng(&self.doc, 1080, true)
+                .and_then(|b| platform::save_file("png", &b))
+        } else {
+            artapp_core::animation::export_gif(&self.doc, 1080)
+                .and_then(|b| platform::save_file("gif", &b))
+        };
+        self.status = match res {
+            Ok(path) => format!("Animação salva em {}", path.display()),
+            Err(e) => format!("Não foi possível salvar: {e}"),
+        };
+    }
+
     pub fn export_png(&mut self, with_paper: bool) {
         self.commit_transform();
         self.status = match artapp_core::export::png(&self.doc, with_paper)
@@ -1474,6 +1504,7 @@ impl eframe::App for ArtApp {
                 .frame(bar)
                 .show(ui, |ui| panels::bottom_tools(self, ui));
         }
+        crate::anim_bar::tick(self, &ctx);
         egui::CentralPanel::no_frame().show(ui, |ui| crate::canvas::show(self, ui));
 
         let canvas = self.canvas_rect;
@@ -1484,6 +1515,7 @@ impl eframe::App for ArtApp {
         crate::reference::show(self, &ctx);
         crate::canvas::drop_fill_bar(self, &ctx, canvas);
         crate::canvas::persp_crop_bar(self, &ctx, canvas);
+        crate::anim_bar::show(self, &ctx, canvas);
         if hide {
             panels::show_ui_button(self, &ctx, canvas);
             panels::toast(self, &ctx, canvas, 0.0);

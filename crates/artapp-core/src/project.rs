@@ -57,6 +57,9 @@ struct Manifest {
     /// Resolução de impressão.
     #[serde(default = "default_dpi")]
     dpi: f32,
+    /// Assistente de animação (ligado, fps, pele de cebola…).
+    #[serde(default)]
+    animation: crate::animation::Animation,
     #[serde(default)]
     layers: Vec<LayerEntry>,
 }
@@ -212,6 +215,7 @@ pub fn save(doc: &Document) -> Result<Vec<u8>, String> {
         active: doc.active,
         preview,
         dpi: doc.dpi,
+        animation: doc.animation.clone(),
         layers,
     };
     let json = serde_json::to_vec(&manifest).map_err(|e| e.to_string())?;
@@ -325,6 +329,8 @@ pub fn load(bytes: &[u8]) -> Result<Document, String> {
         layers.push(layer);
     }
     let mut doc = Document::from_parts(m.width, m.height, m.paper, layers, m.active);
+    doc.animation = m.animation.clone();
+    doc.follow_active_frame();
     if m.dpi.is_finite() && m.dpi > 0.0 {
         doc.dpi = m.dpi.clamp(1.0, 10_000.0);
     }

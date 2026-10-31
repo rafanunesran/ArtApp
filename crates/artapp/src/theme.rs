@@ -112,6 +112,10 @@ pub mod icon {
     pub const FLIP_H_SIMPLE: char = '\u{e35d}';
     pub const SCISSORS_DASHED: char = '\u{e4e9}';
     pub const SPLINE: char = '\u{e38b}';
+    pub const PLAY: char = '\u{e13c}';
+    pub const PAUSE: char = '\u{e12e}';
+    pub const SETTINGS: char = '\u{e154}';
+    pub const FILM: char = '\u{e0d0}';
 }
 
 const ICON_FONT: &[u8] = include_bytes!("../../../assets/fonts/lucide-artapp.ttf");

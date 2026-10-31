@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod abr;
+pub mod animation;
 pub mod border;
 pub mod brushes;
 pub mod canvas_size;
