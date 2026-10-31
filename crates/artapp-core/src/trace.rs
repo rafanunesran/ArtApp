@@ -72,11 +72,13 @@ impl Document {
                         stroke: Some(c),
                         width: width * scale,
                         fill: None,
+                        ..VectorStyle::default()
                     },
                     None => VectorStyle {
                         stroke: None,
                         width: 0.0,
                         fill: Some(c),
+                        ..VectorStyle::default()
                     },
                 };
                 let mut path = t.path.clone();

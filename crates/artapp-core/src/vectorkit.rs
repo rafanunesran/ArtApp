@@ -439,6 +439,7 @@ mod tests {
             stroke: Some([0.0, 0.0, 0.0]),
             width: 4.0,
             fill: Some([1.0, 0.0, 0.0]),
+            ..VectorStyle::default()
         });
         kit.select_tool("rectangle");
         let m = Mods::default();
