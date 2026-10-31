@@ -116,6 +116,8 @@ pub mod icon {
     pub const PAUSE: char = '\u{e12e}';
     pub const SETTINGS: char = '\u{e154}';
     pub const FILM: char = '\u{e0d0}';
+    pub const ELLIPSIS: char = '\u{e0b6}';
+    pub const FOLDER_PLUS: char = '\u{e0d9}';
 }
 
 const ICON_FONT: &[u8] = include_bytes!("../../../assets/fonts/lucide-artapp.ttf");
