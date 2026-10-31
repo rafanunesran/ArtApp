@@ -234,14 +234,14 @@ pub enum Dialog {
         params: serde_json::Value,
     },
     Adjust(Adjust),
-    /// Tamanho da tela: `scale` escala o desenho; senão só a área muda, presa em `anchor`
-    /// (0..9, da esquerda para a direita e de cima para baixo).
     /// Texto numa camada nova (raster, ou vetorial para editar depois).
     Text {
         text: String,
         size: f32,
         editable: bool,
     },
+    /// Tamanho da tela: `scale` escala o desenho; senão só a área muda, presa em `anchor`
+    /// (0..9, da esquerda para a direita e de cima para baixo).
     CanvasSize {
         width: u32,
         height: u32,

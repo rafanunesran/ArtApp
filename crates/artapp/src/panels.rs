@@ -362,6 +362,10 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.crop_to_selection();
         ui.close();
     }
+    if item(ui, icon::UNDO, "Histórico").clicked() {
+        app.history_open = true;
+        ui.close();
+    }
     if item(ui, icon::SPARKLES, "Filtros…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::filter(0));
         ui.close();

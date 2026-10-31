@@ -7,6 +7,7 @@ mod brush_editor;
 mod canvas;
 mod color_panel;
 mod dialogs;
+mod history_panel;
 mod panels;
 pub mod platform;
 mod projects;
