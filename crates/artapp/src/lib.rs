@@ -2,6 +2,7 @@
 //! (`cargo run -p artapp`) e no Android (biblioteca nativa carregada pela NativeActivity, ver
 //! `android/`).
 
+mod anim_bar;
 mod app;
 mod brush_editor;
 mod canvas;

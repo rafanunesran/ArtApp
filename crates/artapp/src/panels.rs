@@ -617,6 +617,16 @@ fn view_group(app: &mut ArtApp, ui: &mut egui::Ui) {
         ui.close();
     }
     ui.separator();
+    let was = app.doc.animation.enabled;
+    ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
+        theme::switch(ui, &mut app.doc.animation.enabled, "Animação")
+    });
+    if app.doc.animation.enabled != was {
+        app.doc.follow_active_frame();
+        app.anim_playing = false;
+        app.redraw_canvas();
+        ui.close();
+    }
     ui.add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
         theme::switch(ui, &mut app.show_navigator, "Navegador")
     });
