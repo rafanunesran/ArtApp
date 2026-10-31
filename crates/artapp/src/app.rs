@@ -350,6 +350,8 @@ pub struct ArtApp {
     pub kit_overlays: Vec<artapp_core::vectorkit::Overlay>,
     /// Usa a pressão da caneta/dedo (desligue se o dedo gerar pressão errática).
     pub use_pressure: bool,
+    /// Dedo e caneta sem pressão: a velocidade faz o papel da pressão (rápido = fino).
+    pub speed_pressure: bool,
     /// Pontos do meio da curva de pressão (vazio = linear).
     pub pressure_curve: Vec<[f32; 2]>,
     /// Girar a vista com dois dedos (além de zoom e mover).
@@ -546,6 +548,7 @@ impl ArtApp {
             kit_tool: "directSelection",
             kit_overlays: Vec::new(),
             use_pressure: true,
+            speed_pressure: false,
             pressure_curve: Vec::new(),
             gesture_rotate: true,
             pen_button_tool: Some(Tool::Eraser),
@@ -625,6 +628,9 @@ impl ArtApp {
         let flag = |k: &str| v.get(k).and_then(serde_json::Value::as_bool);
         if let Some(b) = flag("use_pressure") {
             self.use_pressure = b;
+        }
+        if let Some(b) = flag("speed_pressure") {
+            self.speed_pressure = b;
         }
         if let Some(c) = v
             .get("pressure_curve")
@@ -754,6 +760,7 @@ impl ArtApp {
     pub fn save_prefs(&mut self) {
         let v = serde_json::json!({
             "use_pressure": self.use_pressure,
+            "speed_pressure": self.speed_pressure,
             "pressure_curve": self.pressure_curve,
             "vector_pen_size": self.vector_pen.size,
             "vector_pen_min_size": self.vector_pen.min_size,

@@ -2033,6 +2033,22 @@ fn brush_general(app: &mut ArtApp, ui: &mut egui::Ui) {
     if app.use_pressure && pressure_curve(ui, &mut app.pressure_curve) {
         app.save_prefs();
     }
+    if theme::switch(
+        ui,
+        &mut app.speed_pressure,
+        "Pressão pela velocidade (dedo)",
+    )
+    .changed()
+    {
+        app.save_prefs();
+    }
+    if app.speed_pressure {
+        ui.label(
+            RichText::new("Sem caneta: devagar faz o traço cheio, rápido faz fino.")
+                .size(12.0)
+                .color(color::TEXT_MUTED),
+        );
+    }
     if eraser {
         section(ui, "Borracha mágica");
         theme::switch(ui, &mut app.eraser_magic, "Toque apaga a cor parecida");

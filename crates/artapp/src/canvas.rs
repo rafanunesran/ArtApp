@@ -131,6 +131,8 @@ struct ActiveStroke {
     travel: f32,
     /// A forma rápida em que o traço virou.
     quick: Option<artapp_core::quickshape::QuickShape>,
+    /// Pressão pela velocidade (dedo ou caneta sem pressão): último ponto de tela, hora e pressão.
+    speed: Option<(Pos2, f64, f32)>,
 }
 
 impl ActiveStroke {
@@ -143,6 +145,7 @@ impl ActiveStroke {
             still: (at, time),
             travel: 0.0,
             quick: None,
+            speed: None,
         }
     }
 }
@@ -758,6 +761,9 @@ fn start_gesture(app: &mut ArtApp, time: f64) {
     }
 }
 
+/// Pressão simulada no primeiro ponto do traço (antes de saber a velocidade).
+const SPEED_START: f32 = 0.85;
+
 fn point(app: &ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, time: f64) -> StrokePoint {
     let (x, y) = app.view.to_canvas(panel, p);
     let pressure = force
@@ -1053,6 +1059,9 @@ fn tool_down(
         return;
     }
     let mut pt = point(app, panel, p, force, time);
+    if speed_pressure_on(app, touch) {
+        pt.pressure = artapp_core::pressure::apply(&app.pressure_curve, SPEED_START);
+    }
     if app.drop_fill.as_ref().is_some_and(|d| d.continuing) {
         drop_fill_at(app, pt.x, pt.y);
         return;
@@ -1344,8 +1353,23 @@ fn tool_down(
     });
 }
 
+/// Com "pressão pela velocidade" ligada, o dedo e a caneta sem pressão ganham pressão simulada.
+fn speed_pressure_on(app: &ArtApp, touch: Option<u64>) -> bool {
+    app.speed_pressure && !touch.is_some_and(|id| crate::platform::pen_info(id).stylus)
+}
+
 fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, time: f64) {
     let mut pt = point(app, panel, p, force, time);
+    let touch = app.view.stroke.as_ref().and_then(|s| s.touch);
+    if speed_pressure_on(app, touch)
+        && let Some(s) = &mut app.view.stroke
+    {
+        let (last, t0, prev) = s.speed.unwrap_or((p, time, SPEED_START));
+        let dt = (time - t0).max(1e-3) as f32;
+        let k = artapp_core::pressure::from_speed(p.distance(last) / dt, prev);
+        s.speed = Some((p, time, k));
+        pt.pressure = artapp_core::pressure::apply(&app.pressure_curve, k);
+    }
     snap_to_ruler(app, &mut pt);
     let vp = VPoint::new(pt.x, pt.y);
     let min_handle = 3.0 / app.view.zoom.max(0.01) as f64;
