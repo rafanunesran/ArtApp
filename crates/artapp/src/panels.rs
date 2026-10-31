@@ -83,6 +83,7 @@ pub fn top_bar(app: &mut ArtApp, ui: &mut egui::Ui) {
                 app.redo();
             }
         });
+        save_button(app, ui);
 
         let compact = is_compact(ui.ctx());
         let title = if compact {
@@ -133,6 +134,38 @@ pub fn top_bar(app: &mut ArtApp, ui: &mut egui::Ui) {
             }
         }
     });
+}
+
+/// Atalho de "Salvar projeto" na barra de cima. Sem arquivo ainda, pergunta o nome (como
+/// "Salvar como"); segurar ou clicar com o botão direito sempre abre "Salvar como". Um ponto
+/// amarelo marca alterações não salvas e um ✓ aparece por um instante quando termina de gravar.
+fn save_button(app: &mut ArtApp, ui: &mut egui::Ui) {
+    let now = ui.input(|i| i.time);
+    let busy = app.projects.busy();
+    let just_saved = app.projects.saved_at.is_some_and(|t| now - t < 1.5);
+    if just_saved {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(100));
+    }
+    let glyph = if just_saved { icon::CHECK } else { icon::SAVE };
+    let tip = if app.projects.path.is_some() {
+        "Salvar (Ctrl+S) · segure para Salvar como"
+    } else {
+        "Salvar projeto (Ctrl+S)"
+    };
+    let resp = ui
+        .add_enabled_ui(!busy, |ui| icon_button(ui, glyph, just_saved, tip))
+        .inner;
+    if app.projects.dirty() && !just_saved {
+        let c = resp.rect.right_top() + Vec2::new(-10.0, 10.0);
+        ui.painter().circle_filled(c, 4.0, color::ACCENT);
+    }
+    if resp.secondary_clicked() || resp.long_touched() {
+        app.save_project_as();
+    } else if resp.clicked() && app.projects.dialog.is_none() {
+        // Depois de segurar, o soltar também conta como clique: não salva por cima do diálogo.
+        app.save_project();
+    }
 }
 
 /// Girar e espelhar a vista (o "Navegador" do Clip Studio). Só muda a visualização.
@@ -360,6 +393,7 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
                 ui.data_mut(|d| d.insert_temp(menu_group_id(), g));
             }
         }
+        update_menu_item(app, ui);
         return;
     };
     ui.horizontal(|ui| {
@@ -654,18 +688,23 @@ fn view_group(app: &mut ArtApp, ui: &mut egui::Ui) {
 /// Preferências gerais e atualização do app.
 fn prefs_group(app: &mut ArtApp, ui: &mut egui::Ui) {
     app_settings(app, ui);
-    if crate::platform::update::SUPPORTED {
-        ui.separator();
-        if menu_item(ui, icon::ROTATE_CW, "Atualizar app").clicked() {
-            app.check_update();
-            ui.close();
-        }
-        ui.label(
-            RichText::new(format!("Build instalado: {}", app.updater.installed()))
-                .size(12.0)
-                .color(crate::theme::color::TEXT_MUTED),
-        );
+}
+
+/// "Atualizar app" fica direto na lista principal do menu, fora dos grupos.
+fn update_menu_item(app: &mut ArtApp, ui: &mut egui::Ui) {
+    if !crate::platform::update::SUPPORTED {
+        return;
     }
+    ui.separator();
+    if menu_item(ui, icon::ROTATE_CW, "Atualizar app").clicked() {
+        app.check_update();
+        ui.close();
+    }
+    ui.label(
+        RichText::new(format!("Build instalado: {}", app.updater.installed()))
+            .size(12.0)
+            .color(crate::theme::color::TEXT_MUTED),
+    );
 }
 
 // ---------- Ferramentas ----------
