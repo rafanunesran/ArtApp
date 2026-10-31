@@ -286,6 +286,12 @@ pub struct ArtApp {
     pub timelapse: crate::timelapse_view::TimelapseState,
     /// Biblioteca de materiais.
     pub materials: crate::materials_view::MaterialsState,
+    /// Área de trabalho atual, as guardadas pelo usuário e o nome digitado para guardar.
+    pub workspace: crate::workspace::Workspace,
+    pub workspaces: Vec<crate::workspace::Workspace>,
+    pub workspace_name: String,
+    /// A tela está em pé (atualizado a cada quadro).
+    pub portrait: bool,
     /// Pintura 3D: o modelo do documento, se houver.
     pub view3d: Option<crate::view3d::View3d>,
     /// Pincel histórico: o passo da linha do tempo de onde ele pinta (0 = o mais antigo).
@@ -509,6 +515,10 @@ impl ArtApp {
             anim_settings_open: false,
             timelapse: Default::default(),
             materials: Default::default(),
+            workspace: Default::default(),
+            workspaces: Vec::new(),
+            workspace_name: String::new(),
+            portrait: false,
             view3d: None,
             history_brush_step: 0,
             eraser: BrushSettings {
@@ -707,6 +717,17 @@ impl ArtApp {
         if let Some(b) = flag("autoclose_panels") {
             self.autoclose_panels = b;
         }
+        if let Some(w) = v
+            .get("workspace")
+            .and_then(|m| serde_json::from_value::<crate::workspace::Workspace>(m.clone()).ok())
+        {
+            self.workspace = w;
+        }
+        if let Some(l) = v.get("workspaces").and_then(|m| {
+            serde_json::from_value::<Vec<crate::workspace::Workspace>>(m.clone()).ok()
+        }) {
+            self.workspaces = l;
+        }
         if let Some(b) = flag("tap_undo") {
             self.tap_undo = b;
         }
@@ -797,6 +818,8 @@ impl ArtApp {
             "brush_favorites": self.brush_favorites,
             "gesture_rotate": self.gesture_rotate,
             "autoclose_panels": self.autoclose_panels,
+            "workspace": self.workspace,
+            "workspaces": self.workspaces,
             "tap_undo": self.tap_undo,
             "quick_shape": self.quick_shape,
             "hold_eyedropper": self.hold_eyedropper,
@@ -828,8 +851,13 @@ impl ArtApp {
     /// Fecha os painéis flutuantes (ao começar a desenhar). A roda de cores flutuante fica.
     pub fn close_panels(&mut self) {
         if self.autoclose_panels {
-            self.show_tools_panel = false;
-            self.show_layers_panel = false;
+            // Painel encaixado fica: ele não cobre a tela.
+            if !self.tools_docked() {
+                self.show_tools_panel = false;
+            }
+            if !self.layers_docked() {
+                self.show_layers_panel = false;
+            }
             self.show_color = false;
         }
     }
@@ -1776,6 +1804,7 @@ impl eframe::App for ArtApp {
         }
         self.back_gesture(&ctx);
         let portrait = panels::is_portrait(&ctx);
+        self.portrait = portrait;
         if panels::is_compact(&ctx) {
             self.one_panel_at_a_time();
         }
@@ -1796,6 +1825,18 @@ impl eframe::App for ArtApp {
         crate::anim_bar::tick(self, &ctx);
         crate::timelapse_view::record(self, &ctx);
         crate::view3d::sync(self);
+        if !hide {
+            // Painéis encaixados entram antes da tela, que fica com o resto do espaço.
+            let width = self.workspace.width;
+            if self.show_tools_panel && self.tools_docked() {
+                let right = self.workspace.tools_right;
+                panels::brush_panel(self, panels::Place::Dock { ui, right, width });
+            }
+            if self.show_layers_panel && self.layers_docked() {
+                let right = self.workspace.layers_right;
+                panels::layers_panel(self, panels::Place::Dock { ui, right, width });
+            }
+        }
         egui::CentralPanel::no_frame().show(ui, |ui| {
             if crate::view3d::active(self) {
                 crate::view3d::show(self, ui);
@@ -1828,11 +1869,25 @@ impl eframe::App for ArtApp {
             panels::tool_rail(self, &ctx, canvas);
         }
         panels::side_sliders(self, &ctx, canvas, portrait);
-        if self.show_tools_panel {
-            panels::brush_panel(self, &ctx, canvas, portrait);
+        if self.show_tools_panel && !self.tools_docked() {
+            let right = self.workspace.tools_right;
+            let place = panels::Place::Float {
+                ctx: &ctx,
+                canvas,
+                portrait,
+                right,
+            };
+            panels::brush_panel(self, place);
         }
-        if self.show_layers_panel {
-            panels::layers_panel(self, &ctx, canvas, portrait);
+        if self.show_layers_panel && !self.layers_docked() {
+            let right = self.workspace.layers_right;
+            let place = panels::Place::Float {
+                ctx: &ctx,
+                canvas,
+                portrait,
+                right,
+            };
+            panels::layers_panel(self, place);
         }
         if self.color_float {
             panels::floating_color(self, &ctx, canvas, portrait);

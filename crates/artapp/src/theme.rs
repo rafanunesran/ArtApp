@@ -114,6 +114,9 @@ pub mod icon {
     pub const SPLINE: char = '\u{e38b}';
     pub const PLAY: char = '\u{e13c}';
     pub const MESSAGE_CIRCLE: char = '\u{e900}';
+    pub const PIN: char = '\u{e259}';
+    pub const SWAP_SIDE: char = '\u{e901}';
+    pub const LAYOUT: char = '\u{e1c1}';
     pub const PAUSE: char = '\u{e12e}';
     pub const SETTINGS: char = '\u{e154}';
     pub const FILM: char = '\u{e0d0}';
