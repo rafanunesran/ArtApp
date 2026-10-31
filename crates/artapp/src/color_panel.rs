@@ -226,7 +226,11 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
             c
         }
         ColorTab::Sliders => sliders(ui, &mut app.color_state),
-        ColorTab::Sets => sets(ui, &mut app.color_state, app.color),
+        ColorTab::Sets => {
+            let c = sets(ui, &mut app.color_state, app.color);
+            set_files(app, ui);
+            c
+        }
         ColorTab::Mix => mix(ui, &mut app.color_state, app.color),
         ColorTab::Harmony => harmony(ui, &mut app.color_state, app.color),
     };
@@ -640,6 +644,37 @@ fn sets(ui: &mut egui::Ui, st: &mut ColorState, current: Color32) -> Option<Colo
         save_sets(&st.sets);
     }
     out
+}
+
+/// Importar e exportar o conjunto atual em ASE ou ACO.
+fn set_files(app: &mut ArtApp, ui: &mut egui::Ui) {
+    ui.horizontal_wrapped(|ui| {
+        if ui.button("Importar ASE/ACO…").clicked() {
+            app.pick_image_for(crate::projects::ImageUse::Swatches);
+        }
+        let st = &app.color_state;
+        let Some(set) = st.sets.get(st.set_index) else {
+            return;
+        };
+        let colors: Vec<[u8; 3]> = set.colors.iter().map(|c| [c[0], c[1], c[2]]).collect();
+        let name = set.name.clone();
+        for (label, ext) in [("Exportar ASE", "ase"), ("Exportar ACO", "aco")] {
+            if ui
+                .add_enabled(!colors.is_empty(), egui::Button::new(label))
+                .clicked()
+            {
+                let bytes = if ext == "ase" {
+                    artapp_core::palette::write_ase(&name, &colors)
+                } else {
+                    artapp_core::palette::write_aco(&colors)
+                };
+                app.status = match crate::platform::save_file(ext, &bytes) {
+                    Ok(path) => format!("Conjunto salvo em {}", path.display()),
+                    Err(e) => format!("Não foi possível salvar: {e}"),
+                };
+            }
+        }
+    });
 }
 
 /// Cor intermediária: uma grade que mistura os quatro cantos.
