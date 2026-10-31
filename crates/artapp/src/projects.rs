@@ -13,6 +13,7 @@ use artapp_core::{Document, project};
 use eframe::egui::{self, Align2, ColorImage, RichText, TextureHandle, Vec2};
 
 use crate::app::ArtApp;
+use crate::gallery;
 use crate::platform;
 use crate::theme::{color, icon, panel_frame};
 
@@ -138,6 +139,23 @@ pub struct Browser {
     import: bool,
     /// Para que serve a imagem escolhida (com `import`).
     image_use: ImageUse,
+    /// Organizando a galeria: criando pilha, renomeando ou confirmando apagar.
+    edit: Option<GalleryEdit>,
+}
+
+enum GalleryEdit {
+    NewStack(String),
+    Rename(PathBuf, String),
+    Delete(PathBuf),
+}
+
+/// O que fazer na galeria depois de desenhar a janela.
+enum GalleryOp {
+    Begin(GalleryEdit),
+    Confirm,
+    Cancel,
+    Duplicate(PathBuf),
+    Move(PathBuf, PathBuf),
 }
 
 /// Arquivos de amostras de cor.
@@ -175,6 +193,8 @@ struct Entry {
     name: String,
     is_dir: bool,
     modified: Option<SystemTime>,
+    /// Pilha (pasta) na galeria: quantos desenhos e o mais recente (a capa).
+    stack: Option<(usize, Option<PathBuf>)>,
 }
 
 impl Browser {
@@ -190,6 +210,7 @@ impl Browser {
             entries: Vec::new(),
             thumbs: HashMap::new(),
             import,
+            edit: None,
         };
         b.refresh();
         b
@@ -223,11 +244,14 @@ impl Browser {
             if !is_dir && !wanted {
                 continue;
             }
+            let stack = (is_dir && !self.import)
+                .then(|| gallery::stack_info(&path, |p| kind_of(p).is_some()));
             self.entries.push(Entry {
                 path,
                 name,
                 is_dir,
                 modified: meta.and_then(|m| m.modified().ok()),
+                stack,
             });
         }
         // Pastas primeiro; arquivos do mais recente para o mais antigo.
@@ -567,6 +591,33 @@ impl ArtApp {
     }
 
     /// Começa um desenho novo sem nome (Nova tela).
+    /// Um arquivo (ou pilha) da galeria mudou de lugar (`None`: foi apagado). Se é o projeto
+    /// aberto, ou está dentro da pilha, o app passa a salvar no lugar novo.
+    pub fn project_moved(&mut self, from: &Path, to: Option<PathBuf>) {
+        let Some(cur) = self.projects.path.clone() else {
+            return;
+        };
+        let Ok(rest) = cur.strip_prefix(from) else {
+            return;
+        };
+        match to {
+            Some(to) => {
+                let new = if rest.as_os_str().is_empty() {
+                    to
+                } else {
+                    to.join(rest)
+                };
+                self.projects.name = gallery::stem_of(&new);
+                self.projects.path = Some(new);
+            }
+            // Apagado: o desenho continua aberto, mas salvar pergunta o nome de novo.
+            None => {
+                self.projects.path = None;
+                self.projects.saved_edits = self.projects.edits.wrapping_sub(1);
+            }
+        }
+    }
+
     pub fn forget_project(&mut self) {
         self.projects.path = None;
         self.projects.name = "Sem título".into();
@@ -810,6 +861,7 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
     let mut open = true;
     let mut pick: Option<PathBuf> = None;
     let mut go_to: Option<PathBuf> = None;
+    let mut op: Option<GalleryOp> = None;
     let screen = ctx.content_rect();
     let w = (screen.width() - 32.0).clamp(280.0, 520.0);
     let h = (screen.height() - 140.0).clamp(220.0, 560.0);
@@ -839,6 +891,14 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
             {
                 go_to = up;
             }
+            if !b.import
+                && ui
+                    .button("Nova pilha")
+                    .on_hover_text("Uma pasta para juntar desenhos")
+                    .clicked()
+            {
+                op = Some(GalleryOp::Begin(GalleryEdit::NewStack("Pilha".into())));
+            }
             ui.add(egui::Label::new(muted(b.dir.display().to_string())).truncate());
         });
         if !b.shared_access {
@@ -862,6 +922,39 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
             );
         }
         ui.separator();
+        if let Some(edit) = &mut b.edit {
+            ui.horizontal_wrapped(|ui| match edit {
+                GalleryEdit::NewStack(name) | GalleryEdit::Rename(_, name) => {
+                    let r = ui.add(egui::TextEdit::singleline(name).desired_width(220.0));
+                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        op = Some(GalleryOp::Confirm);
+                    }
+                    if ui.button(RichText::new("OK").strong()).clicked() {
+                        op = Some(GalleryOp::Confirm);
+                    }
+                    if ui.button("Cancelar").clicked() {
+                        op = Some(GalleryOp::Cancel);
+                    }
+                }
+                GalleryEdit::Delete(p) => {
+                    let what = p
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    ui.label(format!("Apagar “{what}”? Não dá para desfazer."));
+                    if ui
+                        .button(RichText::new("Apagar").strong().color(color::ACCENT))
+                        .clicked()
+                    {
+                        op = Some(GalleryOp::Confirm);
+                    }
+                    if ui.button("Cancelar").clicked() {
+                        op = Some(GalleryOp::Cancel);
+                    }
+                }
+            });
+            ui.separator();
+        }
         egui::ScrollArea::vertical().max_height(h).show(ui, |ui| {
             if b.entries.is_empty() {
                 ui.label(muted(if b.import && b.image_use == ImageUse::Swatches {
@@ -877,21 +970,60 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
             let entries: Vec<_> = b
                 .entries
                 .iter()
-                .map(|e| (e.path.clone(), e.name.clone(), e.is_dir, e.modified))
+                .map(|e| {
+                    (
+                        e.path.clone(),
+                        e.name.clone(),
+                        e.is_dir,
+                        e.modified,
+                        e.stack.clone(),
+                    )
+                })
                 .collect();
-            for (path, name, is_dir, modified) in entries {
+            // Para onde dá para mover um desenho: as pilhas daqui e, dentro de uma pilha, a
+            // pasta de cima.
+            let mut targets: Vec<(String, PathBuf)> = entries
+                .iter()
+                .filter(|e| e.2)
+                .map(|e| (e.1.clone(), e.0.clone()))
+                .collect();
+            if b.dir != platform::projects_dir()
+                && let Some(up) = b.dir.parent()
+            {
+                targets.push(("Fora da pilha".into(), up.to_path_buf()));
+            }
+            for (path, name, is_dir, modified, stack) in entries {
+                let cover = match &stack {
+                    Some((_, Some(p))) if kind_of(p) == Some(Kind::Project) => Some(p.clone()),
+                    _ => None,
+                };
                 let thumb = if !is_dir && kind_of(&path) == Some(Kind::Project) {
                     b.thumb(ctx, &path)
+                } else if let Some(c) = &cover {
+                    b.thumb(ctx, c)
                 } else {
                     None
                 };
+                let mut menu_rect = egui::Rect::NOTHING;
                 let row = ui.horizontal(|ui| {
                     let side = 56.0;
                     match &thumb {
                         Some(t) => {
                             let s = t.size_vec2();
                             let k = side / s.x.max(s.y).max(1.0);
-                            ui.add_sized([side, side], egui::Image::new((t.id(), s * k)));
+                            let r = ui
+                                .add_sized([side, side], egui::Image::new((t.id(), s * k)))
+                                .rect;
+                            if is_dir {
+                                // Pilha: um cantinho de pasta sobre a capa.
+                                ui.painter().text(
+                                    r.right_bottom() - Vec2::new(2.0, 2.0),
+                                    Align2::RIGHT_BOTTOM,
+                                    icon::FOLDER_OPEN.to_string(),
+                                    crate::theme::icon_font(18.0),
+                                    color::ACCENT,
+                                );
+                            }
                         }
                         None => {
                             let glyph = if is_dir {
@@ -911,14 +1043,84 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
                     }
                     ui.vertical(|ui| {
                         ui.label(RichText::new(&name).size(15.0));
-                        if !is_dir {
-                            ui.label(muted(time_ago(modified)));
+                        match &stack {
+                            Some((n, _)) => {
+                                ui.label(muted(match n {
+                                    0 => "Pilha vazia".to_string(),
+                                    1 => "Pilha · 1 desenho".to_string(),
+                                    n => format!("Pilha · {n} desenhos"),
+                                }));
+                            }
+                            None if !is_dir => {
+                                ui.label(muted(time_ago(modified)));
+                            }
+                            None => {}
                         }
                     });
-                    ui.allocate_space(Vec2::new(ui.available_width().max(0.0), 1.0));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if b.import {
+                            return;
+                        }
+                        let r = ui.menu_button(
+                            RichText::new(icon::ELLIPSIS.to_string())
+                                .font(crate::theme::icon_font(20.0))
+                                .color(color::TEXT_MUTED),
+                            |ui| {
+                                if ui.button("Renomear").clicked() {
+                                    let stem = if is_dir {
+                                        name.clone()
+                                    } else {
+                                        gallery::stem_of(&path)
+                                    };
+                                    op = Some(GalleryOp::Begin(GalleryEdit::Rename(
+                                        path.clone(),
+                                        stem,
+                                    )));
+                                    ui.close();
+                                }
+                                if !is_dir {
+                                    if ui.button("Duplicar").clicked() {
+                                        op = Some(GalleryOp::Duplicate(path.clone()));
+                                        ui.close();
+                                    }
+                                    let others: Vec<_> =
+                                        targets.iter().filter(|t| t.1 != path).collect();
+                                    if !others.is_empty() {
+                                        ui.menu_button("Mover para", |ui| {
+                                            for (label, dir) in others {
+                                                if ui.button(label).clicked() {
+                                                    op = Some(GalleryOp::Move(
+                                                        path.clone(),
+                                                        dir.clone(),
+                                                    ));
+                                                    ui.close();
+                                                }
+                                            }
+                                        });
+                                    }
+                                }
+                                let empty = stack.as_ref().is_none_or(|s| s.0 == 0);
+                                if ui
+                                    .add_enabled(empty, egui::Button::new("Apagar…"))
+                                    .on_disabled_hover_text(
+                                        "Tire os desenhos da pilha antes de apagá-la.",
+                                    )
+                                    .clicked()
+                                {
+                                    op = Some(GalleryOp::Begin(GalleryEdit::Delete(path.clone())));
+                                    ui.close();
+                                }
+                            },
+                        );
+                        menu_rect = r.response.rect;
+                    });
                 });
+                let mut rect = row.response.rect;
+                if menu_rect.is_positive() {
+                    rect.max.x = menu_rect.min.x - 4.0;
+                }
                 let resp = ui.interact(
-                    row.response.rect,
+                    rect,
                     ui.scope_id().with(("open-row", &path)),
                     egui::Sense::click(),
                 );
@@ -932,6 +1134,9 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
             }
         });
     });
+    if let Some(op) = op {
+        gallery_op(app, b, op);
+    }
     if let Some(dir) = go_to {
         let image_use = b.image_use;
         *b = Browser::with_mode(dir, b.import);
@@ -955,6 +1160,41 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
         return false;
     }
     open
+}
+
+/// Faz a operação da galeria e atualiza a lista.
+fn gallery_op(app: &mut ArtApp, b: &mut Browser, op: GalleryOp) {
+    let res = match op {
+        GalleryOp::Begin(edit) => {
+            b.edit = Some(edit);
+            return;
+        }
+        GalleryOp::Cancel => {
+            b.edit = None;
+            return;
+        }
+        GalleryOp::Duplicate(p) => gallery::duplicate(&p).map(|_| ()),
+        GalleryOp::Move(p, dir) => {
+            gallery::move_into(&p, &dir).map(|to| app.project_moved(&p, Some(to)))
+        }
+        GalleryOp::Confirm => match b.edit.take() {
+            Some(GalleryEdit::NewStack(name)) => {
+                gallery::new_stack(&b.dir, &clean_name(&name)).map(|_| ())
+            }
+            Some(GalleryEdit::Rename(p, name)) => {
+                gallery::rename(&p, &clean_name(&name)).map(|to| app.project_moved(&p, Some(to)))
+            }
+            Some(GalleryEdit::Delete(p)) => {
+                gallery::delete(&p).map(|()| app.project_moved(&p, None))
+            }
+            None => Ok(()),
+        },
+    };
+    if let Err(e) = res {
+        app.status = format!("Não foi possível: {e}");
+    }
+    b.thumbs.clear();
+    b.refresh();
 }
 
 fn recover_ui(app: &mut ArtApp, ctx: &egui::Context) -> bool {
