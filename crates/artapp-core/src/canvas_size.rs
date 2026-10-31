@@ -38,7 +38,10 @@ impl Document {
         let bounds = Rect::new(0, 0, w as i32, h as i32);
         for layer in &mut self.layers {
             if let Some(art) = &mut layer.vector {
-                transform_art(art, Affine::translate(Vec2::new(f64::from(dx), f64::from(dy))));
+                transform_art(
+                    art,
+                    Affine::translate(Vec2::new(f64::from(dx), f64::from(dy))),
+                );
                 layer.surface = rasterize(art, w, h);
                 continue;
             }
@@ -50,7 +53,9 @@ impl Document {
             let mut out = Surface::new(PixelFormat::RGBA8);
             if !keep.is_empty() {
                 let mut px = vec![[0.0f32; 4]; keep.width() as usize * keep.height() as usize];
-                layer.surface.read_rgba_into(keep.translate(-dx, -dy), &mut px);
+                layer
+                    .surface
+                    .read_rgba_into(keep.translate(-dx, -dy), &mut px);
                 let flat: Vec<f32> = px.iter().flatten().copied().collect();
                 out.write_region(keep, &flat);
                 out.prune();
@@ -65,7 +70,11 @@ impl Document {
 
     /// Corta a tela no retângulo da seleção.
     pub fn crop_to_selection(&mut self) -> bool {
-        let Some(r) = self.selection.as_ref().map(|s| s.bounds.intersect(&self.bounds())) else {
+        let Some(r) = self
+            .selection
+            .as_ref()
+            .map(|s| s.bounds.intersect(&self.bounds()))
+        else {
             return false;
         };
         if r.is_empty() {

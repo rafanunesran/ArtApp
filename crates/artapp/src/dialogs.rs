@@ -515,8 +515,8 @@ fn canvas_size_ui(app: &ArtApp, ui: &mut egui::Ui, dialog: &mut Dialog) {
             .changed()
             && *keep_ratio
         {
-            *height = ((f64::from(*width) * f64::from(oh) / f64::from(ow)).round() as u32)
-                .clamp(1, max);
+            *height =
+                ((f64::from(*width) * f64::from(oh) / f64::from(ow)).round() as u32).clamp(1, max);
         }
         ui.label("Altura");
         if ui
@@ -524,8 +524,8 @@ fn canvas_size_ui(app: &ArtApp, ui: &mut egui::Ui, dialog: &mut Dialog) {
             .changed()
             && *keep_ratio
         {
-            *width = ((f64::from(*height) * f64::from(ow) / f64::from(oh)).round() as u32)
-                .clamp(1, max);
+            *width =
+                ((f64::from(*height) * f64::from(ow) / f64::from(oh)).round() as u32).clamp(1, max);
         }
     });
     ui.horizontal_wrapped(|ui| {
@@ -541,26 +541,32 @@ fn canvas_size_ui(app: &ArtApp, ui: &mut egui::Ui, dialog: &mut Dialog) {
         }
     });
     if !*scale {
-        ui.label(RichText::new("Ponto fixo").size(12.5).color(color::TEXT_MUTED));
-        egui::Grid::new("anchor").spacing([4.0, 4.0]).show(ui, |ui| {
-            for i in 0..9 {
-                let on = *anchor == i;
-                let resp = ui.add_sized([34.0, 28.0], egui::Button::new("").selected(on));
-                let c = resp.rect.center();
-                if on {
-                    ui.painter().circle_filled(c, 5.0, color::TEXT);
-                } else {
-                    let st = egui::Stroke::new(1.2, color::TEXT_MUTED);
-                    ui.painter().circle_stroke(c, 4.0, st);
+        ui.label(
+            RichText::new("Ponto fixo")
+                .size(12.5)
+                .color(color::TEXT_MUTED),
+        );
+        egui::Grid::new("anchor")
+            .spacing([4.0, 4.0])
+            .show(ui, |ui| {
+                for i in 0..9 {
+                    let on = *anchor == i;
+                    let resp = ui.add_sized([34.0, 28.0], egui::Button::new("").selected(on));
+                    let c = resp.rect.center();
+                    if on {
+                        ui.painter().circle_filled(c, 5.0, color::TEXT);
+                    } else {
+                        let st = egui::Stroke::new(1.2, color::TEXT_MUTED);
+                        ui.painter().circle_stroke(c, 4.0, st);
+                    }
+                    if resp.clicked() {
+                        *anchor = i;
+                    }
+                    if i % 3 == 2 {
+                        ui.end_row();
+                    }
                 }
-                if resp.clicked() {
-                    *anchor = i;
-                }
-                if i % 3 == 2 {
-                    ui.end_row();
-                }
-            }
-        });
+            });
     }
     ui.label(
         RichText::new(format!("Agora: {ow} × {oh} px"))
