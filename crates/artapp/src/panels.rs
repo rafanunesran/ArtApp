@@ -2475,7 +2475,7 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut search)
-                .hint_text("Buscar pincel ou categoria")
+                .hint_text("Buscar: nome, categoria ou jeito (pressão, textura…)")
                 .desired_width(ui.available_width() - 40.0),
         );
         if !search.is_empty() && ui.button(icon::X.to_string()).clicked() {
@@ -2550,7 +2550,7 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
         (0..app.brushes.len())
             .filter(|&i| {
                 let b = &app.brushes[i];
-                b.name.to_lowercase().contains(&query) || b.group.to_lowercase().contains(&query)
+                b.matches(&query)
             })
             .collect()
     } else if cat == RECENT {

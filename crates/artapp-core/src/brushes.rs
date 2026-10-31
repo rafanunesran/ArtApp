@@ -22,6 +22,53 @@ pub struct BrushEntry {
 }
 
 impl BrushEntry {
+    /// Etiquetas tiradas dos ajustes, para a busca achar por comportamento ("pressão",
+    /// "textura"…) além do nome e da categoria, como as etiquetas do Krita.
+    pub fn tags(&self) -> Vec<&'static str> {
+        let b = &self.settings;
+        let mut t = Vec::new();
+        let pressure = |d: &Dynamic| d.control == Control::PenPressure;
+        if (b.shape_dynamics.enabled && pressure(&b.shape_dynamics.size))
+            || (b.transfer.enabled && pressure(&b.transfer.opacity))
+        {
+            t.push("pressão");
+        }
+        if b.texture.enabled || b.dual_brush.enabled || b.noise {
+            t.push("textura");
+        }
+        if b.erase {
+            t.push("apagar");
+        }
+        if self.mixes_paint() {
+            t.push("misturar");
+        }
+        if b.wet_edges {
+            t.push("molhado");
+        }
+        if b.build_up {
+            t.push("acumular");
+        }
+        if b.scattering.enabled {
+            t.push("dispersão");
+        }
+        if !matches!(b.tip, photocraft_paint::TipShape::Round) {
+            t.push("carimbo");
+        }
+        if b.hardness >= 0.95 {
+            t.push("duro");
+        } else if b.hardness <= 0.2 {
+            t.push("macio");
+        }
+        t
+    }
+
+    /// O pincel aparece na busca por `query` (já em minúsculas): nome, categoria ou etiqueta.
+    pub fn matches(&self, query: &str) -> bool {
+        self.name.to_lowercase().contains(query)
+            || self.group.to_lowercase().contains(query)
+            || self.tags().iter().any(|t| t.contains(query))
+    }
+
     /// Pinta misturando com a tela (ver [`MIX_GROUP`]).
     pub fn mixes_paint(&self) -> bool {
         self.mixes || self.group == MIX_GROUP
@@ -700,6 +747,19 @@ mod tests {
         let cross = ink("Hachura cruzada");
         assert!(single > 0.1 && single < 0.6, "hachura cobre {single}");
         assert!(cross > single, "cruzada {cross} <= simples {single}");
+    }
+
+    #[test]
+    fn search_finds_brushes_by_behavior() {
+        let all = all();
+        let find = |q: &str| all.iter().filter(|b| b.matches(q)).count();
+        assert!(find("apagar") >= 4);
+        assert!(find("misturar") >= 3);
+        assert!(find("pressão") > find("apagar"));
+        assert!(
+            all.iter()
+                .any(|b| b.name == "Lápis de cor" && b.matches("textura"))
+        );
     }
 
     #[test]
