@@ -318,11 +318,72 @@ impl VectorKit {
         self.session.set_tool_option(key, v);
     }
 
+    /// Roda um comando que responde algo (ex.: "symbol.list") e devolve a resposta.
+    pub fn query(&mut self, doc: &mut Document, id: &str, params: &Value) -> (Option<Value>, Rect) {
+        if !self.sync_in(doc) {
+            return (None, Rect::EMPTY);
+        }
+        doc.checkpoint();
+        let out = match self.session.execute(id, params) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                self.status = Some(e.to_string());
+                None
+            }
+        };
+        (out, self.commit_or_drop(doc))
+    }
+
+    /// Os preenchimentos e traços do primeiro objeto selecionado, na ordem de pintura (o índice
+    /// é o que os comandos `appearance.*` pedem).
+    pub fn selected_appearance(&mut self, doc: &Document) -> Option<Vec<AppearanceRow>> {
+        if !self.sync_in(doc) {
+            return None;
+        }
+        let state = self.session.active()?;
+        let id = *state.selection.objects.first()?;
+        let node = state.doc.node(id)?;
+        let rows = node
+            .appearance
+            .items
+            .iter()
+            .map(|item| {
+                let (fill, paint, width, visible) = match item {
+                    vectorcraft_doc::AppearanceItem::Fill(f) => (true, &f.paint, 0.0, f.visible),
+                    vectorcraft_doc::AppearanceItem::Stroke(s) => {
+                        (false, &s.paint, s.width, s.visible)
+                    }
+                };
+                let color = match paint {
+                    Paint::Solid { color, .. } => Some(color.to_rgb()),
+                    _ => None,
+                };
+                AppearanceRow {
+                    fill,
+                    color,
+                    width,
+                    visible,
+                }
+            })
+            .collect();
+        Some(rows)
+    }
+
     pub fn has_selection(&self) -> bool {
         self.session
             .active()
             .is_some_and(|d| !d.selection.is_empty())
     }
+}
+
+/// Uma linha do painel Aparência: preenchimento ou traço, a cor (se for chapada), a espessura
+/// (traços) e se aparece.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AppearanceRow {
+    pub fill: bool,
+    pub color: Option<[f32; 3]>,
+    pub width: f64,
+    pub visible: bool,
 }
 
 /// Nome em português de uma ferramenta do catálogo.
@@ -450,6 +511,47 @@ mod tests {
         let art = doc.active_vector().unwrap();
         assert!(!art.doc.layers[0].children().unwrap().is_empty());
         assert!(doc.can_undo());
+    }
+
+    #[test]
+    fn pathfinder_appearance_and_symbols() {
+        use crate::vector::Shape;
+        use serde_json::json;
+        let mut doc = Document::new(200, 200);
+        doc.add_vector_layer();
+        let style = VectorStyle::default();
+        doc.vector_add(
+            &Shape::Rectangle(Point::new(10.0, 10.0), Point::new(80.0, 80.0)),
+            &style,
+        );
+        doc.vector_add(
+            &Shape::Rectangle(Point::new(50.0, 50.0), Point::new(120.0, 120.0)),
+            &style,
+        );
+        let count = |d: &Document| {
+            d.active_vector().unwrap().doc.layers[0]
+                .children()
+                .unwrap()
+                .len()
+        };
+        let mut kit = VectorKit::new();
+        kit.execute(&mut doc, "select.all", &json!({}));
+        kit.execute(
+            &mut doc,
+            "object.compoundShape.make",
+            &json!({"mode": "add"}),
+        );
+        assert_eq!(count(&doc), 1, "forma composta junta as duas");
+        kit.execute(&mut doc, "object.compoundShape.expand", &json!({}));
+        assert_eq!(count(&doc), 1);
+        kit.execute(&mut doc, "select.all", &json!({}));
+        let before = kit.selected_appearance(&doc).unwrap().len();
+        kit.execute(&mut doc, "appearance.addStroke", &json!({}));
+        let rows = kit.selected_appearance(&doc).unwrap();
+        assert_eq!(rows.len(), before + 1, "{rows:?}");
+        kit.execute(&mut doc, "symbol.new", &json!({"name": "Estrela"}));
+        let (list, _) = kit.query(&mut doc, "symbol.list", &json!({}));
+        assert_eq!(list.unwrap()["symbols"][0]["name"], "Estrela");
     }
 
     #[test]
