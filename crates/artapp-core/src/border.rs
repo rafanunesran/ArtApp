@@ -28,7 +28,7 @@ impl Border {
 const FAR: f32 = 1e20;
 
 /// Transformada de distância 1D (Felzenszwalb–Huttenlocher), distâncias ao quadrado.
-fn edt_1d(f: &[f32], out: &mut [f32], v: &mut [usize], z: &mut [f32]) {
+fn edt_1d(f: &[f32], out: &mut [f32], arg: &mut [usize], v: &mut [usize], z: &mut [f32]) {
     let n = f.len();
     if n == 0 {
         return;
@@ -53,46 +53,58 @@ fn edt_1d(f: &[f32], out: &mut [f32], v: &mut [usize], z: &mut [f32]) {
         z[k + 1] = f32::INFINITY;
     }
     k = 0;
-    for (q, o) in out.iter_mut().enumerate() {
+    for (q, (o, a)) in out.iter_mut().zip(arg.iter_mut()).enumerate() {
         while z[k + 1] < q as f32 {
             k += 1;
         }
         let p = v[k];
         let d = q as f32 - p as f32;
         *o = d * d + f[p];
+        *a = p;
     }
 }
 
-/// Alfa da borda para cada pixel de uma imagem `w`×`h`, a partir do alfa da tinta: cheio até
-/// `radius` pixels da tinta, com meio pixel de suavização na beirada.
-pub fn border_alpha(alpha: &[f32], w: usize, h: usize, radius: f32) -> Vec<f32> {
+/// Distância (em pixels) de cada pixel até o pixel-semente mais perto, e qual é ele (índice
+/// na imagem `w`×`h`). Sem sementes, a distância fica enorme.
+pub(crate) fn distance_field(seed: &[bool], w: usize, h: usize) -> (Vec<f32>, Vec<usize>) {
     let n = w * h;
-    let mut d: Vec<f32> = alpha
-        .iter()
-        .map(|a| if *a >= 0.5 { 0.0 } else { FAR })
-        .collect();
+    let mut d: Vec<f32> = seed.iter().map(|s| if *s { 0.0 } else { FAR }).collect();
+    // Linha da semente mais perto na mesma coluna (passo das colunas).
+    let mut near_row = vec![0usize; n];
+    let mut near = vec![0usize; n];
     let side = w.max(h);
-    let (mut f, mut out) = (vec![0.0f32; side], vec![0.0f32; side]);
+    let (mut f, mut out, mut arg) = (vec![0.0f32; side], vec![0.0f32; side], vec![0usize; side]);
     let (mut v, mut z) = (vec![0usize; side], vec![0.0f32; side + 1]);
     for x in 0..w {
         for y in 0..h {
             f[y] = d[y * w + x];
         }
-        edt_1d(&f[..h], &mut out[..h], &mut v, &mut z);
+        edt_1d(&f[..h], &mut out[..h], &mut arg[..h], &mut v, &mut z);
         for y in 0..h {
             d[y * w + x] = out[y];
+            near_row[y * w + x] = arg[y];
         }
     }
     for y in 0..h {
         f[..w].copy_from_slice(&d[y * w..(y + 1) * w]);
-        edt_1d(&f[..w], &mut out[..w], &mut v, &mut z);
-        d[y * w..(y + 1) * w].copy_from_slice(&out[..w]);
+        edt_1d(&f[..w], &mut out[..w], &mut arg[..w], &mut v, &mut z);
+        for x in 0..w {
+            let px = arg[x];
+            d[y * w + x] = out[x].sqrt();
+            near[y * w + x] = near_row[y * w + px] * w + px;
+        }
     }
-    let mut res = vec![0.0f32; n];
-    for (r, dd) in res.iter_mut().zip(&d) {
-        *r = (radius + 0.5 - dd.sqrt()).clamp(0.0, 1.0);
-    }
-    res
+    (d, near)
+}
+
+/// Alfa da borda para cada pixel de uma imagem `w`×`h`, a partir do alfa da tinta: cheio até
+/// `radius` pixels da tinta, com meio pixel de suavização na beirada.
+pub fn border_alpha(alpha: &[f32], w: usize, h: usize, radius: f32) -> Vec<f32> {
+    let seed: Vec<bool> = alpha.iter().map(|a| *a >= 0.5).collect();
+    let (d, _) = distance_field(&seed, w, h);
+    d.iter()
+        .map(|dd| (radius + 0.5 - dd).clamp(0.0, 1.0))
+        .collect()
 }
 
 /// Lê `r` de `surface` (dentro de `bounds`) já com a borda por baixo da tinta.
