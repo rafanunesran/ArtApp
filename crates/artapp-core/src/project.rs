@@ -138,6 +138,9 @@ struct LayerEntry {
     /// Arte vetorial (`.vectorcraft`).
     #[serde(default)]
     vector: Option<Blob>,
+    /// Boneco 3D de pose.
+    #[serde(default)]
+    pose: Option<crate::pose::Figure>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -219,6 +222,7 @@ pub fn save(doc: &Document) -> Result<Vec<u8>, String> {
             tone_angle: l.tone.map_or(0.0, |t| t.angle),
             pixels,
             vector,
+            pose: l.pose.clone(),
         });
     }
     let manifest = Manifest {
@@ -317,6 +321,7 @@ pub fn load(bytes: &[u8]) -> Result<Document, String> {
         layer.folder = e.folder;
         layer.collapsed = e.collapsed;
         layer.parent = e.parent;
+        layer.pose = e.pose;
         layer.tone = (e.tone_period > 0.0).then(|| crate::tone::Tone {
             period: e
                 .tone_period

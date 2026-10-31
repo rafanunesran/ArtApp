@@ -103,7 +103,7 @@ fn face_normal(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> [f32; 3] {
 }
 
 impl Mesh {
-    fn compute_normals(&mut self) {
+    pub fn compute_normals(&mut self) {
         let mut n = vec![[0.0f32; 3]; self.positions.len()];
         for t in &self.tris {
             let p = t.map(|c| self.positions[c.0 as usize]);
@@ -144,7 +144,8 @@ impl Mesh {
 }
 
 /// Câmera em órbita em volta do modelo.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Camera {
     /// Giro em volta do eixo vertical e inclinação, em radianos.
     pub yaw: f32,
@@ -174,7 +175,7 @@ impl Camera {
     }
 
     /// Ponto do mundo na vista: (x, y) em pixels e profundidade (maior = mais longe).
-    fn project(&self, p: [f32; 3], w: f32, h: f32) -> Option<[f32; 3]> {
+    pub fn project(&self, p: [f32; 3], w: f32, h: f32) -> Option<[f32; 3]> {
         let (sy, cy) = self.yaw.sin_cos();
         let (sp, cp) = self.pitch.sin_cos();
         // Gira o mundo: primeiro em volta de Y (yaw), depois de X (pitch).
@@ -188,6 +189,13 @@ impl Camera {
         }
         let f = 0.5 * h.min(w) / 0.45; // campo de visão ~ 50°
         Some([w / 2.0 + x1 * f / depth, h / 2.0 - y2 * f / depth, depth])
+    }
+
+    /// Direção do mundo que aponta do modelo para a câmera.
+    pub fn toward_viewer(&self) -> [f32; 3] {
+        let (sy, cy) = self.yaw.sin_cos();
+        let (sp, cp) = self.pitch.sin_cos();
+        [-cp * sy, sp, cp * cy]
     }
 
     fn light_dir(&self) -> [f32; 3] {
@@ -253,8 +261,22 @@ pub fn texture_of(doc: &crate::Document, max_side: u32) -> (u32, u32, Vec<u8>) {
 
 /// Desenha o modelo com a textura `tex` (RGBA 8 bits, `tw`×`th`) numa vista `w`×`h`.
 pub fn render(mesh: &Mesh, tex: &[u8], tw: u32, th: u32, cam: &Camera, w: u32, h: u32) -> View {
+    render_on(mesh, tex, tw, th, cam, w, h, [38, 40, 46, 255])
+}
+
+/// Como [`render`], com a cor de fundo `bg` (alfa 0 deixa o fundo transparente).
+#[allow(clippy::too_many_arguments)]
+pub fn render_on(
+    mesh: &Mesh,
+    tex: &[u8],
+    tw: u32,
+    th: u32,
+    cam: &Camera,
+    w: u32,
+    h: u32,
+    bg: [u8; 4],
+) -> View {
     let n = (w * h) as usize;
-    let bg = [38u8, 40, 46, 255];
     let mut rgba: Vec<u8> = bg.iter().copied().cycle().take(n * 4).collect();
     let mut uvbuf = vec![[f32::NAN; 2]; n];
     let mut zbuf = vec![f32::INFINITY; n];
