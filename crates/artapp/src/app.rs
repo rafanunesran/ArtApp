@@ -64,6 +64,8 @@ pub enum Tool {
     Ellipse,
     /// Balão de quadrinho com rabicho (vetorial).
     Balloon,
+    /// Dividir quadro: arraste atravessando um requadro.
+    FrameSplit,
     /// Liquefazer: empurrar, torcer, inflar… a camada raster.
     Liquify,
     /// Todas as ferramentas do VectorCraft (a escolhida fica em `ArtApp::kit_tool`).
@@ -94,7 +96,7 @@ impl Tool {
         Tool::MagicWand,
     ];
     /// Ferramentas vetoriais, no menu "Vetor".
-    pub const VECTOR: [Tool; 8] = [
+    pub const VECTOR: [Tool; 9] = [
         Tool::VectorKit,
         Tool::Select,
         Tool::VectorPen,
@@ -103,6 +105,7 @@ impl Tool {
         Tool::Rectangle,
         Tool::Ellipse,
         Tool::Balloon,
+        Tool::FrameSplit,
     ];
 
     /// O que o botão lateral da caneta pode virar (ferramentas sem estado pela metade).
@@ -139,6 +142,7 @@ impl Tool {
             Tool::Rectangle => "Retângulo",
             Tool::Ellipse => "Elipse",
             Tool::Balloon => "Balão",
+            Tool::FrameSplit => "Dividir quadro",
             Tool::VectorKit => "Vetor pro",
             Tool::Liquify => "Liquefazer",
             Tool::Ruler => "Régua",
@@ -167,6 +171,7 @@ impl Tool {
             Tool::Rectangle => icon::SQUARE,
             Tool::Ellipse => icon::CIRCLE,
             Tool::Balloon => icon::MESSAGE_CIRCLE,
+            Tool::FrameSplit => icon::SCISSORS,
             Tool::VectorKit => icon::SPLINE_POINTER,
             Tool::Liquify => icon::SPLINE,
             Tool::Ruler => icon::RULER,
@@ -215,6 +220,7 @@ impl Tool {
             Tool::Rectangle => egui::Key::M,
             Tool::Ellipse => egui::Key::O,
             Tool::Balloon => egui::Key::C,
+            Tool::FrameSplit => egui::Key::T,
             Tool::VectorKit => egui::Key::Y,
             Tool::Liquify => egui::Key::Q,
             Tool::Ruler => egui::Key::R,
@@ -403,6 +409,9 @@ pub struct ArtApp {
     pub balloon_shape: artapp_core::balloon::BalloonShape,
     /// Balão já desenhado, esperando o rabicho: o retângulo (pixels da tela de desenho).
     pub balloon_pending: Option<[f64; 4]>,
+    /// Calha ao dividir quadros (pixels) e se a reta gruda na horizontal/vertical.
+    pub frame_gap: f32,
+    pub frame_snap: bool,
     /// Seletor de cor aberto.
     pub show_color: bool,
     /// Roda de cores flutuante: sempre na tela (não fecha ao desenhar), arrastável e
@@ -566,6 +575,8 @@ impl ArtApp {
             bezier: Vec::new(),
             balloon_shape: Default::default(),
             balloon_pending: None,
+            frame_gap: 30.0,
+            frame_snap: true,
             show_color: false,
             color_float: false,
             color_float_collapsed: false,
