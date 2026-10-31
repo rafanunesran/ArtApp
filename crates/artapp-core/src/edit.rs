@@ -114,7 +114,11 @@ impl Document {
 
     /// Troca cada pixel de `r` por `f(x, y, pixel)`, misturado pela seleção e respeitando o
     /// bloqueio de transparência.
-    fn map_pixels(&mut self, r: Rect, f: impl Fn(i32, i32, [f32; 4]) -> [f32; 4]) -> Rect {
+    pub(crate) fn map_pixels(
+        &mut self,
+        r: Rect,
+        f: impl Fn(i32, i32, [f32; 4]) -> [f32; 4],
+    ) -> Rect {
         let sel = self.selection.as_ref().map(|s| s.mask.read_region(r));
         self.checkpoint();
         let Some(layer) = self.active_layer_mut() else {

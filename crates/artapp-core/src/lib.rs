@@ -14,6 +14,7 @@ pub mod canvas_size;
 pub mod composite;
 pub mod document;
 pub mod edit;
+pub mod effects;
 pub mod export;
 pub mod fill;
 pub mod folders;
