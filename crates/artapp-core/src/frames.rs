@@ -88,6 +88,7 @@ impl Document {
                 stroke: None,
                 width: 0.0,
                 fill: Some(paper),
+                ..VectorStyle::default()
             };
             dirty = dirty.union(&self.add_polygon_paths(&[polys], &style));
         }
@@ -96,6 +97,7 @@ impl Document {
             stroke: Some(color),
             width: f64::from(p.width.max(0.1)),
             fill: None,
+            ..VectorStyle::default()
         };
         dirty.union(&self.add_polygon_paths(&borders, &style))
     }

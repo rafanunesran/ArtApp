@@ -46,7 +46,8 @@ enum ActiveKind {
         from: VPoint,
         to: VPoint,
     },
-    Freehand(Vec<VPoint>),
+    /// Caneta vetorial: os pontos e a pressão (já pela curva) de cada um.
+    Freehand(Vec<VPoint>, Vec<f32>),
     /// Arrastando um objeto vetorial: aplicado ao soltar.
     Move {
         id: NodeId,
@@ -1258,7 +1259,7 @@ fn tool_down(
         Tool::VectorPen | Tool::Line | Tool::Rectangle | Tool::Ellipse => {
             app.ensure_vector_layer();
             Some(if app.tool == Tool::VectorPen {
-                ActiveKind::Freehand(vec![vp])
+                ActiveKind::Freehand(vec![vp], vec![pt.pressure])
             } else {
                 ActiveKind::Shape {
                     tool: app.tool,
@@ -1365,7 +1366,11 @@ fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, t
         | ActiveKind::Marquee { to, .. }
         | ActiveKind::MoveLayer { to, .. }
         | ActiveKind::Gradient { to, .. } => *to = vp,
-        ActiveKind::Freehand(points) | ActiveKind::Lasso(points) => points.push(vp),
+        ActiveKind::Freehand(points, pressures) => {
+            points.push(vp);
+            pressures.push(pt.pressure);
+        }
+        ActiveKind::Lasso(points) => points.push(vp),
         ActiveKind::Liquify(session) => {
             let r = session.add(&mut app.doc, vp.x, vp.y, pt.pressure);
             app.invalidate(r);
@@ -1431,18 +1436,13 @@ fn end_stroke(app: &mut ArtApp) {
             app.remember_color();
             app.doc.vector_add(&shape, &style)
         }
-        ActiveKind::Freehand(points) => {
+        ActiveKind::Freehand(points, pressures) => {
             if points.len() < 2 {
                 return;
             }
             app.remember_color();
-            app.doc.vector_add(
-                &Shape::Freehand {
-                    points,
-                    closed: false,
-                },
-                &style,
-            )
+            let pen = app.vector_pen;
+            app.doc.vector_add_pen(&points, &pressures, &style, &pen)
         }
         ActiveKind::Move { id, from, to } => {
             let d = to - from;
@@ -1982,9 +1982,32 @@ fn draw_overlay(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
                     draw_bez(app, painter, panel, &p.to_bezpath(), preview);
                 }
             }
-            ActiveKind::Freehand(points) => {
-                let line: Vec<Pos2> = points.iter().map(|p| to_screen(app, panel, *p)).collect();
-                painter.add(egui::Shape::line(line, preview));
+            ActiveKind::Freehand(points, pressures) => {
+                // Prévia com a largura e a opacidade que a pressão vai dar ao traço.
+                let pen = app.vector_pen;
+                let base = preview.width;
+                let alpha = app.vector_opacity.clamp(0.0, 1.0);
+                let at = |i: usize| {
+                    let p = pressures.get(i).copied().unwrap_or(1.0).clamp(0.0, 1.0);
+                    let mix = |min: f32| min.clamp(0.0, 1.0) + (1.0 - min.clamp(0.0, 1.0)) * p;
+                    let w = if pen.size {
+                        base * mix(pen.min_size)
+                    } else {
+                        base
+                    };
+                    let a = if pen.opacity {
+                        alpha * mix(pen.min_opacity)
+                    } else {
+                        alpha
+                    };
+                    (w.max(1.0), preview.color.gamma_multiply(a))
+                };
+                let screen: Vec<Pos2> = points.iter().map(|p| to_screen(app, panel, *p)).collect();
+                for (i, w) in screen.windows(2).enumerate() {
+                    let (width, color) = at(i + 1);
+                    painter.line_segment([w[0], w[1]], egui::Stroke::new(width, color));
+                    painter.circle_filled(w[1], width / 2.0, color);
+                }
             }
             ActiveKind::Marquee { tool, from, to } => {
                 let pts: Vec<Pos2> = if *tool == Tool::SelectEllipse {
