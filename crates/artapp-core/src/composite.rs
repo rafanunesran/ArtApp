@@ -43,7 +43,7 @@ pub fn composite_frame(doc: &Document, k: usize, with_paper: bool) -> Vec<[u8; 4
 }
 
 /// `view`: quadro mostrado e se há pele de cebola.
-fn composite_view(
+pub(crate) fn composite_view(
     doc: &Document,
     r: Rect,
     with_paper: bool,

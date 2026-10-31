@@ -85,6 +85,8 @@ pub struct Document {
     pub dpi: f32,
     /// Assistente de animação: cada camada de cima (ou pasta) é um quadro.
     pub animation: crate::animation::Animation,
+    /// Gravação do processo (timelapse).
+    pub timelapse: crate::timelapse::Timelapse,
     pub(crate) history: History,
     next_id: u64,
 }
@@ -104,6 +106,7 @@ impl Document {
             selection: None,
             dpi: DEFAULT_DPI,
             animation: Default::default(),
+            timelapse: Default::default(),
             history: History::default(),
             next_id: 1,
         };
@@ -139,6 +142,7 @@ impl Document {
             selection: None,
             dpi: DEFAULT_DPI,
             animation: Default::default(),
+            timelapse: Default::default(),
             history: History::default(),
             next_id,
         };
@@ -152,13 +156,17 @@ impl Document {
 
     /// Cópia das camadas sem o histórico (para salvar em segundo plano).
     pub fn snapshot(&self) -> Self {
-        Self::from_parts(
+        let mut d = Self::from_parts(
             self.width,
             self.height,
             self.paper,
             self.layers.clone(),
             self.active,
-        )
+        );
+        d.dpi = self.dpi;
+        d.animation = self.animation.clone();
+        d.timelapse = self.timelapse.clone();
+        d
     }
 
     pub fn bounds(&self) -> Rect {

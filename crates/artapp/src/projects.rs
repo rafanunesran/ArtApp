@@ -551,6 +551,7 @@ impl ArtApp {
     /// Troca o desenho por um que acabou de abrir.
     fn replace_document(&mut self, doc: Document) {
         self.doc = doc;
+        self.timelapse.new_document(self.projects.edits);
         self.saved_selections.clear();
         self.view = crate::canvas::CanvasView::default();
         self.selected = None;

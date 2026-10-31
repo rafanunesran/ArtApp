@@ -62,6 +62,11 @@ struct Manifest {
     animation: crate::animation::Animation,
     #[serde(default)]
     layers: Vec<LayerEntry>,
+    /// Gravação do processo: se está gravando, e as fotos (JPEG), da mais antiga à mais nova.
+    #[serde(default)]
+    timelapse: crate::timelapse::Timelapse,
+    #[serde(default)]
+    timelapse_frames: Vec<Blob>,
 }
 
 fn default_dpi() -> f32 {
@@ -217,6 +222,8 @@ pub fn save(doc: &Document) -> Result<Vec<u8>, String> {
         dpi: doc.dpi,
         animation: doc.animation.clone(),
         layers,
+        timelapse: doc.timelapse.clone(),
+        timelapse_frames: doc.timelapse.frames.iter().map(|f| blobs.push(f)).collect(),
     };
     let json = serde_json::to_vec(&manifest).map_err(|e| e.to_string())?;
     let mut out = Vec::with_capacity(HEADER_LEN + json.len() + blobs.0.len());
@@ -331,6 +338,13 @@ pub fn load(bytes: &[u8]) -> Result<Document, String> {
     let mut doc = Document::from_parts(m.width, m.height, m.paper, layers, m.active);
     doc.animation = m.animation.clone();
     doc.follow_active_frame();
+    doc.timelapse.enabled = m.timelapse.enabled;
+    for b in &m.timelapse_frames {
+        // Uma foto estragada não impede de abrir o desenho.
+        if let Ok(f) = slice(data, b) {
+            doc.timelapse.frames.push(std::sync::Arc::new(f.to_vec()));
+        }
+    }
     if m.dpi.is_finite() && m.dpi > 0.0 {
         doc.dpi = m.dpi.clamp(1.0, 10_000.0);
     }

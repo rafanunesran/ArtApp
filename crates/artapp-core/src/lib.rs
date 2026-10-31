@@ -40,6 +40,7 @@ pub mod selection;
 pub mod stroke;
 pub mod subject;
 pub mod symmetry;
+pub mod timelapse;
 pub mod tone;
 pub mod trace;
 pub mod transform;
