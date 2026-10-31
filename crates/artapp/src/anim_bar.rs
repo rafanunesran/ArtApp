@@ -13,6 +13,9 @@ pub fn tick(app: &mut ArtApp, ctx: &egui::Context) {
         return;
     }
     let before = app.doc.animation.current;
+    if app.doc.animation.pages {
+        app.anim_playing = false;
+    }
     if app.anim_playing {
         let now = ctx.input(|i| i.time);
         let step = 1.0
@@ -61,7 +64,7 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) {
             crate::theme::panel_frame().show(ui, |ui| {
                 ui.set_max_width((canvas.width() - 24.0).clamp(200.0, 560.0));
                 timeline(app, ui);
-                if app.anim_settings_open {
+                if app.anim_settings_open && !app.doc.animation.pages {
                     ui.separator();
                     settings(app, ui);
                 }
@@ -75,13 +78,17 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) {
 fn timeline(app: &mut ArtApp, ui: &mut egui::Ui) {
     let frames = app.doc.frames();
     let cur = app.doc.animation.current;
+    let pages = app.doc.animation.pages;
     ui.horizontal(|ui| {
+        if pages {
+            ui.label(RichText::new("Páginas").size(13.0).color(color::TEXT_MUTED));
+        }
         let play = if app.anim_playing {
             icon::PAUSE
         } else {
             icon::PLAY
         };
-        if icon_button_sized(ui, play, app.anim_playing, "Reproduzir", 34.0).clicked() {
+        if !pages && icon_button_sized(ui, play, app.anim_playing, "Reproduzir", 34.0).clicked() {
             app.anim_playing = !app.anim_playing;
             app.anim_dir = 1;
             app.anim_next = 0.0;
@@ -120,7 +127,15 @@ fn timeline(app: &mut ArtApp, ui: &mut egui::Ui) {
             app.doc.add_frame();
             app.invalidate_all();
         }
-        if icon_button_sized(
+        if pages {
+            if ui
+                .button("PDF")
+                .on_hover_text("Exportar as páginas em PDF")
+                .clicked()
+            {
+                app.export_pdf();
+            }
+        } else if icon_button_sized(
             ui,
             icon::SETTINGS,
             app.anim_settings_open,
