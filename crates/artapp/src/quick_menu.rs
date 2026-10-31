@@ -4,7 +4,7 @@
 use eframe::egui::{self, Align2, Color32, Pos2, Sense, Stroke, Vec2};
 
 use crate::app::{ArtApp, Tool};
-use crate::theme::{color, icon, icon_font};
+use crate::theme::{color, icon, icon_font, panel_frame};
 
 #[derive(Clone, Copy)]
 enum Action {
@@ -146,5 +146,67 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
     }
     if close || clicked_out || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         app.quick_menu = None;
+    }
+}
+
+/// Uma ação de menu.
+type Run = fn(&mut ArtApp);
+
+/// Menu de copiar e colar (deslizar três dedos para baixo, como no Procreate).
+pub fn copy_paste(app: &mut ArtApp, ctx: &egui::Context) {
+    let Some(at) = app.copy_menu else {
+        return;
+    };
+    let mut picked: Option<Run> = None;
+    let area = egui::Area::new(egui::Id::unique("copy_menu"))
+        .order(egui::Order::Foreground)
+        .pivot(Align2::CENTER_TOP)
+        .fixed_pos(at)
+        .constrain(true)
+        .show(ctx, |ui| {
+            panel_frame().show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("Copiar e colar")
+                        .size(12.0)
+                        .color(color::TEXT_MUTED),
+                );
+                let items: [(&str, Run); 5] = [
+                    ("Recortar", ArtApp::cut),
+                    ("Copiar", ArtApp::copy),
+                    ("Colar", ArtApp::paste),
+                    ("Recortar e colar", |app| {
+                        app.cut();
+                        app.paste();
+                    }),
+                    ("Duplicar camada", |app| {
+                        app.doc.duplicate_layer();
+                        app.invalidate_all();
+                    }),
+                ];
+                for (label, run) in items {
+                    let enabled = label != "Colar" || app.clipboard.is_some();
+                    if ui
+                        .add_enabled(
+                            enabled,
+                            egui::Button::new(label).min_size(Vec2::new(180.0, 36.0)),
+                        )
+                        .clicked()
+                    {
+                        picked = Some(run);
+                    }
+                }
+            });
+        });
+    let clicked_out = ctx.input(|i| {
+        i.pointer.any_pressed()
+            && i.pointer
+                .interact_pos()
+                .is_some_and(|p| !area.response.rect.contains(p))
+    });
+    if let Some(run) = picked {
+        run(app);
+    }
+    if picked.is_some() || clicked_out || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        app.copy_menu = None;
     }
 }

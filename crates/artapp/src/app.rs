@@ -330,6 +330,8 @@ pub struct ArtApp {
     pub quick_menu: Option<Pos2>,
     /// Painel de histórico aberto.
     pub history_open: bool,
+    /// Menu de copiar e colar aberto (três dedos para baixo), onde os dedos estavam.
+    pub copy_menu: Option<Pos2>,
     /// Barra do ColorDrop aberta (limite e continuar preenchendo).
     pub drop_fill: Option<crate::canvas::DropFill>,
     /// Interface escondida (toque com quatro dedos ou Tab): só a tela de desenho.
@@ -470,6 +472,7 @@ impl ArtApp {
             hold_quickmenu: false,
             quick_menu: None,
             history_open: false,
+            copy_menu: None,
             drop_fill: None,
             hide_ui: false,
             finger_mode: FingerMode::Auto,
@@ -1375,6 +1378,7 @@ impl eframe::App for ArtApp {
         let canvas = self.canvas_rect;
         crate::transform_tool::toolbar(self, &ctx, canvas);
         crate::quick_menu::show(self, &ctx);
+        crate::quick_menu::copy_paste(self, &ctx);
         crate::history_panel::show(self, &ctx);
         crate::canvas::drop_fill_bar(self, &ctx, canvas);
         if hide {
