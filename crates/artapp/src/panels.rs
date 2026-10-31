@@ -1946,9 +1946,18 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             app.save_brush();
         }
     });
-    if ui.button("Restaurar ajustes do preset").clicked() {
-        app.reset_brush();
-    }
+    ui.horizontal_wrapped(|ui| {
+        if ui.button("Restaurar ajustes do preset").clicked() {
+            app.reset_brush();
+        }
+        if ui
+            .button(format!("{}  Importar pincéis…", icon::FOLDER_OPEN))
+            .on_hover_text("Pincéis do Photoshop (.abr) ou uma imagem, que vira a ponta.")
+            .clicked()
+        {
+            app.pick_image_for(crate::projects::ImageUse::Brushes);
+        }
+    });
 }
 
 fn brush_row(
