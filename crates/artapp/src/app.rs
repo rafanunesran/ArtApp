@@ -355,6 +355,8 @@ pub struct ArtApp {
     pending: Rect,
     /// Arquivo do projeto, salvamento automático e diálogos de abrir/salvar.
     pub projects: crate::projects::Projects,
+    /// Conferir, baixar e instalar versões novas (Android).
+    pub updater: crate::updater::Updater,
 }
 
 impl ArtApp {
@@ -466,6 +468,7 @@ impl ArtApp {
             thumbs_at: 0.0,
             pending: Rect::EMPTY,
             projects: crate::projects::Projects::default(),
+            updater: crate::updater::Updater::default(),
         };
         app.load_prefs();
         app
@@ -1214,6 +1217,7 @@ impl eframe::App for ArtApp {
         let ctx = ui.ctx().clone();
         self.shortcuts(&ctx);
         self.projects_tick(&ctx);
+        self.updater_tick(&ctx);
         if self.status != self.last_status {
             self.last_status.clone_from(&self.status);
             self.status_since = ctx.input(|i| i.time);
@@ -1262,6 +1266,7 @@ impl eframe::App for ArtApp {
         panels::toast(self, &ctx, canvas, 0.0);
         crate::dialogs::show(self, &ctx);
         crate::projects::show(self, &ctx);
+        crate::updater::show(self, &ctx);
         if self.show_new_dialog {
             panels::new_canvas_dialog(self, &ctx);
         }

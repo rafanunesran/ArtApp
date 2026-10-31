@@ -1,5 +1,6 @@
-// O app não tem código Java/Kotlin: a NativeActivity do Android carrega libartapp.so, compilada do
-// Rust por `cargo ndk` (veja README.md › Android) para dentro de src/main/jniLibs.
+// A NativeActivity do Android carrega libartapp.so, compilada do Rust por `cargo ndk` (veja
+// README.md › Android) para dentro de src/main/jniLibs. O único Java é o de atualizar o app
+// (src/main/java), que o Rust chama por JNI.
 plugins {
     id("com.android.application")
 }

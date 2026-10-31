@@ -249,6 +249,17 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.export_psd();
         ui.close();
     }
+    if crate::platform::update::SUPPORTED {
+        if item(ui, icon::ROTATE_CW, "Atualizar app").clicked() {
+            app.check_update();
+            ui.close();
+        }
+        ui.label(
+            RichText::new(format!("Build instalado: {}", app.updater.installed()))
+                .size(12.0)
+                .color(crate::theme::color::TEXT_MUTED),
+        );
+    }
     ui.separator();
     let canvas = app.canvas_rect;
     let step = 15f32.to_radians();
