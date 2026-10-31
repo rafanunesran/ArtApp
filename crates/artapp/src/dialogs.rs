@@ -240,6 +240,10 @@ pub enum Dialog {
         size: f32,
         editable: bool,
     },
+    /// Engrossar (positivo) ou afinar (negativo) a tinta da camada, em pixels.
+    LineWidth {
+        delta: f32,
+    },
     /// Tamanho da tela: `scale` escala o desenho; senão só a área muda, presa em `anchor`
     /// (0..9, da esquerda para a direita e de cima para baixo).
     CanvasSize {
@@ -307,6 +311,7 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
         Dialog::Adjust(_) => "Correção de cor",
         Dialog::CanvasSize { .. } => "Tamanho da tela",
         Dialog::Text { .. } => "Texto",
+        Dialog::LineWidth { .. } => "Ajustar largura da linha",
     };
     let mut outcome = Outcome::Keep;
     let mut open = true;
@@ -326,6 +331,21 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
                 Dialog::Filter { index, params } => filter_ui(ui, index, params),
                 Dialog::Adjust(adj) => adjust_ui(ui, adj),
                 Dialog::CanvasSize { .. } => canvas_size_ui(app, ui, &mut dialog),
+                Dialog::LineWidth { delta } => {
+                    ui.add(
+                        egui::Slider::new(delta, -artapp_core::line_width::MAX_DELTA..=artapp_core::line_width::MAX_DELTA)
+                            .step_by(0.5)
+                            .suffix(" px")
+                            .text("Largura"),
+                    );
+                    ui.label(
+                        RichText::new(
+                            "Positivo engrossa, negativo afina a tinta da camada ativa. A cor nova vem da linha mais perto.",
+                        )
+                        .size(12.0)
+                        .color(color::TEXT_MUTED),
+                    );
+                }
                 Dialog::Text {
                     text,
                     size,
@@ -383,6 +403,15 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
 }
 
 fn apply(app: &mut ArtApp, dialog: &Dialog) {
+    if let Dialog::LineWidth { delta } = *dialog {
+        app.commit_transform();
+        let r = app.doc.adjust_line_width(delta);
+        if r.is_empty() {
+            app.status = "Nada para ajustar: a camada está vazia, oculta ou é vetorial.".into();
+        }
+        app.invalidate(r);
+        return;
+    }
     if let Dialog::Text {
         text,
         size,
@@ -464,7 +493,7 @@ fn apply(app: &mut ArtApp, dialog: &Dialog) {
             }
         }
         Dialog::Adjust(adj) => app.doc.adjust(*adj),
-        Dialog::CanvasSize { .. } | Dialog::Text { .. } => return,
+        Dialog::CanvasSize { .. } | Dialog::Text { .. } | Dialog::LineWidth { .. } => return,
     };
     if r.is_empty() {
         app.status = "Escolha uma camada raster visível com desenho.".into();
