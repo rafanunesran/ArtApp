@@ -343,6 +343,8 @@ pub struct ArtApp {
     pub history_open: bool,
     /// Modo lápis nos filtros, ajustes e efeitos.
     pub adjust_pencil: bool,
+    /// Recorte com perspectiva em andamento: os quatro cantos (em pixels do documento).
+    pub persp_crop: Option<[[f64; 2]; 4]>,
     /// Seleções guardadas para usar de novo (valem para o desenho aberto).
     pub saved_selections: Vec<(String, artapp_core::Selection)>,
     /// Janela de referência (imagem ou cópia da tela).
@@ -504,6 +506,7 @@ impl ArtApp {
             quick_menu: None,
             history_open: false,
             adjust_pencil: false,
+            persp_crop: None,
             saved_selections: Vec::new(),
             reference: None,
             reference_open: false,
@@ -1474,6 +1477,7 @@ impl eframe::App for ArtApp {
         crate::history_panel::show(self, &ctx);
         crate::reference::show(self, &ctx);
         crate::canvas::drop_fill_bar(self, &ctx, canvas);
+        crate::canvas::persp_crop_bar(self, &ctx, canvas);
         if hide {
             panels::show_ui_button(self, &ctx, canvas);
             panels::toast(self, &ctx, canvas, 0.0);

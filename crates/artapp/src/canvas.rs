@@ -83,6 +83,8 @@ enum ActiveKind {
     },
     /// Pincel corretivo: o traço marca a área; ao soltar, ela é refeita.
     Heal(Box<artapp_core::heal::HealSession>),
+    /// Recorte com perspectiva: arrastando o canto `k` do quadrilátero.
+    PerspCorner(usize),
     /// Transformar na tela: a alça pegada e o quadrilátero de quando o toque começou.
     Transform {
         handle: crate::transform_tool::Handle,
@@ -335,6 +337,7 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
         draw_grid(app, &painter, panel);
     }
     draw_overlay(app, &painter, panel);
+    draw_persp_crop(app, &painter, panel);
     draw_ruler(app, &painter, panel);
     draw_kit_overlays(app, &painter, panel);
     if app.tool == Tool::Blend
@@ -1056,6 +1059,23 @@ fn tool_down(
     let vector_layer = app.doc.active_is_vector();
     // Tolerância de toque em pixels do documento (uns 12 pontos de tela).
     let tol = 12.0 / app.view.zoom.max(0.01) as f64;
+    if let Some(quad) = app.persp_crop {
+        // Recorte com perspectiva: só os cantos se mexem.
+        let raw = point(app, panel, p, force, time);
+        let near = (0..4)
+            .map(|k| (k, (quad[k][0] - raw.x).hypot(quad[k][1] - raw.y)))
+            .filter(|(_, d)| *d <= tol * 2.0)
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((k, _)) = near {
+            app.view.stroke = Some(ActiveStroke::new(
+                ActiveKind::PerspCorner(k),
+                touch,
+                time,
+                p,
+            ));
+        }
+        return;
+    }
     if app.transform.is_some() {
         // Sem a régua: o transformar usa o ponto de verdade.
         let raw = point(app, panel, p, force, time);
@@ -1350,6 +1370,14 @@ fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, t
             let (handle, from) = (*handle, *from);
             ruler_drag(app, handle, from, vp);
         }
+        ActiveKind::PerspCorner(k) => {
+            let k = *k;
+            let raw = point(app, panel, p, force, time);
+            let (w, h) = (f64::from(app.doc.width), f64::from(app.doc.height));
+            if let Some(q) = &mut app.persp_crop {
+                q[k] = [raw.x.clamp(0.0, w), raw.y.clamp(0.0, h)];
+            }
+        }
         ActiveKind::Kit(last, pressure) => {
             *last = vp;
             *pressure = pt.pressure;
@@ -1413,7 +1441,9 @@ fn end_stroke(app: &mut ArtApp) {
         ActiveKind::BezierHandle => Rect::EMPTY,
         ActiveKind::Kit(last, pressure) => kit_pointer(app, PointerKind::Up, last, pressure),
         ActiveKind::Liquify(session) => session.end(),
-        ActiveKind::Ruler { .. } | ActiveKind::Transform { .. } => return,
+        ActiveKind::Ruler { .. } | ActiveKind::Transform { .. } | ActiveKind::PerspCorner(_) => {
+            return;
+        }
         ActiveKind::Heal(heal) => heal.end(&mut app.doc),
         ActiveKind::Marquee { tool, from, to } => {
             let (w, h) = (app.doc.width, app.doc.height);
@@ -1489,6 +1519,64 @@ fn cancel_stroke(app: &mut ArtApp) {
             }
         }
         _ => {}
+    }
+}
+
+/// O quadrilátero do recorte com perspectiva: fora dele escurece, e os cantos têm alças.
+fn draw_persp_crop(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
+    let Some(q) = app.persp_crop else {
+        return;
+    };
+    let pts: Vec<Pos2> = q
+        .iter()
+        .map(|c| app.view.doc_to_screen(panel, c[0] as f32, c[1] as f32))
+        .collect();
+    let line = egui::Stroke::new(2.0, Color32::from_rgb(0xff, 0xc4, 0x3d));
+    painter.add(egui::Shape::closed_line(pts.clone(), line));
+    // Linhas de terço, para alinhar com o que deve ficar reto.
+    for t in [1.0 / 3.0, 2.0 / 3.0] {
+        let lerp = |a: Pos2, b: Pos2| a + (b - a) * t;
+        let thin = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 196, 61, 140));
+        painter.line_segment([lerp(pts[0], pts[1]), lerp(pts[3], pts[2])], thin);
+        painter.line_segment([lerp(pts[0], pts[3]), lerp(pts[1], pts[2])], thin);
+    }
+    for c in &pts {
+        painter.circle_filled(*c, 9.0, Color32::WHITE);
+        painter.circle_stroke(*c, 9.0, line);
+    }
+}
+
+/// Barra do recorte com perspectiva.
+pub fn persp_crop_bar(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) {
+    if app.persp_crop.is_none() {
+        return;
+    }
+    let (mut apply, mut cancel) = (false, false);
+    egui::Area::new(egui::Id::unique("persp_crop_bar"))
+        .order(egui::Order::Foreground)
+        .pivot(egui::Align2::CENTER_TOP)
+        .fixed_pos(canvas.center_top() + egui::vec2(0.0, 12.0))
+        .show(ctx, |ui| {
+            crate::theme::panel_frame().show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Arraste os cantos até o que deve ficar reto.");
+                    apply = ui
+                        .button(egui::RichText::new("Recortar").strong())
+                        .clicked();
+                    cancel = ui.button("Cancelar").clicked();
+                });
+            });
+        });
+    if cancel {
+        app.persp_crop = None;
+    } else if apply && let Some(q) = app.persp_crop.take() {
+        app.commit_transform();
+        if app.doc.perspective_crop(q) {
+            app.canvas_resized();
+        } else {
+            app.status = "Os cantos precisam formar um quadrilátero sem cruzar.".into();
+            app.persp_crop = Some(q);
+        }
     }
 }
 
