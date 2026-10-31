@@ -2280,6 +2280,10 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
         ];
         brush_editor::tab_bar(ui, "brush", &TABS)
     };
+    if tab != BrushTab::Library {
+        let b = if eraser { &app.eraser } else { &app.brush };
+        live_preview(ui, b);
+    }
     match tab {
         BrushTab::Library => brush_library(app, ui),
         BrushTab::General => brush_general(app, ui),
@@ -2306,6 +2310,42 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
         ui.add_space(6.0);
         brush_save_row(app, ui);
     }
+}
+
+/// Faixa de rascunho no topo das abas de ajuste: o traço do pincel como está agora, refeito a
+/// cada mudança (como a área de teste do Brush Studio do Procreate).
+fn live_preview(ui: &mut egui::Ui, b: &artapp_core::BrushSettings) {
+    let id = Id::unique("brush-live-preview");
+    let w = (ui.available_width() - 4.0).clamp(120.0, 600.0);
+    let (pw, ph) = (w.round() as u32, 54u32);
+    let cached: Option<(artapp_core::BrushSettings, u32, TextureHandle)> =
+        ui.ctx().data(|d| d.get_temp(id));
+    let tex = match cached {
+        Some((s, cw, t)) if s == *b && cw == pw => t,
+        _ => {
+            let px = artapp_core::brushes::preview(b, pw, ph);
+            let img = egui::ColorImage::from_rgba_unmultiplied(
+                [pw as usize, ph as usize],
+                px.as_flattened(),
+            );
+            let t = ui
+                .ctx()
+                .load_texture("brush-live", img, egui::TextureOptions::LINEAR);
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(id, (b.clone(), pw, t.clone())));
+            t
+        }
+    };
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, ph as f32), Sense::hover());
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(8), color::SURFACE_HOVER);
+    ui.painter().image(
+        tex.id(),
+        rect,
+        egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+        Color32::WHITE,
+    );
+    ui.add_space(4.0);
 }
 
 /// Aba Geral: tamanho, opacidade, fluxo, dureza, mesclagem e pressão (e a borracha mágica).
