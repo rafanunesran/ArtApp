@@ -1,7 +1,7 @@
 //! Estado do app e o quadro principal: barra de ferramentas, painéis e a tela de desenho.
 
 use artapp_core::brushes::{self, BrushEntry};
-use artapp_core::vector::VectorStyle;
+use artapp_core::vector::{PenPressure, VectorStyle};
 use artapp_core::{Anchor, BrushSettings, Document, NodeId, Rect};
 use std::collections::HashMap;
 
@@ -381,6 +381,10 @@ pub struct ArtApp {
     pub vector_width: f64,
     pub vector_fill: bool,
     pub vector_fill_color: Color32,
+    /// Opacidade dos objetos vetoriais novos (0..1).
+    pub vector_opacity: f32,
+    /// Como a pressão da caneta muda o traço da caneta vetorial.
+    pub vector_pen: PenPressure,
     /// Objeto vetorial selecionado (ferramenta Selecionar).
     pub selected: Option<NodeId>,
     /// Pontos do caminho Bézier em construção.
@@ -539,6 +543,8 @@ impl ArtApp {
             vector_width: 6.0,
             vector_fill: false,
             vector_fill_color: Color32::from_rgb(250, 200, 40),
+            vector_opacity: 1.0,
+            vector_pen: PenPressure::default(),
             selected: None,
             bezier: Vec::new(),
             show_color: false,
@@ -583,6 +589,26 @@ impl ArtApp {
         {
             self.pressure_curve = c;
             artapp_core::pressure::sanitize(&mut self.pressure_curve);
+        }
+        let num = |k: &str| {
+            v.get(k)
+                .and_then(serde_json::Value::as_f64)
+                .map(|f| f as f32)
+        };
+        if let Some(b) = flag("vector_pen_size") {
+            self.vector_pen.size = b;
+        }
+        if let Some(f) = num("vector_pen_min_size") {
+            self.vector_pen.min_size = f.clamp(0.0, 1.0);
+        }
+        if let Some(b) = flag("vector_pen_opacity") {
+            self.vector_pen.opacity = b;
+        }
+        if let Some(f) = num("vector_pen_min_opacity") {
+            self.vector_pen.min_opacity = f.clamp(0.0, 1.0);
+        }
+        if let Some(f) = num("vector_opacity") {
+            self.vector_opacity = f.clamp(0.01, 1.0);
         }
         if let Some(b) = flag("gesture_rotate") {
             self.gesture_rotate = b;
@@ -664,6 +690,11 @@ impl ArtApp {
         let v = serde_json::json!({
             "use_pressure": self.use_pressure,
             "pressure_curve": self.pressure_curve,
+            "vector_pen_size": self.vector_pen.size,
+            "vector_pen_min_size": self.vector_pen.min_size,
+            "vector_pen_opacity": self.vector_pen.opacity,
+            "vector_pen_min_opacity": self.vector_pen.min_opacity,
+            "vector_opacity": self.vector_opacity,
             "gesture_rotate": self.gesture_rotate,
             "autoclose_panels": self.autoclose_panels,
             "tap_undo": self.tap_undo,
@@ -1013,6 +1044,7 @@ impl ArtApp {
             stroke: self.vector_stroke.then(|| rgb(self.color)),
             width: self.vector_width,
             fill: self.vector_fill.then(|| rgb(self.vector_fill_color)),
+            opacity: self.vector_opacity,
         }
     }
 

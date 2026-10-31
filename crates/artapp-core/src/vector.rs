@@ -10,8 +10,10 @@ use std::cell::RefCell;
 use photocraft_color::PixelFormat;
 use photocraft_geom::Rect;
 use photocraft_raster::Surface;
-use vectorcraft_color::{Color, Paint};
-use vectorcraft_doc::appearance::{FillLayer, LineCap, LineJoin, StrokeLayer};
+use vectorcraft_color::{Color, Gradient, GradientKind, GradientPaint, GradientStop, Paint};
+use vectorcraft_doc::appearance::{
+    FillLayer, LineCap, LineJoin, PressureProfile, StrokeGradientMode, StrokeLayer, WidthProfile,
+};
 use vectorcraft_doc::hit::{HitOptions, hit_test};
 use vectorcraft_doc::{Appearance, AppearanceItem, Node, NodeId, Shared};
 use vectorcraft_geom::path::{PathData, SubPath};
@@ -43,6 +45,8 @@ pub struct VectorStyle {
     pub stroke: Option<[f32; 3]>,
     pub width: f64,
     pub fill: Option<[f32; 3]>,
+    /// Opacidade do traço e do preenchimento (0..1).
+    pub opacity: f32,
 }
 
 impl Default for VectorStyle {
@@ -51,8 +55,117 @@ impl Default for VectorStyle {
             stroke: Some([0.0, 0.0, 0.0]),
             width: 4.0,
             fill: None,
+            opacity: 1.0,
         }
     }
+}
+
+/// Como a pressão da caneta muda o traço da caneta vetorial. A pressão chega já passada pela curva
+/// de pressão do app; o traço continua um caminho editável, com perfil de largura (e um degradê
+/// de opacidade ao longo dele) no lugar de pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PenPressure {
+    /// A pressão afina o traço.
+    pub size: bool,
+    /// Largura na pressão mais leve, em fração da espessura (0..1).
+    pub min_size: f32,
+    /// A pressão muda a opacidade.
+    pub opacity: bool,
+    /// Opacidade na pressão mais leve, em fração da opacidade do traço (0..1).
+    pub min_opacity: f32,
+}
+
+impl Default for PenPressure {
+    fn default() -> Self {
+        Self {
+            size: true,
+            min_size: 0.15,
+            opacity: false,
+            min_opacity: 0.2,
+        }
+    }
+}
+
+/// Paradas do degradê de opacidade ao longo de um traço (mais deixam o desenho lento).
+const MAX_OPACITY_STOPS: usize = 48;
+
+/// A pressão de cada ponto de `points` ao longo do traço: (fração do comprimento, pressão). `None`
+/// quando a pressão não muda (mouse, dedo ou caneta sem pressão).
+fn pressure_samples(points: &[Point], pressures: &[f32]) -> Option<PressureProfile> {
+    if points.len() < 2 || pressures.len() != points.len() {
+        return None;
+    }
+    let (lo, hi) = pressures
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+    if !(lo.is_finite() && hi.is_finite()) || (lo >= 0.999 && hi >= 0.999) {
+        return None;
+    }
+    let mut acc = 0.0;
+    let mut lens = Vec::with_capacity(points.len());
+    lens.push(0.0);
+    for w in points.windows(2) {
+        acc += w[0].distance(w[1]);
+        lens.push(acc);
+    }
+    if acc <= 1e-9 {
+        return None;
+    }
+    PressureProfile::from_samples(
+        lens.iter()
+            .zip(pressures)
+            .map(|(l, p)| (l / acc, f64::from(*p))),
+    )
+}
+
+/// A camada de traço de `style` com a pressão `pressure` aplicada como `pen` pede.
+fn pressure_stroke(
+    st: &mut StrokeLayer,
+    color: [f32; 3],
+    pressure: &PressureProfile,
+    pen: &PenPressure,
+) {
+    let lerp = |min: f32, p: f64| {
+        f64::from(min.clamp(0.0, 1.0)) + (1.0 - f64::from(min.clamp(0.0, 1.0))) * p
+    };
+    if pen.size {
+        st.profile = Some(WidthProfile {
+            points: pressure
+                .points
+                .iter()
+                .map(|&(t, p)| {
+                    let f = lerp(pen.min_size, p);
+                    (t, f, f)
+                })
+                .collect(),
+        });
+    }
+    if pen.opacity {
+        let pts = &pressure.points;
+        let n = pts.len();
+        let stops: Vec<GradientStop> = (0..n.min(MAX_OPACITY_STOPS))
+            .filter_map(|i| {
+                let j = if n <= MAX_OPACITY_STOPS {
+                    i
+                } else {
+                    i * (n - 1) / (MAX_OPACITY_STOPS - 1)
+                };
+                pts.get(j)
+            })
+            .map(|&(t, p)| GradientStop {
+                opacity: lerp(pen.min_opacity, p) as f32,
+                ..GradientStop::new(t as f32, Color::rgb(color[0], color[1], color[2]))
+            })
+            .collect();
+        if stops.len() >= 2 {
+            st.paint = Paint::Gradient(Box::new(GradientPaint::new(Gradient::new(
+                GradientKind::Linear,
+                stops,
+            ))));
+            st.gradient_mode = StrokeGradientMode::Along;
+        }
+    }
+    st.pressure = Some(pressure.clone());
 }
 
 fn paint(c: [f32; 3]) -> Paint {
@@ -62,13 +175,17 @@ fn paint(c: [f32; 3]) -> Paint {
 impl VectorStyle {
     pub fn appearance(&self) -> Appearance {
         let mut items = Vec::new();
+        let opacity = self.opacity.clamp(0.0, 1.0);
         if let Some(f) = self.fill {
-            items.push(AppearanceItem::Fill(FillLayer::new(paint(f))));
+            let mut fl = FillLayer::new(paint(f));
+            fl.opacity = opacity;
+            items.push(AppearanceItem::Fill(fl));
         }
         if let Some(s) = self.stroke {
             let mut st = StrokeLayer::new(paint(s), self.width.clamp(0.1, 2000.0));
             st.cap = LineCap::Round;
             st.join = LineJoin::Round;
+            st.opacity = opacity;
             items.push(AppearanceItem::Stroke(st));
         }
         Appearance {
@@ -315,6 +432,7 @@ impl Document {
             stroke: None,
             width: 0.0,
             fill: Some(color),
+            ..VectorStyle::default()
         };
         self.add_polygon_paths(&paths, &style)
     }
@@ -369,6 +487,44 @@ impl Document {
             return Rect::EMPTY;
         };
         let appearance = style.appearance();
+        self.edit_vector(true, |art| {
+            let Some(parent) = art.target() else {
+                return false;
+            };
+            let id = art.doc.alloc_id();
+            art.doc
+                .insert(Some(parent), usize::MAX, Node::path(id, path, appearance))
+                .is_ok()
+        })
+    }
+
+    /// Acrescenta um traço da caneta vetorial: `points` à mão livre, com a pressão `pressures` de
+    /// cada ponto (já passada pela curva) aplicada à largura e à opacidade como `pen` pede.
+    pub fn vector_add_pen(
+        &mut self,
+        points: &[Point],
+        pressures: &[f32],
+        style: &VectorStyle,
+        pen: &PenPressure,
+    ) -> Rect {
+        let shape = Shape::Freehand {
+            points: points.to_vec(),
+            closed: false,
+        };
+        let Some(path) = shape.to_path() else {
+            return Rect::EMPTY;
+        };
+        let mut appearance = style.appearance();
+        if let (Some(color), Some(pressure)) = (
+            style.stroke,
+            pressure_samples(points, pressures).filter(|_| pen.size || pen.opacity),
+        ) {
+            for item in &mut appearance.items {
+                if let AppearanceItem::Stroke(st) = item {
+                    pressure_stroke(st, color, &pressure, pen);
+                }
+            }
+        }
         self.edit_vector(true, |art| {
             let Some(parent) = art.target() else {
                 return false;
@@ -507,6 +663,58 @@ mod tests {
         d
     }
 
+    fn last_stroke(d: &Document) -> StrokeLayer {
+        let art = d.active_vector().unwrap();
+        let layer = art.doc.node(art.target().unwrap()).unwrap();
+        let node = layer.children().unwrap().last().unwrap();
+        node.appearance
+            .items
+            .iter()
+            .find_map(|i| match i {
+                AppearanceItem::Stroke(s) => Some(s.clone()),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn pen_pressure_shapes_width_and_opacity() {
+        let mut d = doc_with_vector();
+        let pts: Vec<Point> = (0..=40)
+            .map(|i| Point::new(20.0 + i as f64 * 4.0, 100.0))
+            .collect();
+        let pressures: Vec<f32> = (0..=40).map(|i| i as f32 / 40.0).collect();
+        let style = VectorStyle {
+            width: 20.0,
+            opacity: 0.8,
+            ..VectorStyle::default()
+        };
+        let pen = PenPressure {
+            opacity: true,
+            ..PenPressure::default()
+        };
+        let r = d.vector_add_pen(&pts, &pressures, &style, &pen);
+        assert!(!r.is_empty());
+        let st = last_stroke(&d);
+        assert!((st.opacity - 0.8).abs() < 1e-6);
+        let prof = st.profile.unwrap();
+        let (start, _) = prof.at(0.0);
+        let (end, _) = prof.at(1.0);
+        assert!(start < 0.2 && end > 0.99, "{start} → {end}");
+        assert_eq!(st.gradient_mode, StrokeGradientMode::Along);
+        assert!(matches!(st.paint, Paint::Gradient(_)));
+        // O começo, leve, é mais fino que o fim.
+        let s = &d.layers[1].surface;
+        assert_eq!(s.rgba(24, 92)[3], 0.0);
+        assert!(s.rgba(176, 92)[3] > 0.3);
+
+        // Sem pressão (mouse): traço uniforme e cor lisa.
+        d.vector_add_pen(&pts, &vec![1.0; pts.len()], &style, &pen);
+        let st = last_stroke(&d);
+        assert!(st.profile.is_none() && st.pressure.is_none());
+        assert!(matches!(st.paint, Paint::Solid { .. }));
+    }
+
     #[test]
     fn text_layer_draws_letters() {
         let mut doc = Document::new(300, 120);
@@ -531,6 +739,7 @@ mod tests {
             stroke: Some([1.0, 0.0, 0.0]),
             width: 6.0,
             fill: Some([0.0, 0.0, 1.0]),
+            ..VectorStyle::default()
         };
         let r = d.vector_add(
             &Shape::Rectangle(Point::new(20.0, 20.0), Point::new(120.0, 100.0)),

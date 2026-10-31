@@ -2039,6 +2039,12 @@ fn vector_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             .logarithmic(true)
             .text("Espessura"),
     );
+    if ui
+        .add(egui::Slider::new(&mut app.vector_opacity, 0.01..=1.0).text("Opacidade"))
+        .changed()
+    {
+        app.save_prefs();
+    }
     ui.horizontal(|ui| {
         ui.add_sized([150.0, 36.0], |ui: &mut egui::Ui| {
             theme::switch(ui, &mut app.vector_fill, "Preenchimento")
@@ -2105,7 +2111,38 @@ fn vector_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
                 }
             });
         }
-        Tool::VectorPen => hint(ui, "Desenhe à mão livre: o traço vira curvas editáveis."),
+        Tool::VectorPen => {
+            section(ui, "Pressão da caneta");
+            let mut changed = false;
+            let pen = &mut app.vector_pen;
+            changed |= theme::switch(ui, &mut pen.size, "Pressão muda a espessura").changed();
+            if pen.size {
+                changed |= ui
+                    .add(egui::Slider::new(&mut pen.min_size, 0.0..=1.0).text("Espessura mínima"))
+                    .changed();
+            }
+            changed |= theme::switch(ui, &mut pen.opacity, "Pressão muda a opacidade").changed();
+            if pen.opacity {
+                changed |= ui
+                    .add(
+                        egui::Slider::new(&mut pen.min_opacity, 0.0..=1.0).text("Opacidade mínima"),
+                    )
+                    .changed();
+            }
+            if !app.use_pressure {
+                hint(
+                    ui,
+                    "A pressão está desligada no painel do pincel (Usar pressão da caneta).",
+                );
+            }
+            if changed {
+                app.save_prefs();
+            }
+            hint(
+                ui,
+                "Desenhe à mão livre: o traço vira curvas editáveis, com a largura da pressão.",
+            );
+        }
         _ => hint(ui, "Arraste na tela para desenhar a forma."),
     }
 }
