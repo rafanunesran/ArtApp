@@ -6,8 +6,8 @@
 pub const MAX_SIZE: f32 = photocraft_paint::MAX_BRUSH_SIZE;
 
 use photocraft_paint::{
-    BrushPreset, BrushSettings, Control, Dynamic, MixerSettings, Pattern, PatternStyle,
-    ShapeDynamics, Smoothing, Texture, Transfer, presets,
+    BrushPreset, BrushSettings, Control, Dynamic, GrayTile, MaskMode, MixerSettings, Pattern,
+    PatternStyle, ShapeDynamics, Smoothing, Texture, Transfer, presets,
 };
 
 /// Um pincel da paleta: nome mostrado e configurações.
@@ -137,6 +137,8 @@ pub fn describe(name: &str) -> Option<&'static str> {
         "Óleo que mistura" => "Pinta com a cor escolhida e mistura com a tinta da tela.",
         "Pincel úmido" => "Bem molhado: pega muita cor da tela e funde as áreas.",
         "Esfumar com cor" => "Quase sem tinta própria: espalha e suaviza o que já está pintado.",
+        "Hachura" => "Linhas diagonais presas à tela: sombra de quadrinho que não se desalinha.",
+        "Hachura cruzada" => "Hachura nas duas diagonais, para sombras mais escuras.",
         "Borracha dura" => "Apaga com borda limpa.",
         "Borracha macia" => "Apaga suave, para clarear áreas.",
         "Borracha de lápis" => "Apaga como borracha de papel, pela pressão.",
@@ -253,6 +255,31 @@ fn pressure_opacity() -> Transfer {
         enabled: true,
         opacity: Dynamic::controlled(Control::PenPressure),
         ..Default::default()
+    }
+}
+
+/// Linhas diagonais a cada 8 px (e as da outra diagonal, se `cross`), 2 px de largura.
+fn hatch_tile(cross: bool) -> GrayTile {
+    GrayTile::from_fn(32, 32, move |x, y| {
+        let a = (x + y) % 8 < 2;
+        let b = cross && (x + 32 - y) % 8 < 2;
+        if a || b { 1.0 } else { 0.0 }
+    })
+}
+
+fn hatch_brush(cross: bool) -> BrushSettings {
+    BrushSettings {
+        size: 60.0,
+        hardness: 0.8,
+        spacing: 0.1,
+        texture: Texture {
+            enabled: true,
+            pattern: Pattern::Tile(hatch_tile(cross)),
+            mode: MaskMode::HardMix,
+            depth: 1.0,
+            ..Default::default()
+        },
+        ..BrushSettings::default()
     }
 }
 
@@ -460,6 +487,9 @@ pub fn extra() -> Vec<BrushEntry> {
                 ..base.clone()
             },
         ),
+        // Quadrinhos: o padrão fica preso à tela, então traços vizinhos continuam a mesma hachura.
+        ours("Hachura", "Quadrinhos", hatch_brush(false)),
+        ours("Hachura cruzada", "Quadrinhos", hatch_brush(true)),
         // Borrachas
         ours(
             "Borracha dura",
@@ -633,6 +663,25 @@ mod tests {
         assert_eq!(back[0].name, "Meu");
         assert_eq!(back[0].settings.size, 33.0);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn hatch_leaves_gaps_between_the_lines() {
+        let all = all();
+        let ink = |name: &str| {
+            let b = all
+                .iter()
+                .find(|b| b.name == name)
+                .map(|b| b.settings.clone());
+            let px = preview(&b.unwrap_or_default(), 200, 60);
+            // Faixa do meio do traço.
+            let mid: Vec<_> = px[60 * 200 / 2 - 100..60 * 200 / 2 + 100].to_vec();
+            mid.iter().filter(|p| p[3] > 128).count() as f32 / mid.len() as f32
+        };
+        let single = ink("Hachura");
+        let cross = ink("Hachura cruzada");
+        assert!(single > 0.1 && single < 0.6, "hachura cobre {single}");
+        assert!(cross > single, "cruzada {cross} <= simples {single}");
     }
 
     #[test]
