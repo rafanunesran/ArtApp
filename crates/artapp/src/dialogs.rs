@@ -421,8 +421,8 @@ fn transform_ui(app: &mut ArtApp, ui: &mut egui::Ui, dialog: &mut Dialog, outcom
                     *outcome = Outcome::Close;
                 }
             };
-        quick(ui, "Espelhar ↔", &|a| a.doc.flip_layer(true));
-        quick(ui, "Espelhar ↕", &|a| a.doc.flip_layer(false));
+        quick(ui, "Espelhar horizontal", &|a| a.doc.flip_layer(true));
+        quick(ui, "Espelhar vertical", &|a| a.doc.flip_layer(false));
         quick(ui, "Girar 90°", &|a| {
             a.doc.transform_layer(1.0, 1.0, 90.0, 0.0, 0.0)
         });

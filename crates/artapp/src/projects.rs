@@ -349,6 +349,8 @@ impl ArtApp {
 
     /// Codifica e grava em segundo plano.
     fn start_save(&mut self, path: PathBuf, auto: bool, recovery: bool) {
+        // O conteúdo em transformação está fora da camada: aplica antes de gravar.
+        self.commit_transform();
         if self.projects.busy() {
             if !auto {
                 self.status = "Aguarde: ainda gravando o arquivo anterior.".into();
@@ -472,7 +474,7 @@ impl ArtApp {
         let drawing = ctx.input(|i| i.pointer.any_down() || i.any_touches());
         let due = now - p.last_auto_at >= AUTOSAVE_EVERY && now - p.last_edit_at >= AUTOSAVE_IDLE;
         // Sair do app (ir para outro app no Android, trocar de janela) grava na hora.
-        if lost_focus || (due && !drawing) {
+        if lost_focus || (due && !drawing && self.transform.is_none()) {
             self.projects.last_auto_at = now;
             match self.projects.path.clone() {
                 Some(path) => self.start_save(path, true, false),

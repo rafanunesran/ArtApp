@@ -96,7 +96,7 @@ pub fn curve_eval(ys: &[f32; 5], x: f32) -> f32 {
 impl Document {
     /// Pixels da camada ativa raster que podem ser editados (`None` se oculta, vetorial ou vazia),
     /// recortados à seleção.
-    fn edit_area(&self, whole: bool) -> Option<Rect> {
+    pub(crate) fn edit_area(&self, whole: bool) -> Option<Rect> {
         let layer = self.active_layer()?;
         if !layer.visible || layer.is_vector() {
             return None;
@@ -303,19 +303,7 @@ impl Document {
         let Ok(warped) = warp_surface(&moving, r, &h, Interp::Bicubic) else {
             return Rect::EMPTY;
         };
-        let out_r = warped.content_bounds().intersect(&canvas);
-        if !out_r.is_empty() {
-            let n = out_r.width() as usize * out_r.height() as usize;
-            let (mut a, mut b) = (vec![[0.0f32; 4]; n], vec![[0.0f32; 4]; n]);
-            rest.read_rgba_into(out_r, &mut a);
-            warped.read_rgba_into(out_r, &mut b);
-            let data: Vec<f32> = a
-                .iter()
-                .zip(&b)
-                .flat_map(|(d, s)| blend::composite(BlendMode::Normal, *d, *s, 1.0))
-                .collect();
-            rest.write_region(out_r, &data);
-        }
+        let out_r = paste_over(&mut rest, &warped, canvas);
         layer.surface = rest;
         // A seleção acompanha o conteúdo.
         if let Some(s) = sel {
@@ -346,8 +334,26 @@ impl Document {
     }
 }
 
+/// Põe `top` por cima de `base` (modo normal), dentro de `canvas`. Devolve a área do `top`.
+pub(crate) fn paste_over(base: &mut Surface, top: &Surface, canvas: Rect) -> Rect {
+    let out_r = top.content_bounds().intersect(&canvas);
+    if !out_r.is_empty() {
+        let n = out_r.width() as usize * out_r.height() as usize;
+        let (mut a, mut b) = (vec![[0.0f32; 4]; n], vec![[0.0f32; 4]; n]);
+        base.read_rgba_into(out_r, &mut a);
+        top.read_rgba_into(out_r, &mut b);
+        let data: Vec<f32> = a
+            .iter()
+            .zip(&b)
+            .flat_map(|(d, s)| blend::composite(BlendMode::Normal, *d, *s, 1.0))
+            .collect();
+        base.write_region(out_r, &data);
+    }
+    out_r
+}
+
 /// Separa `s` em (pixels selecionados, o resto), pela máscara.
-fn split_by_mask(s: &Surface, mask: &Surface, r: Rect) -> (Surface, Surface) {
+pub(crate) fn split_by_mask(s: &Surface, mask: &Surface, r: Rect) -> (Surface, Surface) {
     let n = r.width() as usize * r.height() as usize;
     let mut px = vec![[0.0f32; 4]; n];
     s.read_rgba_into(r, &mut px);
@@ -613,7 +619,7 @@ pub fn decode_image(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
 }
 
 /// Reduz uma imagem RGBA 8 bits pela média da área (com alfa pré-multiplicado, sem halos).
-fn downscale(src: &[u8], w: u32, h: u32, nw: u32, nh: u32) -> Vec<u8> {
+pub(crate) fn downscale(src: &[u8], w: u32, h: u32, nw: u32, nh: u32) -> Vec<u8> {
     let (w, h, nw, nh) = (w as usize, h as usize, nw as usize, nh as usize);
     let mut out = vec![0u8; nw * nh * 4];
     for oy in 0..nh {
