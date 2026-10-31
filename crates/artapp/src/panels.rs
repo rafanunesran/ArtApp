@@ -1289,6 +1289,7 @@ fn selection_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             app.doc.combine_selection(sel, app.select_mode);
         }
     });
+    saved_selections(app, ui);
     if app.tool != Tool::MagicWand {
         let mut pct = app.wand_tolerance * 100.0;
         if ui
@@ -1322,6 +1323,44 @@ fn selection_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
                 app.doc.feather_selection(n);
             }
         });
+    }
+}
+
+/// Guardar a seleção atual e trazer de volta as guardadas (com o modo escolhido).
+fn saved_selections(app: &mut ArtApp, ui: &mut egui::Ui) {
+    if app.doc.selection.is_some()
+        && ui
+            .button(format!("{}  Guardar seleção", icon::SAVE))
+            .clicked()
+        && let Some(sel) = app.doc.selection.clone()
+    {
+        let name = format!("Seleção {}", app.saved_selections.len() + 1);
+        app.saved_selections.push((name, sel));
+    }
+    let mut load = None;
+    let mut remove = None;
+    for (i, (name, _)) in app.saved_selections.iter().enumerate() {
+        ui.horizontal(|ui| {
+            if ui.button(name.as_str()).on_hover_text("Carregar").clicked() {
+                load = Some(i);
+            }
+            if ui
+                .small_button(icon::X.to_string())
+                .on_hover_text("Esquecer")
+                .clicked()
+            {
+                remove = Some(i);
+            }
+        });
+    }
+    if let Some(i) = load
+        && let Some((_, sel)) = app.saved_selections.get(i)
+    {
+        let sel = sel.clone();
+        app.doc.combine_selection(Some(sel), app.select_mode);
+    }
+    if let Some(i) = remove {
+        app.saved_selections.remove(i);
     }
 }
 

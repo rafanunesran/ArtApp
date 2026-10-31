@@ -341,6 +341,10 @@ pub struct ArtApp {
     pub quick_menu: Option<Pos2>,
     /// Painel de histórico aberto.
     pub history_open: bool,
+    /// Modo lápis nos filtros, ajustes e efeitos.
+    pub adjust_pencil: bool,
+    /// Seleções guardadas para usar de novo (valem para o desenho aberto).
+    pub saved_selections: Vec<(String, artapp_core::Selection)>,
     /// Janela de referência (imagem ou cópia da tela).
     pub reference: Option<crate::reference::Reference>,
     pub reference_open: bool,
@@ -499,6 +503,8 @@ impl ArtApp {
             quick_actions: crate::quick_menu::DEFAULT,
             quick_menu: None,
             history_open: false,
+            adjust_pencil: false,
+            saved_selections: Vec::new(),
             reference: None,
             reference_open: false,
             copy_menu: None,
@@ -1079,6 +1085,7 @@ impl ArtApp {
     pub fn new_canvas(&mut self, w: u32, h: u32) {
         self.doc = Document::new(w, h);
         self.doc.paper = self.paper_color;
+        self.saved_selections.clear();
         self.view = CanvasView::default();
         self.selected = None;
         self.invalidate_all();
