@@ -263,6 +263,8 @@ pub struct ArtApp {
     pub transparent: bool,
     pub recent_colors: Vec<Color32>,
     pub fill_tolerance: f32,
+    /// O balde recolore (troca a cor tocada pela principal) em vez de preencher.
+    pub fill_recolor: bool,
     /// Balde: fechar lacunas e expandir área, em pixels.
     pub fill_close_gap: f32,
     pub fill_expand: f32,
@@ -420,6 +422,7 @@ impl ArtApp {
                 Color32::from_rgb(250, 200, 40),
             ],
             fill_tolerance: 0.15,
+            fill_recolor: false,
             fill_close_gap: 0.0,
             fill_expand: 0.0,
             select_mode: artapp_core::selection::SelectMode::New,

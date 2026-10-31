@@ -1056,6 +1056,10 @@ fn tool_down(
             let r = if vector_layer {
                 let [r, g, b, _] = color_to_f32(app.color);
                 app.doc.vector_fill_at(vp.x, vp.y, [r, g, b])
+            } else if app.fill_recolor {
+                let [r, g, b, _] = color_to_f32(app.color);
+                app.doc
+                    .recolor(x, y, app.fill_tolerance, app.wand_contiguous, [r, g, b])
             } else {
                 let opts = fill::FillOptions {
                     tolerance: app.fill_tolerance,
