@@ -116,6 +116,35 @@ fn localize(name: &str, group: &str) -> (String, &'static str) {
     (pt.to_string(), cat)
 }
 
+/// Uma frase sobre para que serve o pincel (os do conjunto padrão; `None` para os outros).
+pub fn describe(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "Caneta G" => "Contorno de quadrinho: linha firme que afina com pouca pressão.",
+        "Lápis" => "Esboço solto, com borda irregular e opacidade pela pressão.",
+        "Lapiseira" => "Linha fina e clara para estudo e construção.",
+        "Lápis de cor" => "Colorir com o grão do papel aparecendo.",
+        "Marcador" => "Cor chapada semitransparente para preencher rápido.",
+        "Marcador de álcool" => "Ponta larga inclinada; passar de novo escurece, como no papel.",
+        "Marca-texto" => "Multiplica sobre o desenho: destaca sem cobrir a linha.",
+        "Caneta de feltro" => "Linha média e quase opaca, boa para lettering e rabiscos.",
+        "Caneta fina" => "Detalhes e hachuras finas, com estabilização.",
+        "Caneta técnica" => "Linha de largura constante, sem pressão.",
+        "Pincel de nanquim" => "Traço de pincel com grande variação de largura.",
+        "Caneta chanfrada" => "Ponta chata a 45°: grossa num sentido, fina no outro.",
+        "Monoline" => "Lettering de largura igual, bem estabilizado.",
+        "Aquarela" => "Aguada transparente com borda molhada.",
+        "Aerógrafo" => "Sombra e brilho macios; segurar parado acumula tinta.",
+        "Óleo que mistura" => "Pinta com a cor escolhida e mistura com a tinta da tela.",
+        "Pincel úmido" => "Bem molhado: pega muita cor da tela e funde as áreas.",
+        "Esfumar com cor" => "Quase sem tinta própria: espalha e suaviza o que já está pintado.",
+        "Borracha dura" => "Apaga com borda limpa.",
+        "Borracha macia" => "Apaga suave, para clarear áreas.",
+        "Borracha de lápis" => "Apaga como borracha de papel, pela pressão.",
+        "Borracha de textura" => "Apaga deixando o grão do papel.",
+        _ => return None,
+    })
+}
+
 /// Posição da categoria em [`CATEGORIES`] (desconhecidas vão para o fim).
 pub fn category_order(group: &str) -> usize {
     CATEGORIES
@@ -539,6 +568,13 @@ mod tests {
         assert_eq!(back[0].name, "Meu");
         assert_eq!(back[0].settings.size, 33.0);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn our_brushes_have_a_description() {
+        for b in drawing().iter().chain(extra().iter()) {
+            assert!(describe(&b.name).is_some(), "{} sem descrição", b.name);
+        }
     }
 
     #[test]

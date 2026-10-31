@@ -2436,6 +2436,13 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
                 .color(color::TEXT_MUTED),
         );
     }
+    if let Some(d) = app
+        .brushes
+        .get(app.brush_index)
+        .and_then(|b| artapp_core::brushes::describe(&b.name))
+    {
+        ui.label(RichText::new(d).size(12.0).color(color::TEXT_MUTED));
+    }
     if let Some(i) = star {
         app.toggle_favorite(i);
     }
