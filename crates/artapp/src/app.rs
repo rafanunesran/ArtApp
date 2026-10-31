@@ -341,6 +341,9 @@ pub struct ArtApp {
     pub quick_menu: Option<Pos2>,
     /// Painel de histórico aberto.
     pub history_open: bool,
+    /// Janela de referência (imagem ou cópia da tela).
+    pub reference: Option<crate::reference::Reference>,
+    pub reference_open: bool,
     /// Menu de copiar e colar aberto (três dedos para baixo), onde os dedos estavam.
     pub copy_menu: Option<Pos2>,
     /// Barra do ColorDrop aberta (limite e continuar preenchendo).
@@ -496,6 +499,8 @@ impl ArtApp {
             quick_actions: crate::quick_menu::DEFAULT,
             quick_menu: None,
             history_open: false,
+            reference: None,
+            reference_open: false,
             copy_menu: None,
             drop_fill: None,
             hide_ui: false,
@@ -1460,6 +1465,7 @@ impl eframe::App for ArtApp {
         crate::quick_menu::show(self, &ctx);
         crate::quick_menu::copy_paste(self, &ctx);
         crate::history_panel::show(self, &ctx);
+        crate::reference::show(self, &ctx);
         crate::canvas::drop_fill_bar(self, &ctx, canvas);
         if hide {
             panels::show_ui_button(self, &ctx, canvas);

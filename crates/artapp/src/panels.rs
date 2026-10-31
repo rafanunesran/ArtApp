@@ -293,6 +293,14 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.import_image_dialog();
         ui.close();
     }
+    if item(ui, icon::IMAGE, "Janela de referência").clicked() {
+        app.reference_open = true;
+        ui.close();
+    }
+    if item(ui, icon::PALETTE, "Paleta de uma imagem…").clicked() {
+        app.pick_image_for(crate::projects::ImageUse::Palette);
+        ui.close();
+    }
     if item(ui, icon::SAVE, "Salvar projeto").clicked() {
         app.save_project();
         ui.close();

@@ -111,7 +111,7 @@ fn load_sets() -> Vec<ColorSet> {
     saved.unwrap_or_else(default_sets)
 }
 
-fn save_sets(sets: &[ColorSet]) {
+pub(crate) fn save_sets(sets: &[ColorSet]) {
     let path = sets_path();
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);

@@ -27,6 +27,7 @@ pub mod liquify;
 pub mod manga_lines;
 pub mod mask;
 pub mod mix;
+pub mod palette;
 pub mod pressure;
 pub mod project;
 pub mod psd;
