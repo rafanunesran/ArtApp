@@ -633,6 +633,13 @@ impl ArtApp {
             self.thumbs_stale = true;
             self.projects.touch();
         }
+        // A borda de camada passa da tinta: redesenha também em volta.
+        let pad = self.doc.border_pad();
+        let r = if pad > 0 && !r.is_empty() {
+            r.inflate(pad)
+        } else {
+            r
+        };
         self.pending = self.pending.union(&r);
     }
 

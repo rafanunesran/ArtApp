@@ -36,22 +36,26 @@ impl Document {
         self.layers.get(i + 1).filter(|l| l.mask && l.visible)
     }
 
-    /// A tinta da camada `i` com a máscara dela já aplicada.
+    /// A tinta da camada `i` com a borda e a máscara dela já aplicadas.
     pub fn masked_surface(&self, i: usize) -> Surface {
         let Some(layer) = self.layers.get(i) else {
             return Surface::new(photocraft_color::PixelFormat::RGBA8);
         };
-        let Some(m) = self.mask_above(i) else {
-            return layer.surface.clone();
+        let surface = match &layer.border {
+            Some(b) => crate::border::bake(&layer.surface, b, self.bounds()),
+            None => layer.surface.clone(),
         };
-        let r = layer.surface.content_bounds().intersect(&self.bounds());
-        let mut out = layer.surface.clone();
+        let Some(m) = self.mask_above(i) else {
+            return surface;
+        };
+        let r = surface.content_bounds().intersect(&self.bounds());
+        let mut out = surface.clone();
         if r.is_empty() {
             return out;
         }
         let n = r.width() as usize * r.height() as usize;
         let (mut px, mut mk) = (vec![[0.0f32; 4]; n], vec![[0.0f32; 4]; n]);
-        layer.surface.read_rgba_into(r, &mut px);
+        surface.read_rgba_into(r, &mut px);
         m.surface.read_rgba_into(r, &mut mk);
         let data: Vec<f32> = px
             .iter()
@@ -103,6 +107,8 @@ impl Document {
         let baked = self.masked_surface(o);
         self.layers[o].surface = baked;
         self.layers[o].vector = None;
+        // A borda foi junto para a tinta.
+        self.layers[o].border = None;
         self.layers.remove(end);
         self.active = o;
         true

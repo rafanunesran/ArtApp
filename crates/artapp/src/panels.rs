@@ -1914,6 +1914,7 @@ fn active_layer_settings(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
     let mut changed = false;
     let mut checkpoint = false;
     let mask_now = app.doc.active_has_mask();
+    let [mr, mg, mb, _] = crate::app::color_to_f32(app.color);
     let Some(layer) = app.doc.layers.get_mut(app.doc.active) else {
         return false;
     };
@@ -2003,6 +2004,40 @@ fn active_layer_settings(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
             draft = !draft;
         }
     });
+    // Borda da camada: liga com a cor principal; a espessura e a cor mudam ao vivo.
+    let mut border = layer.border;
+    if !layer.mask {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if icon_button(ui, icon::HEXAGON, border.is_some(), "Borda da camada").clicked() {
+                border = match border {
+                    Some(_) => None,
+                    None => Some(artapp_core::border::Border {
+                        width: 4.0,
+                        color: [mr, mg, mb],
+                    }),
+                };
+                checkpoint = true;
+            }
+            if let Some(b) = &mut border {
+                let r = ui.add(
+                    egui::Slider::new(&mut b.width, 1.0..=artapp_core::border::MAX_WIDTH)
+                        .integer()
+                        .suffix(" px"),
+                );
+                checkpoint |= r.drag_started();
+                ui.color_edit_button_rgb(&mut b.color);
+            } else {
+                ui.label(RichText::new("Borda").size(12.0).color(color::TEXT_MUTED));
+            }
+        });
+    }
+    if border != layer.border {
+        changed = true;
+        if !checkpoint {
+            layer.border = border;
+        }
+    }
     if add_mask {
         app.doc.add_mask();
         return true;
@@ -2025,6 +2060,7 @@ fn active_layer_settings(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
             layer.clip = clip;
             layer.reference = reference;
             layer.draft = draft;
+            layer.border = border;
         }
         changed = true;
     }

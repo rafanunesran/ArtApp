@@ -62,14 +62,20 @@ pub fn composite_pass(
         if !layer.clip {
             clip_base = None;
         }
-        if !shown || !layer.surface.has_tiles_in(r) {
+        let reach = layer.border.map_or(r, |b| r.inflate(b.pad()));
+        if !shown || !layer.surface.has_tiles_in(reach) {
             if !layer.clip && shown {
                 // Base vazia neste trecho: as camadas recortadas nela também somem aqui.
                 clip_base = Some(vec![0.0; n]);
             }
             continue;
         }
-        layer.surface.read_rgba_into(r, &mut row);
+        match &layer.border {
+            Some(b) => {
+                crate::border::read_with_border(&layer.surface, b, r, doc.bounds(), &mut row)
+            }
+            None => layer.surface.read_rgba_into(r, &mut row),
+        }
         if let Some(m) = doc.mask_above(i) {
             mask_row.resize(n, [0.0f32; 4]);
             m.surface.read_rgba_into(r, &mut mask_row);
