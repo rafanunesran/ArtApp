@@ -15,6 +15,39 @@ pub enum ColorTab {
     Sliders,
     Sets,
     Mix,
+    Harmony,
+}
+
+/// As harmonias de cor do círculo (giros de matiz a partir da cor base).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Harmony {
+    #[default]
+    Complementary,
+    Split,
+    Analogous,
+    Triadic,
+    Tetradic,
+}
+
+impl Harmony {
+    const ALL: [(Harmony, &'static str); 5] = [
+        (Harmony::Complementary, "Complementar"),
+        (Harmony::Split, "Compl. dividida"),
+        (Harmony::Analogous, "Análoga"),
+        (Harmony::Triadic, "Triádica"),
+        (Harmony::Tetradic, "Tetrádica"),
+    ];
+
+    /// Giros de matiz (em voltas) das cores da harmonia, a base incluída.
+    fn turns(self) -> &'static [f32] {
+        match self {
+            Harmony::Complementary => &[0.0, 0.5],
+            Harmony::Split => &[0.0, 5.0 / 12.0, 7.0 / 12.0],
+            Harmony::Analogous => &[-1.0 / 12.0, 0.0, 1.0 / 12.0],
+            Harmony::Triadic => &[0.0, 1.0 / 3.0, 2.0 / 3.0],
+            Harmony::Tetradic => &[0.0, 0.25, 0.5, 0.75],
+        }
+    }
 }
 
 /// Um conjunto de cores salvo.
@@ -39,6 +72,9 @@ pub struct ColorState {
     pub corners: [Color32; 4],
     /// O meio do círculo é um triângulo (matiz pura, branco e preto) em vez do quadrado.
     pub triangle: bool,
+    pub harmony: Harmony,
+    /// A cor base da harmonia (escolher uma das outras não a muda).
+    pub harmony_base: Option<[f32; 3]>,
 }
 
 impl Default for ColorState {
@@ -57,6 +93,8 @@ impl Default for ColorState {
                 Color32::from_rgb(40, 40, 50),
             ],
             triangle: false,
+            harmony: Harmony::default(),
+            harmony_base: None,
         }
     }
 }
@@ -175,6 +213,7 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
             (ColorTab::Sliders, "Barras"),
             (ColorTab::Sets, "Conjuntos"),
             (ColorTab::Mix, "Intermediária"),
+            (ColorTab::Harmony, "Harmonia"),
         ] {
             ui.selectable_value(&mut app.color_state.tab, tab, name);
         }
@@ -189,6 +228,7 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
         ColorTab::Sliders => sliders(ui, &mut app.color_state),
         ColorTab::Sets => sets(ui, &mut app.color_state, app.color),
         ColorTab::Mix => mix(ui, &mut app.color_state, app.color),
+        ColorTab::Harmony => harmony(ui, &mut app.color_state, app.color),
     };
     apply(app, picked);
 }
@@ -472,6 +512,34 @@ fn sliders(ui: &mut egui::Ui, st: &mut ColorState) -> Option<Color32> {
             {
                 let c = Color32::from_rgb((n >> 16) as u8, (n >> 8) as u8, n as u8);
                 st.hsv = hsv_of(c);
+                out = Some(c);
+            }
+        }
+    });
+    out
+}
+
+/// Harmonia: o círculo escolhe a base e as amostras mostram as cores que combinam com ela.
+fn harmony(ui: &mut egui::Ui, st: &mut ColorState, current: Color32) -> Option<Color32> {
+    let mut out = wheel(ui, st, 200.0);
+    if let Some(c) = out {
+        st.harmony_base = Some(hsv_of(c));
+    }
+    let base = *st.harmony_base.get_or_insert(st.hsv);
+    ui.horizontal_wrapped(|ui| {
+        for (h, name) in Harmony::ALL {
+            ui.selectable_value(&mut st.harmony, h, name);
+        }
+    });
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        for t in st.harmony.turns() {
+            let c = color_of([(base[0] + t).rem_euclid(1.0), base[1], base[2]]);
+            if swatch(ui, c, c == current, 44.0)
+                .on_hover_text("Usar esta cor")
+                .clicked()
+            {
                 out = Some(c);
             }
         }

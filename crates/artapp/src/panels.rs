@@ -646,6 +646,10 @@ pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
                 vector_settings(app, ui);
             } else if app.tool == Tool::Fill {
                 section(ui, "Balde");
+                theme::switch(ui, &mut app.fill_recolor, "Recolorir (troca a cor tocada)");
+                if app.fill_recolor {
+                    theme::switch(ui, &mut app.wand_contiguous, "Só a área ligada ao toque");
+                }
                 ui.add(egui::Slider::new(&mut app.fill_tolerance, 0.0..=1.0).text("Tolerância"));
                 ui.add(
                     egui::Slider::new(&mut app.fill_close_gap, 0.0..=40.0)

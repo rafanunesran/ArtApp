@@ -211,6 +211,45 @@ impl Document {
 
     /// Borracha mágica (do PhotoCraft): apaga da camada ativa a área de cor parecida com a do
     /// ponto tocado, respeitando a seleção.
+    /// Recolorir: troca a cor tocada (e as parecidas, pela tolerância) por `color`, mantendo as
+    /// variações de sombra e luz em volta dela.
+    pub fn recolor(
+        &mut self,
+        x: i32,
+        y: i32,
+        tolerance: f32,
+        contiguous: bool,
+        color: [f32; 3],
+    ) -> Rect {
+        let Some(seed) = self.active_layer().map(|l| l.surface.rgba(x, y)) else {
+            return Rect::EMPTY;
+        };
+        if seed[3] <= 0.0 {
+            return Rect::EMPTY;
+        }
+        let Some(wand) = self.magic_wand(x, y, tolerance, false, contiguous) else {
+            return Rect::EMPTY;
+        };
+        let Some(r) = self.edit_area(false).map(|r| r.intersect(&wand.bounds)) else {
+            return Rect::EMPTY;
+        };
+        if r.is_empty() {
+            return Rect::EMPTY;
+        }
+        let weight = wand.mask.read_region(r);
+        let w = r.width() as usize;
+        let delta = [0, 1, 2].map(|c| color[c] - seed[c]);
+        self.map_pixels(r, move |px, py, p| {
+            let k = weight[(py - r.y0) as usize * w + (px - r.x0) as usize];
+            [
+                (p[0] + delta[0] * k).clamp(0.0, 1.0),
+                (p[1] + delta[1] * k).clamp(0.0, 1.0),
+                (p[2] + delta[2] * k).clamp(0.0, 1.0),
+                p[3],
+            ]
+        })
+    }
+
     pub fn magic_erase(&mut self, x: i32, y: i32, tolerance: f32, contiguous: bool) -> Rect {
         let Some(wand) = self.magic_wand(x, y, tolerance, false, contiguous) else {
             return Rect::EMPTY;
@@ -513,6 +552,23 @@ mod tests {
         assert!(p[3] > 0.99 && p[1] > 0.7);
         assert_eq!(doc.active_layer().unwrap().surface.rgba(50, 5)[3], 0.0);
         assert!(decode_image(b"nope").is_err());
+    }
+
+    #[test]
+    fn recolor_swaps_the_touched_colour() {
+        let mut doc = Document::new(40, 20);
+        doc.layers[0]
+            .surface
+            .fill_rect(Rect::new(0, 0, 20, 20), &[1.0, 0.0, 0.0, 1.0]);
+        doc.layers[0]
+            .surface
+            .fill_rect(Rect::new(20, 0, 40, 20), &[0.0, 0.0, 1.0, 1.0]);
+        doc.recolor(5, 5, 0.1, true, [0.0, 1.0, 0.0]);
+        let p = doc.layers[0].surface.rgba(5, 5);
+        assert!(p[1] > 0.95 && p[0] < 0.05, "{p:?}");
+        assert!(doc.layers[0].surface.rgba(30, 5)[2] > 0.95);
+        assert!(doc.undo());
+        assert!(doc.layers[0].surface.rgba(5, 5)[0] > 0.95);
     }
 
     #[test]
