@@ -541,6 +541,54 @@ pub fn load_custom(path: &std::path::Path) -> Vec<BrushEntry> {
 }
 
 /// Grava os pincéis do usuário.
+/// Extensão do pacote de pincéis do ArtApp (JSON com os ajustes de cada pincel).
+pub const PACK_EXT: &str = "artbrushes";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Pack {
+    format: String,
+    version: u32,
+    brushes: Vec<BrushEntry>,
+}
+
+const PACK_FORMAT: &str = "artapp-brushes";
+
+/// Pacote com os pincéis de "Meus pincéis", para levar a outro aparelho ou mandar a alguém.
+pub fn export_pack(brushes: &[BrushEntry]) -> Result<Vec<u8>, String> {
+    let pack = Pack {
+        format: PACK_FORMAT.into(),
+        version: 1,
+        brushes: brushes
+            .iter()
+            .filter(|b| b.group == CUSTOM_GROUP)
+            .cloned()
+            .collect(),
+    };
+    if pack.brushes.is_empty() {
+        return Err("não há pincéis em Meus pincéis".into());
+    }
+    serde_json::to_vec_pretty(&pack).map_err(|e| e.to_string())
+}
+
+fn import_pack(bytes: &[u8]) -> Result<Vec<BrushEntry>, String> {
+    let pack: Pack =
+        serde_json::from_slice(bytes).map_err(|e| format!("pacote de pincéis inválido ({e})"))?;
+    if pack.format != PACK_FORMAT {
+        return Err("não é um pacote de pincéis do ArtApp".into());
+    }
+    if pack.brushes.is_empty() {
+        return Err("o pacote não tem pincéis".into());
+    }
+    Ok(pack
+        .brushes
+        .into_iter()
+        .map(|mut b| {
+            b.group = CUSTOM_GROUP.into();
+            b
+        })
+        .collect())
+}
+
 pub fn save_custom(path: &std::path::Path, brushes: &[BrushEntry]) -> Result<(), String> {
     let custom: Vec<&BrushEntry> = brushes.iter().filter(|b| b.group == CUSTOM_GROUP).collect();
     let json = serde_json::to_vec_pretty(&custom).map_err(|e| e.to_string())?;
@@ -553,6 +601,23 @@ pub fn save_custom(path: &std::path::Path, brushes: &[BrushEntry]) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn brush_pack_round_trips_only_my_brushes() -> Result<(), String> {
+        let mut b = drawing();
+        b[1].group = CUSTOM_GROUP.into();
+        b[1].name = "Meu lápis".into();
+        b[1].settings.size = 12.0;
+        let bytes = export_pack(&b)?;
+        let back = import(&format!("x.{PACK_EXT}"), &bytes)?;
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].name, "Meu lápis");
+        assert_eq!(back[0].group, CUSTOM_GROUP);
+        assert_eq!(back[0].settings.size, 12.0);
+        assert!(export_pack(&drawing()).is_err());
+        assert!(import(&format!("x.{PACK_EXT}"), b"{}").is_err());
+        Ok(())
+    }
 
     #[test]
     fn custom_brushes_round_trip() {
@@ -692,6 +757,9 @@ pub fn import(file_name: &str, bytes: &[u8]) -> Result<Vec<BrushEntry>, String> 
     let stem = std::path::Path::new(file_name)
         .file_stem()
         .map_or_else(|| "Pincel".into(), |s| s.to_string_lossy().into_owned());
+    if lower.ends_with(&format!(".{PACK_EXT}")) {
+        return import_pack(bytes);
+    }
     if lower.ends_with(".abr") {
         let imp = crate::abr::read_abr(bytes, &stem)?;
         if imp.presets.is_empty() {

@@ -240,9 +240,10 @@ impl Browser {
                     .is_some_and(|e| e.eq_ignore_ascii_case("obj"))
             } else if self.import && self.image_use == ImageUse::Brushes {
                 is_image(&path)
-                    || path
-                        .extension()
-                        .is_some_and(|e| e.eq_ignore_ascii_case("abr"))
+                    || path.extension().is_some_and(|e| {
+                        e.eq_ignore_ascii_case("abr")
+                            || e.eq_ignore_ascii_case(artapp_core::brushes::PACK_EXT)
+                    })
             } else if self.import {
                 is_image(&path)
             } else {
@@ -447,6 +448,32 @@ impl ArtApp {
             }
             Err(e) => self.status = format!("Não foi possível importar: {e}"),
         }
+    }
+
+    /// Grava "Meus pincéis" num pacote .artbrushes na pasta de projetos (e na de backup, se o
+    /// backup estiver ligado: no Google Drive dá para abrir em outro aparelho).
+    pub fn export_brushes(&mut self) {
+        let bytes = match artapp_core::brushes::export_pack(&self.brushes) {
+            Ok(b) => b,
+            Err(e) => {
+                self.status = format!("Nada para exportar: {e}.");
+                return;
+            }
+        };
+        let name = format!("Meus pincéis.{}", artapp_core::brushes::PACK_EXT);
+        let path = crate::platform::projects_dir().join(&name);
+        self.status = match crate::platform::write_atomic(&path, &bytes) {
+            Err(e) => format!("Não foi possível exportar: {e}"),
+            Ok(()) => match self.backup_put(&name, &bytes) {
+                Some(Ok(())) => {
+                    format!("Pincéis exportados para {name} (também na pasta de backup).")
+                }
+                Some(Err(e)) => {
+                    format!("Pincéis exportados para {name}; na pasta de backup falhou: {e}")
+                }
+                None => format!("Pincéis exportados para {name}, na pasta de projetos."),
+            },
+        };
     }
 
     fn add_color_set(&mut self, name: String, colors: &[[u8; 3]]) {
@@ -1006,7 +1033,7 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
                 } else if b.import && b.image_use == ImageUse::Model {
                     "Nenhum modelo 3D (.obj) nesta pasta."
                 } else if b.import && b.image_use == ImageUse::Brushes {
-                    "Nenhum pincel (.abr) nem imagem nesta pasta."
+                    "Nenhum pincel (.abr, .artbrushes) nem imagem nesta pasta."
                 } else if b.import {
                     "Nenhuma imagem (PNG, JPEG, WebP, GIF, BMP) nesta pasta."
                 } else {

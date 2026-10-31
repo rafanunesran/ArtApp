@@ -2474,10 +2474,17 @@ fn brush_save_row(app: &mut ArtApp, ui: &mut egui::Ui) {
         }
         if ui
             .button(format!("{}  Importar pincéis…", icon::FOLDER_OPEN))
-            .on_hover_text("Pincéis do Photoshop (.abr) ou uma imagem, que vira a ponta.")
+            .on_hover_text("Pincéis do Photoshop (.abr), pacote do ArtApp (.artbrushes) ou uma imagem, que vira a ponta.")
             .clicked()
         {
             app.pick_image_for(crate::projects::ImageUse::Brushes);
+        }
+        if ui
+            .button("Exportar meus pincéis")
+            .on_hover_text("Grava os pincéis de Meus pincéis num arquivo .artbrushes.")
+            .clicked()
+        {
+            app.export_brushes();
         }
     });
 }
