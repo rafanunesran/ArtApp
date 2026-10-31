@@ -244,6 +244,10 @@ pub enum Dialog {
     LineWidth {
         delta: f32,
     },
+    /// Linhas de concentração ou de velocidade (quadrinho) numa camada vetorial nova.
+    MangaLines(artapp_core::manga_lines::MangaLines),
+    /// Requadros de quadrinho numa camada vetorial nova.
+    Frames(artapp_core::frames::Frames),
     /// Tamanho da tela: `scale` escala o desenho; senão só a área muda, presa em `anchor`
     /// (0..9, da esquerda para a direita e de cima para baixo).
     CanvasSize {
@@ -317,6 +321,8 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
         Dialog::CanvasSize { .. } => "Tamanho da tela",
         Dialog::Text { .. } => "Texto",
         Dialog::LineWidth { .. } => "Ajustar largura da linha",
+        Dialog::MangaLines(_) => "Linhas de efeito",
+        Dialog::Frames(_) => "Requadros",
     };
     let mut outcome = Outcome::Keep;
     let mut open = true;
@@ -351,6 +357,8 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
                         .color(color::TEXT_MUTED),
                     );
                 }
+                Dialog::MangaLines(p) => manga_lines_ui(ui, p),
+                Dialog::Frames(p) => frames_ui(ui, p),
                 Dialog::Text {
                     text,
                     size,
@@ -388,7 +396,13 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
                 }
             });
             if app.doc.selection.is_some()
-                && !matches!(dialog, Dialog::CanvasSize { .. } | Dialog::Text { .. })
+                && !matches!(
+                    dialog,
+                    Dialog::CanvasSize { .. }
+                        | Dialog::Text { .. }
+                        | Dialog::MangaLines(_)
+                        | Dialog::Frames(_)
+                )
             {
                 ui.label(
                     RichText::new("Age só dentro da seleção.")
@@ -408,6 +422,36 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
 }
 
 fn apply(app: &mut ArtApp, dialog: &Dialog) {
+    if let Dialog::Frames(p) = dialog {
+        app.commit_transform();
+        let [r, g, b, _] = color_to_f32(app.color);
+        if app.doc.add_frames(p, [r, g, b]).is_empty() {
+            app.status = "Os quadros não cabem: diminua a margem, a calha ou a quantidade.".into();
+            return;
+        }
+        app.remember_color();
+        app.invalidate_all();
+        return;
+    }
+    if let Dialog::MangaLines(p) = dialog {
+        app.commit_transform();
+        let (w, h) = (f64::from(app.doc.width), f64::from(app.doc.height));
+        // Centro: o meio da seleção, ou o da tela.
+        let center = app
+            .doc
+            .selection
+            .as_ref()
+            .map(|s| s.bounds.intersect(&app.doc.bounds()))
+            .filter(|r| !r.is_empty())
+            .map_or([w / 2.0, h / 2.0], |r| {
+                [f64::from(r.x0 + r.x1) / 2.0, f64::from(r.y0 + r.y1) / 2.0]
+            });
+        let [r, g, b, _] = color_to_f32(app.color);
+        app.doc.add_manga_lines(p, center, [r, g, b]);
+        app.remember_color();
+        app.invalidate_all();
+        return;
+    }
     if let Dialog::LineWidth { delta } = *dialog {
         app.commit_transform();
         let r = app.doc.adjust_line_width(delta);
@@ -503,12 +547,89 @@ fn apply(app: &mut ArtApp, dialog: &Dialog) {
             }
         }
         Dialog::Adjust(adj) => app.doc.adjust(*adj),
-        Dialog::CanvasSize { .. } | Dialog::Text { .. } | Dialog::LineWidth { .. } => return,
+        Dialog::CanvasSize { .. }
+        | Dialog::Text { .. }
+        | Dialog::LineWidth { .. }
+        | Dialog::MangaLines(_)
+        | Dialog::Frames(_) => return,
     };
     if r.is_empty() {
         app.status = "Escolha uma camada raster visível com desenho.".into();
     }
     app.invalidate_all();
+}
+
+fn frames_ui(ui: &mut egui::Ui, p: &mut artapp_core::frames::Frames) {
+    use artapp_core::frames::MAX_SPLIT;
+    ui.add(egui::Slider::new(&mut p.rows, 1..=MAX_SPLIT).text("Linhas"));
+    ui.add(egui::Slider::new(&mut p.cols, 1..=MAX_SPLIT).text("Colunas"));
+    ui.add(
+        egui::Slider::new(&mut p.margin, 0.0..=600.0)
+            .suffix(" px")
+            .text("Margem"),
+    );
+    ui.add(
+        egui::Slider::new(&mut p.gutter, 0.0..=300.0)
+            .suffix(" px")
+            .text("Calha"),
+    );
+    ui.add(
+        egui::Slider::new(&mut p.width, 0.5..=40.0)
+            .logarithmic(true)
+            .suffix(" px")
+            .text("Borda"),
+    );
+    ui.checkbox(&mut p.cover, "Cobrir a calha com a cor do papel");
+    ui.label(
+        RichText::new(
+            "Cria a camada vetorial \"Requadros\" com a cor principal; dá para mover e editar cada borda depois.",
+        )
+        .size(12.0)
+        .color(color::TEXT_MUTED),
+    );
+}
+
+fn manga_lines_ui(ui: &mut egui::Ui, p: &mut artapp_core::manga_lines::MangaLines) {
+    use artapp_core::manga_lines::LinesKind;
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut p.kind, LinesKind::Focus, "Concentração");
+        ui.selectable_value(&mut p.kind, LinesKind::Speed, "Velocidade");
+    });
+    ui.add(egui::Slider::new(&mut p.count, 8..=400).text("Quantidade"));
+    let inner = match p.kind {
+        LinesKind::Focus => "Vazio no meio",
+        LinesKind::Speed => "Comprimento",
+    };
+    ui.add(egui::Slider::new(&mut p.inner, 0.0..=0.95).text(inner));
+    ui.add(
+        egui::Slider::new(&mut p.width, 0.5..=60.0)
+            .logarithmic(true)
+            .suffix(" px")
+            .text("Espessura"),
+    );
+    ui.add(egui::Slider::new(&mut p.jitter, 0.0..=1.0).text("Irregularidade"));
+    if p.kind == LinesKind::Speed {
+        ui.add(
+            egui::Slider::new(&mut p.angle, -180.0..=180.0)
+                .suffix("°")
+                .text("Direção"),
+        );
+    }
+    ui.horizontal(|ui| {
+        if ui.button("Sortear de novo").clicked() {
+            p.seed = p
+                .seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+        }
+    });
+    ui.label(
+        RichText::new(
+            "Usa a cor principal e cria uma camada vetorial. O centro é o meio da seleção ou da tela.",
+        )
+        .size(12.0)
+        .color(color::TEXT_MUTED),
+    );
 }
 
 fn transform_ui(app: &mut ArtApp, ui: &mut egui::Ui, dialog: &mut Dialog, outcome: &mut Outcome) {
