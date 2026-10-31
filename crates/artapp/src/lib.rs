@@ -20,6 +20,7 @@ mod quick_menu;
 mod reference;
 mod theme;
 mod timelapse_view;
+mod tour;
 mod transform_tool;
 mod units;
 mod updater;

@@ -393,6 +393,11 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
                 ui.data_mut(|d| d.insert_temp(menu_group_id(), g));
             }
         }
+        ui.separator();
+        if menu_item(ui, icon::PLAY, "Mostrar o tour").clicked() {
+            app.tour_step = Some(0);
+            ui.close();
+        }
         update_menu_item(app, ui);
         return;
     };

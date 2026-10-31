@@ -658,7 +658,10 @@ mod tests {
         assert_eq!(back[0].name, "Meu lápis");
         assert_eq!(back[0].group, CUSTOM_GROUP);
         assert_eq!(back[0].settings.size, 12.0);
-        assert!(back[0].mixes_paint(), "cópia de pincel de Mistura continua misturando");
+        assert!(
+            back[0].mixes_paint(),
+            "cópia de pincel de Mistura continua misturando"
+        );
         assert!(export_pack(&drawing()).is_err());
         assert!(import(&format!("x.{PACK_EXT}"), b"{}").is_err());
         Ok(())

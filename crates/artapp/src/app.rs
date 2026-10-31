@@ -254,6 +254,10 @@ pub struct ArtApp {
     pub brush_index: usize,
     /// Pincéis usados por último (chave de [`brush_key`]), o mais recente primeiro.
     pub brush_recent: Vec<String>,
+    /// Passo do tour aberto (`None` = fechado).
+    pub tour_step: Option<usize>,
+    /// O tour da primeira abertura já foi visto ou pulado.
+    pub tour_done: bool,
     /// Troca temporária (desktop): tecla da ferramenta ainda apertada, a ferramenta de antes e
     /// quando a tecla desceu. Segurar e soltar volta para a de antes, como no Clip Studio.
     spring: Option<(egui::Key, Tool, f64)>,
@@ -597,6 +601,8 @@ impl ArtApp {
             hide_ui: false,
             eyedropper_from: Default::default(),
             brush_recent: Vec::new(),
+            tour_step: None,
+            tour_done: false,
             spring: None,
             brush_favorites: Vec::new(),
             eyedropper_erase: false,
@@ -643,6 +649,9 @@ impl ArtApp {
             backup: crate::backup::Backup::default(),
         };
         app.load_prefs();
+        if !app.tour_done {
+            app.tour_step = Some(0);
+        }
         app
     }
 
@@ -658,6 +667,8 @@ impl ArtApp {
         if let Some(b) = flag("use_pressure") {
             self.use_pressure = b;
         }
+        // Sem a chave (prefs de antes do tour) também conta como visto: só app novo mostra.
+        self.tour_done = flag("tour_done").unwrap_or(true);
         if let Some(b) = flag("speed_pressure") {
             self.speed_pressure = b;
         }
@@ -807,6 +818,7 @@ impl ArtApp {
         let v = serde_json::json!({
             "use_pressure": self.use_pressure,
             "speed_pressure": self.speed_pressure,
+            "tour_done": self.tour_done,
             "pressure_curve": self.pressure_curve,
             "brush_curves": self.brush_curves,
             "vector_pen_size": self.vector_pen.size,
@@ -1984,6 +1996,7 @@ impl eframe::App for ArtApp {
         crate::projects::show(self, &ctx);
         crate::backup::show(self, &ctx);
         crate::updater::show(self, &ctx);
+        crate::tour::show(self, &ctx);
         if self.show_new_dialog {
             panels::new_canvas_dialog(self, &ctx);
         }
