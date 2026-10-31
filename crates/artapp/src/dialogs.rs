@@ -410,6 +410,17 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
                     );
                 }
             }
+            if matches!(
+                dialog,
+                Dialog::Filter { .. } | Dialog::Adjust(_) | Dialog::Effect(_)
+            ) {
+                ui.add_space(4.0);
+                ui.checkbox(&mut app.adjust_pencil, "Modo lápis (pintar onde aplicar)")
+                    .on_hover_text(
+                        "Aplica numa cópia da camada com uma máscara que esconde tudo; pinte de \
+                         branco na máscara para mostrar o ajuste só onde quiser.",
+                    );
+            }
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 if ui.button(RichText::new("Aplicar").strong()).clicked() {
@@ -541,6 +552,15 @@ fn apply(app: &mut ArtApp, dialog: &Dialog) {
         }
         return;
     }
+    let pencil = app.adjust_pencil
+        && matches!(
+            dialog,
+            Dialog::Filter { .. } | Dialog::Adjust(_) | Dialog::Effect(_)
+        );
+    if pencil && !app.doc.pencil_begin() {
+        app.status = "O modo lápis precisa de uma camada raster visível sem máscara.".into();
+        return;
+    }
     let r = match dialog {
         Dialog::Transform {
             scale_x,
@@ -580,6 +600,13 @@ fn apply(app: &mut ArtApp, dialog: &Dialog) {
     };
     if r.is_empty() {
         app.status = "Escolha uma camada raster visível com desenho.".into();
+    }
+    if pencil {
+        app.doc.pencil_end();
+        app.set_tool(crate::app::Tool::Brush);
+        app.color = egui::Color32::WHITE;
+        app.transparent = false;
+        app.status = "Pinte de branco na máscara para mostrar o ajuste (preto esconde).".into();
     }
     app.invalidate_all();
 }

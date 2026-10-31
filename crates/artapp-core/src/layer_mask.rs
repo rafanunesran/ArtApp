@@ -117,6 +117,35 @@ impl Document {
         self.active = o;
         true
     }
+
+    /// Modo lápis dos ajustes (do Procreate), começo: duplica a camada ativa para receber o
+    /// ajuste. Só para camada raster visível sem máscara.
+    pub fn pencil_begin(&mut self) -> bool {
+        let ok = self
+            .layers
+            .get(self.active)
+            .is_some_and(|l| l.visible && !l.mask && !l.folder && !l.is_vector())
+            && !self.active_has_mask();
+        if !ok {
+            return false;
+        }
+        let name = self.layers[self.active].name.clone();
+        self.duplicate_layer();
+        if let Some(l) = self.active_layer_mut() {
+            l.name = format!("{name} (ajuste)");
+        }
+        true
+    }
+
+    /// Modo lápis, fim: a cópia ajustada ganha uma máscara que esconde tudo; pintar de branco
+    /// nela mostra o ajuste.
+    pub fn pencil_end(&mut self) {
+        self.add_mask();
+        let r = self.bounds();
+        if let Some(m) = self.active_layer_mut().filter(|l| l.mask) {
+            m.surface.fill_rect(r, &[0.0, 0.0, 0.0, 1.0]);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -174,5 +203,26 @@ mod tests {
         doc.delete_layer();
         assert_eq!(doc.layers.len(), 1);
         assert!(!doc.layers[0].mask);
+    }
+
+    #[test]
+    fn pencil_mode_hides_the_adjustment_until_painted() {
+        let mut doc = Document::new(10, 10);
+        doc.paper = [0.0; 4];
+        let r = Rect::new(0, 0, 10, 10);
+        doc.layers[0].surface.fill_rect(r, &[1.0, 0.0, 0.0, 1.0]);
+        assert!(doc.pencil_begin());
+        assert_eq!(doc.layers.len(), 2);
+        doc.layers[1].surface.fill_rect(r, &[0.0, 0.0, 1.0, 1.0]);
+        doc.pencil_end();
+        assert!(doc.layers[2].mask);
+        let (_, px) = composite_rgba8(&doc, r, true);
+        assert_eq!(px[0], [255, 0, 0, 255], "o ajuste começa escondido");
+        doc.layers[2]
+            .surface
+            .fill_rect(Rect::new(0, 0, 5, 10), &[1.0, 1.0, 1.0, 1.0]);
+        let (_, px) = composite_rgba8(&doc, r, true);
+        assert_eq!(px[0], [0, 0, 255, 255], "pintar de branco mostra o ajuste");
+        assert_eq!(px[9], [255, 0, 0, 255]);
     }
 }
