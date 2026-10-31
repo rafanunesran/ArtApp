@@ -77,9 +77,15 @@ pub struct Document {
     /// Área selecionada (máscara de 8 bits, 1 = selecionado). `None` = nada selecionado, tudo
     /// pode ser pintado.
     pub selection: Option<crate::selection::Selection>,
+    /// Resolução de impressão (pontos por polegada). Não muda os pixels: só diz o tamanho em
+    /// cm/pol e vai gravada no projeto e no PSD.
+    pub dpi: f32,
     pub(crate) history: History,
     next_id: u64,
 }
+
+/// Resolução de uma tela nova.
+pub const DEFAULT_DPI: f32 = 150.0;
 
 impl Document {
     /// Tela nova com uma camada vazia. O tamanho é limitado a 1..=[`MAX_CANVAS_SIDE`].
@@ -91,6 +97,7 @@ impl Document {
             layers: Vec::new(),
             active: 0,
             selection: None,
+            dpi: DEFAULT_DPI,
             history: History::default(),
             next_id: 1,
         };
@@ -124,6 +131,7 @@ impl Document {
             layers,
             active: 0,
             selection: None,
+            dpi: DEFAULT_DPI,
             history: History::default(),
             next_id,
         };

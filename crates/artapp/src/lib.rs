@@ -14,6 +14,7 @@ mod projects;
 mod quick_menu;
 mod theme;
 mod transform_tool;
+mod units;
 mod updater;
 
 pub use app::ArtApp;

@@ -362,6 +362,7 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.dialog = Some(crate::dialogs::Dialog::canvas_size(
             app.doc.width,
             app.doc.height,
+            app.doc.dpi,
         ));
         ui.close();
     }
@@ -2344,7 +2345,7 @@ pub fn new_canvas_dialog(app: &mut ArtApp, ctx: &egui::Context) {
                 .color(color::TEXT_MUTED),
             );
             ui.add_space(4.0);
-            for (name, w, h) in CANVAS_PRESETS {
+            for (name, w, h, dpi) in CANVAS_PRESETS {
                 let fits = w <= max && h <= max;
                 let label = name.to_string();
                 if ui
@@ -2355,8 +2356,21 @@ pub fn new_canvas_dialog(app: &mut ArtApp, ctx: &egui::Context) {
                     )
                     .clicked()
                 {
-                    create = Some((w, h));
+                    create = Some((w, h, dpi));
                 }
+            }
+            ui.add_space(6.0);
+            section(ui, "Tamanho personalizado");
+            let s = &mut app.new_size;
+            crate::units::size_editor(ui, &mut s.0, &mut s.1, &mut s.2, &mut s.3, max);
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("Criar").strong())
+                        .min_size(Vec2::new(120.0, 36.0)),
+                )
+                .clicked()
+            {
+                create = Some((s.0, s.1, s.2));
             }
             ui.label(
                 RichText::new(format!("Tamanho máximo neste aparelho: {max} px"))
@@ -2364,8 +2378,9 @@ pub fn new_canvas_dialog(app: &mut ArtApp, ctx: &egui::Context) {
                     .color(color::TEXT_MUTED),
             );
         });
-    if let Some((w, h)) = create {
+    if let Some((w, h, dpi)) = create {
         app.new_canvas(w, h);
+        app.doc.dpi = dpi;
         app.show_new_dialog = false;
     } else if !open {
         app.show_new_dialog = false;
