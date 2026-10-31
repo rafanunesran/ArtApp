@@ -76,6 +76,9 @@ pub fn composite_pass(
             }
             None => layer.surface.read_rgba_into(r, &mut row),
         }
+        if let Some(t) = &layer.tone {
+            crate::tone::apply(t, r, &mut row);
+        }
         if let Some(m) = doc.mask_above(i) {
             mask_row.resize(n, [0.0f32; 4]);
             m.surface.read_rgba_into(r, &mut mask_row);

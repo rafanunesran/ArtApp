@@ -38,6 +38,8 @@ pub struct Layer {
     pub parent: Option<u64>,
     /// Borda em volta da tinta (propriedade de camada do Clip Studio).
     pub border: Option<crate::border::Border>,
+    /// Retícula de quadrinho (propriedade de camada do Clip Studio).
+    pub tone: Option<crate::tone::Tone>,
     /// Camadas vetoriais: a arte editável. `surface` guarda a cópia rasterizada dela.
     pub vector: Option<crate::vector::VectorArt>,
     pub surface: Surface,
@@ -60,6 +62,7 @@ impl Layer {
             collapsed: false,
             parent: None,
             border: None,
+            tone: None,
             vector: None,
             surface: Surface::new(PixelFormat::RGBA8),
         }
@@ -336,8 +339,9 @@ impl Document {
         if self.layers.get(below + 1).is_some_and(|l| l.mask) {
             let baked = self.masked_surface(below);
             self.layers[below].surface = baked;
-            // A borda foi junto para a tinta.
+            // A borda e a retícula foram junto para a tinta.
             self.layers[below].border = None;
+            self.layers[below].tone = None;
             self.layers.remove(below + 1);
         }
         if let Some(dst) = self.layers.get_mut(below) {

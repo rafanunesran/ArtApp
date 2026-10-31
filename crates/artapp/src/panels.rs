@@ -2037,10 +2037,48 @@ fn active_layer_settings(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
             }
         });
     }
-    if border != layer.border {
+    // Retícula de quadrinho: a tinta vira pontos.
+    let mut tone = layer.tone;
+    if !layer.mask {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if icon_button(ui, icon::GRID_3X3, tone.is_some(), "Retícula (quadrinho)").clicked() {
+                tone = match tone {
+                    Some(_) => None,
+                    None => Some(artapp_core::tone::Tone::default()),
+                };
+                checkpoint = true;
+            }
+            if let Some(t) = &mut tone {
+                let r = ui.add(
+                    egui::Slider::new(
+                        &mut t.period,
+                        artapp_core::tone::MIN_PERIOD..=artapp_core::tone::MAX_PERIOD,
+                    )
+                    .integer()
+                    .suffix(" px"),
+                );
+                checkpoint |= r.drag_started();
+                let r = ui.add(
+                    egui::DragValue::new(&mut t.angle)
+                        .range(0.0..=90.0)
+                        .suffix("°"),
+                );
+                checkpoint |= r.drag_started();
+            } else {
+                ui.label(
+                    RichText::new("Retícula")
+                        .size(12.0)
+                        .color(color::TEXT_MUTED),
+                );
+            }
+        });
+    }
+    if border != layer.border || tone != layer.tone {
         changed = true;
         if !checkpoint {
             layer.border = border;
+            layer.tone = tone;
         }
     }
     if add_mask {
@@ -2066,6 +2104,7 @@ fn active_layer_settings(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
             layer.reference = reference;
             layer.draft = draft;
             layer.border = border;
+            layer.tone = tone;
         }
         changed = true;
     }
