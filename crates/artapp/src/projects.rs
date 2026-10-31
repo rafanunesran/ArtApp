@@ -129,6 +129,18 @@ pub struct Browser {
     shared_access: bool,
     entries: Vec<Entry>,
     thumbs: HashMap<PathBuf, Option<TextureHandle>>,
+    /// Escolhendo uma imagem para importar como camada (em vez de abrir um projeto).
+    import: bool,
+}
+
+/// Imagens que dá para importar como camada.
+fn is_image(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        matches!(
+            e.to_ascii_lowercase().as_str(),
+            "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp"
+        )
+    })
 }
 
 struct Entry {
@@ -140,11 +152,16 @@ struct Entry {
 
 impl Browser {
     fn new(dir: PathBuf) -> Self {
+        Self::with_mode(dir, false)
+    }
+
+    fn with_mode(dir: PathBuf, import: bool) -> Self {
         let mut b = Self {
             dir,
             shared_access: platform::can_read_shared_files(),
             entries: Vec::new(),
             thumbs: HashMap::new(),
+            import,
         };
         b.refresh();
         b
@@ -163,7 +180,12 @@ impl Browser {
             }
             let meta = e.metadata().ok();
             let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
-            if !is_dir && kind_of(&path).is_none() {
+            let wanted = if self.import {
+                is_image(&path)
+            } else {
+                kind_of(&path).is_some()
+            };
+            if !is_dir && !wanted {
                 continue;
             }
             self.entries.push(Entry {
@@ -281,6 +303,36 @@ impl ArtApp {
             .and_then(|p| p.parent().map(Path::to_path_buf))
             .unwrap_or_else(platform::projects_dir);
         self.projects.dialog = Some(FileDialog::Open(Browser::new(dir)));
+    }
+
+    /// Escolher uma imagem (PNG, JPEG, WebP…) para virar camada nova.
+    pub fn import_image_dialog(&mut self) {
+        // Começa em Imagens (ou Downloads), se existir.
+        let dir = platform::browse_roots()
+            .into_iter()
+            .filter(|(label, d)| matches!(*label, "Imagens" | "Downloads") && d.is_dir())
+            .map(|(_, d)| d)
+            .next()
+            .unwrap_or_else(platform::projects_dir);
+        self.projects.dialog = Some(FileDialog::Open(Browser::with_mode(dir, true)));
+    }
+
+    /// Lê a imagem e põe numa camada nova, no centro da tela.
+    pub fn import_image(&mut self, path: &Path) {
+        let res = std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|b| artapp_core::edit::decode_image(&b));
+        match res {
+            Ok((w, h, px)) => {
+                let name = path
+                    .file_stem()
+                    .map_or("Imagem".into(), |s| s.to_string_lossy().into_owned());
+                let r = self.doc.import_image(&name, w, h, &px);
+                self.invalidate(r);
+                self.status = format!("Imagem importada como camada ({w}×{h}).");
+            }
+            Err(e) => self.status = format!("Não foi possível importar: {e}"),
+        }
     }
 
     /// Codifica e grava em segundo plano.
@@ -604,7 +656,8 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
     let screen = ctx.content_rect();
     let w = (screen.width() - 32.0).clamp(280.0, 520.0);
     let h = (screen.height() - 140.0).clamp(220.0, 560.0);
-    window("Abrir").open(&mut open).show(ctx, |ui| {
+    let title = if b.import { "Importar imagem" } else { "Abrir" };
+    window(title).open(&mut open).show(ctx, |ui| {
         ui.set_width(w);
         ui.set_max_width(w);
         ui.horizontal_wrapped(|ui| {
@@ -637,7 +690,7 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
                 }
             });
         }
-        if app.projects.dirty() {
+        if app.projects.dirty() && !b.import {
             ui.label(
                 RichText::new("O desenho atual tem alterações não salvas.")
                     .size(12.5)
@@ -647,7 +700,11 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
         ui.separator();
         egui::ScrollArea::vertical().max_height(h).show(ui, |ui| {
             if b.entries.is_empty() {
-                ui.label(muted("Nenhum projeto (.artapp) ou PSD nesta pasta."));
+                ui.label(muted(if b.import {
+                    "Nenhuma imagem (PNG, JPEG, WebP, GIF, BMP) nesta pasta."
+                } else {
+                    "Nenhum projeto (.artapp) ou PSD nesta pasta."
+                }));
             }
             let entries: Vec<_> = b
                 .entries
@@ -708,10 +765,14 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
         });
     });
     if let Some(dir) = go_to {
-        *b = Browser::new(dir);
+        *b = Browser::with_mode(dir, b.import);
     }
     if let Some(path) = pick {
-        app.open_path(path);
+        if b.import {
+            app.import_image(&path);
+        } else {
+            app.open_path(path);
+        }
         return false;
     }
     open

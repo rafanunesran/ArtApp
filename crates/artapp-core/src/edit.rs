@@ -496,6 +496,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn import_image_centres_and_fits() {
+        let mut doc = Document::new(100, 50);
+        let (w, h) = (200u32, 50u32);
+        let px: Vec<u8> = (0..w * h).flat_map(|_| [10u8, 200, 30, 255]).collect();
+        let r = doc.import_image("Foto", w, h, &px);
+        assert_eq!((r.width(), r.height()), (100, 25));
+        assert_eq!(doc.layers.len(), 2);
+        let p = doc.active_layer().unwrap().surface.rgba(50, 25);
+        assert!(p[3] > 0.99 && p[1] > 0.7);
+        assert_eq!(doc.active_layer().unwrap().surface.rgba(50, 5)[3], 0.0);
+        assert!(decode_image(b"nope").is_err());
+    }
+
+    #[test]
     fn magic_erase_removes_the_touched_colour_only() {
         let mut doc = Document::new(40, 20);
         doc.layers[0]
@@ -591,6 +605,45 @@ mod tests {
     }
 }
 
+/// Lê PNG, JPEG, WebP, GIF ou BMP: largura, altura e RGBA 8 bits.
+pub fn decode_image(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+    let img = image::load_from_memory(bytes).map_err(|e| format!("imagem ilegível: {e}"))?;
+    let img = img.to_rgba8();
+    Ok((img.width(), img.height(), img.into_raw()))
+}
+
+/// Reduz uma imagem RGBA 8 bits pela média da área (com alfa pré-multiplicado, sem halos).
+fn downscale(src: &[u8], w: u32, h: u32, nw: u32, nh: u32) -> Vec<u8> {
+    let (w, h, nw, nh) = (w as usize, h as usize, nw as usize, nh as usize);
+    let mut out = vec![0u8; nw * nh * 4];
+    for oy in 0..nh {
+        let (y0, y1) = (oy * h / nh, ((oy + 1) * h / nh).max(oy * h / nh + 1).min(h));
+        for ox in 0..nw {
+            let (x0, x1) = (ox * w / nw, ((ox + 1) * w / nw).max(ox * w / nw + 1).min(w));
+            let mut acc = [0.0f64; 4];
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let p = &src[(y * w + x) * 4..(y * w + x) * 4 + 4];
+                    let a = f64::from(p[3]) / 255.0;
+                    for c in 0..3 {
+                        acc[c] += f64::from(p[c]) * a;
+                    }
+                    acc[3] += a;
+                }
+            }
+            let n = ((y1 - y0) * (x1 - x0)) as f64;
+            let o = &mut out[(oy * nw + ox) * 4..(oy * nw + ox) * 4 + 4];
+            if acc[3] > 0.0 {
+                for c in 0..3 {
+                    o[c] = (acc[c] / acc[3]).round().clamp(0.0, 255.0) as u8;
+                }
+            }
+            o[3] = (acc[3] / n * 255.0).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    out
+}
+
 /// O que foi copiado: os pixels e onde estavam.
 #[derive(Clone)]
 pub struct Clip {
@@ -624,6 +677,34 @@ impl Document {
         surface.write_region(r, &flat);
         surface.prune();
         Some(Clip { surface, rect: r })
+    }
+
+    /// Importa uma imagem (RGBA 8 bits, sem pré-multiplicar) como camada nova, no centro da
+    /// tela. Se for maior que a tela, é reduzida para caber.
+    pub fn import_image(&mut self, name: &str, w: u32, h: u32, rgba: &[u8]) -> Rect {
+        if w == 0 || h == 0 || rgba.len() != w as usize * h as usize * 4 {
+            return Rect::EMPTY;
+        }
+        let k = (f64::from(self.width) / f64::from(w))
+            .min(f64::from(self.height) / f64::from(h))
+            .min(1.0);
+        let nw = ((f64::from(w) * k).round() as u32).max(1);
+        let nh = ((f64::from(h) * k).round() as u32).max(1);
+        let px = if (nw, nh) == (w, h) {
+            rgba.to_vec()
+        } else {
+            downscale(rgba, w, h, nw, nh)
+        };
+        let x = (self.width as i32 - nw as i32) / 2;
+        let y = (self.height as i32 - nh as i32) / 2;
+        let r = Rect::new(x, y, x + nw as i32, y + nh as i32);
+        self.add_layer();
+        if let Some(l) = self.active_layer_mut() {
+            l.name = name.to_string();
+            l.surface = Surface::from_interleaved(PixelFormat::RGBA8, r, &px);
+            l.surface.prune();
+        }
+        r.intersect(&self.bounds())
     }
 
     /// Recorta: copia e apaga o que foi copiado.

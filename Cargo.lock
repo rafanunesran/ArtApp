@@ -164,6 +164,7 @@ dependencies = [
 name = "artapp-core"
 version = "0.1.0"
 dependencies = [
+ "image",
  "kurbo",
  "log",
  "photocraft-algo",

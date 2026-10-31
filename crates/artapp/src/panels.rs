@@ -221,6 +221,10 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.open_project_dialog();
         ui.close();
     }
+    if item(ui, icon::IMAGE, "Importar imagem como camada…").clicked() {
+        app.import_image_dialog();
+        ui.close();
+    }
     if item(ui, icon::SAVE, "Salvar projeto").clicked() {
         app.save_project();
         ui.close();
