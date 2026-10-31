@@ -28,12 +28,99 @@ fn pressure_size(minimum: f32) -> ShapeDynamics {
     }
 }
 
-fn ours(name: &str, settings: BrushSettings) -> BrushEntry {
+fn ours(name: &str, group: &str, settings: BrushSettings) -> BrushEntry {
     BrushEntry {
         name: name.into(),
-        group: "Desenho".into(),
+        group: group.into(),
         settings,
     }
+}
+
+/// Categorias da biblioteca de pincéis, na ordem mostrada (como os grupos de sub-ferramenta do
+/// Clip Studio e a biblioteca do Procreate). O grupo de cada [`BrushEntry`] é uma delas; o painel
+/// esconde as que estão vazias.
+///
+/// Onde entra um pincel novo: lápis, grafite, giz, carvão, pastel → "Esboço"; linha de contorno,
+/// nanquim, caneta G → "Arte-final"; marcador, caneta de ponta porosa → "Marcadores"; ponta chata
+/// de letra → "Caligrafia"; redondos, óleo, guache, cerdas → "Pintura"; aquarela e aguadas →
+/// "Aquarela"; spray, respingo, pontilhado → "Aerógrafo"; dedo/mistura/borrar → "Mistura";
+/// papel, tela, esponja, granulado → "Texturas"; folhas, brilhos, carimbos de forma →
+/// "Decoração"; retícula, hachura, linhas de efeito → "Quadrinhos"; borrachas → "Borrachas".
+/// Pincéis do usuário e importados ficam em [`CUSTOM_GROUP`].
+pub const CATEGORIES: [&str; 13] = [
+    "Esboço",
+    "Arte-final",
+    "Marcadores",
+    "Caligrafia",
+    "Pintura",
+    "Aquarela",
+    "Aerógrafo",
+    "Mistura",
+    "Texturas",
+    "Decoração",
+    "Quadrinhos",
+    "Borrachas",
+    CUSTOM_GROUP,
+];
+
+/// Nome em português e categoria de um preset embutido do PhotoCraft (pelo nome original).
+fn localize(name: &str, group: &str) -> (String, &'static str) {
+    let (pt, cat) = match name {
+        "Hard Round" => ("Redondo duro", "Pintura"),
+        "Soft Round" => ("Redondo macio", "Pintura"),
+        "Hard Round Fine" => ("Redondo duro fino", "Arte-final"),
+        "Soft Round Large" => ("Redondo macio grande", "Pintura"),
+        "Hard Round Pressure Size" => ("Caneta redonda (pressão no tamanho)", "Arte-final"),
+        "Soft Round Pressure Size" => ("Redondo macio (pressão no tamanho)", "Pintura"),
+        "Hard Round Pressure Opacity" => ("Redondo duro (pressão na opacidade)", "Pintura"),
+        "Soft Round Pressure Opacity" => ("Redondo macio (pressão na opacidade)", "Pintura"),
+        "Hard Round Pressure Opacity and Flow" => {
+            ("Redondo duro (pressão na opacidade e fluxo)", "Pintura")
+        }
+        "Airbrush Soft" => ("Aerógrafo macio", "Aerógrafo"),
+        "Calligraphy Flat" => ("Caligrafia chata", "Caligrafia"),
+        "Hard Pencil" => ("Lápis duro", "Esboço"),
+        "Soft Pencil" => ("Lápis macio", "Esboço"),
+        "Chalk" => ("Giz", "Esboço"),
+        "Charcoal" => ("Carvão", "Esboço"),
+        "Pastel" => ("Pastel", "Esboço"),
+        "Wax Crayon" => ("Giz de cera", "Esboço"),
+        "Dry Bristle" => ("Cerdas secas", "Pintura"),
+        "Rake" => ("Rastelo", "Pintura"),
+        "Watercolor Wet Edges" => ("Aquarela bordas molhadas", "Aquarela"),
+        "Watercolor Wash" => ("Aquarela lavada", "Aquarela"),
+        "Ink Pen" => ("Caneta nanquim", "Arte-final"),
+        "Oil Bristle" => ("Óleo (cerdas)", "Pintura"),
+        "Gouache Flat" => ("Guache chato", "Pintura"),
+        "Ink Wash Sponge" => ("Aguada com esponja", "Aquarela"),
+        "Spatter" => ("Respingo", "Aerógrafo"),
+        "Stipple" => ("Pontilhado", "Aerógrafo"),
+        "Confetti" => ("Confete", "Decoração"),
+        "Foliage" => ("Folhagem", "Decoração"),
+        "Grass" => ("Grama", "Decoração"),
+        "Sparkle" => ("Brilhos", "Decoração"),
+        "Sponge Texture" => ("Esponja", "Texturas"),
+        "Canvas Texture" => ("Tela de pintura", "Texturas"),
+        "Halftone Dots" => ("Retícula", "Quadrinhos"),
+        "Dual Grain" => ("Granulado duplo", "Texturas"),
+        _ => {
+            let cat = match group {
+                "Dry Media" => "Esboço",
+                "Special Effects" => "Decoração",
+                _ => "Pintura",
+            };
+            return (name.to_string(), cat);
+        }
+    };
+    (pt.to_string(), cat)
+}
+
+/// Posição da categoria em [`CATEGORIES`] (desconhecidas vão para o fim).
+pub fn category_order(group: &str) -> usize {
+    CATEGORIES
+        .iter()
+        .position(|c| *c == group)
+        .unwrap_or(CATEGORIES.len())
 }
 
 /// Pincéis de linha do ArtApp.
@@ -42,6 +129,7 @@ pub fn drawing() -> Vec<BrushEntry> {
     vec![
         ours(
             "Caneta G",
+            "Arte-final",
             BrushSettings {
                 size: 8.0,
                 hardness: 1.0,
@@ -56,6 +144,7 @@ pub fn drawing() -> Vec<BrushEntry> {
         ),
         ours(
             "Lápis",
+            "Esboço",
             BrushSettings {
                 size: 4.0,
                 hardness: 0.6,
@@ -73,6 +162,7 @@ pub fn drawing() -> Vec<BrushEntry> {
         ),
         ours(
             "Marcador",
+            "Marcadores",
             BrushSettings {
                 size: 18.0,
                 hardness: 0.9,
@@ -83,6 +173,7 @@ pub fn drawing() -> Vec<BrushEntry> {
             },
         ),
         ours(
+            "Aquarela",
             "Aquarela",
             BrushSettings {
                 size: 40.0,
@@ -96,6 +187,7 @@ pub fn drawing() -> Vec<BrushEntry> {
         ),
         ours(
             "Aerógrafo",
+            "Aerógrafo",
             BrushSettings {
                 size: 80.0,
                 hardness: 0.0,
@@ -108,18 +200,20 @@ pub fn drawing() -> Vec<BrushEntry> {
     ]
 }
 
-/// Todos os pincéis: os de desenho e depois os presets embutidos do PhotoCraft.
+/// Todos os pincéis: os de desenho e os presets embutidos do PhotoCraft, com nome em português,
+/// ordenados por categoria ([`CATEGORIES`]).
 pub fn all() -> Vec<BrushEntry> {
     let mut v = drawing();
-    v.extend(
-        presets::builtin()
-            .into_iter()
-            .map(|p: BrushPreset| BrushEntry {
-                name: p.name,
-                group: p.group,
-                settings: p.brush,
-            }),
-    );
+    v.extend(presets::builtin().into_iter().map(|p: BrushPreset| {
+        let (name, group) = localize(&p.name, &p.group);
+        BrushEntry {
+            name,
+            group: group.into(),
+            settings: p.brush,
+        }
+    }));
+    // Ordenação estável: dentro da categoria, os nossos vêm antes dos do PhotoCraft.
+    v.sort_by_key(|b| category_order(&b.group));
     v
 }
 
@@ -168,7 +262,22 @@ mod tests {
     fn has_drawing_and_photocraft_brushes() {
         let all = all();
         assert!(all.iter().any(|b| b.name == "Caneta G"));
-        assert!(all.iter().any(|b| b.group == "General"));
+        assert!(all.iter().all(|b| CATEGORIES.contains(&b.group.as_str())));
+        assert!(
+            all.iter()
+                .any(|b| b.name == "Caneta nanquim" && b.group == "Arte-final")
+        );
+        for c in [
+            "Esboço",
+            "Arte-final",
+            "Pintura",
+            "Aquarela",
+            "Aerógrafo",
+            "Texturas",
+            "Decoração",
+        ] {
+            assert!(all.iter().any(|b| b.group == *c), "{c}");
+        }
     }
 }
 

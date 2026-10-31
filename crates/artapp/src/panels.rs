@@ -1077,7 +1077,17 @@ pub fn brush_panel(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, po
 }
 
 fn mix_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
+    use crate::brush_editor::{self, BrushTab};
     use artapp_core::mix::MixKind;
+    let tab = brush_editor::tab_bar(ui, "mix", &BrushTab::SETTINGS);
+    if tab != BrushTab::General {
+        let mut none = artapp_core::Taper::default();
+        brush_editor::show_tab(ui, tab, &mut app.mix_brush, &mut none);
+        if tab == BrushTab::Advanced {
+            brush_editor::blend_mode(ui, &mut app.mix_brush);
+        }
+        return;
+    }
     section(ui, "Modo");
     ui.horizontal_wrapped(|ui| {
         for (kind, name) in [
@@ -1169,8 +1179,6 @@ fn mix_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.mix_strength = pct / 100.0;
     }
     ui.add(egui::Slider::new(&mut app.mix_brush.hardness, 0.0..=1.0).text("Dureza"));
-    let mut none = artapp_core::Taper::default();
-    crate::brush_editor::show(ui, &mut app.mix_brush, &mut none);
 }
 
 /// Comandos do VectorCraft que valem um botão, sem diálogo: (id, nome).
@@ -1929,80 +1937,167 @@ fn pressure_curve(ui: &mut egui::Ui, points: &mut Vec<[f32; 2]>) -> bool {
 }
 
 fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
-    let max = photocraft_max_size().min(1000.0);
-    let use_pressure = &mut app.use_pressure;
-    let b = if app.tool == Tool::Eraser {
-        &mut app.eraser
+    use crate::brush_editor::{self, BrushTab};
+    let eraser = app.tool == Tool::Eraser;
+    let tab = if eraser {
+        brush_editor::tab_bar(ui, "eraser", &BrushTab::SETTINGS)
     } else {
-        &mut app.brush
+        const TABS: [BrushTab; 7] = [
+            BrushTab::Library,
+            BrushTab::General,
+            BrushTab::Shape,
+            BrushTab::Grain,
+            BrushTab::Dynamics,
+            BrushTab::Smoothing,
+            BrushTab::Advanced,
+        ];
+        brush_editor::tab_bar(ui, "brush", &TABS)
     };
-    section(ui, "Ajustes");
-    ui.add(
-        egui::Slider::new(&mut b.size, 1.0..=max)
-            .logarithmic(true)
-            .text("Tamanho"),
-    );
-    // Tamanhos prontos, como a paleta "Tamanho do pincel" do Clip Studio.
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::splat(3.0);
-        for s in [
-            1.0, 2.0, 3.0, 5.0, 8.0, 12.0, 20.0, 30.0, 50.0, 80.0, 120.0, 200.0,
-        ] {
-            if s <= max
-                && ui
-                    .selectable_label((b.size - s).abs() < 0.5, format!("{s}"))
-                    .clicked()
-            {
-                b.size = s;
+    match tab {
+        BrushTab::Library => brush_library(app, ui),
+        BrushTab::General => brush_general(app, ui),
+        BrushTab::Advanced => {
+            let b = if eraser {
+                &mut app.eraser
+            } else {
+                &mut app.brush
+            };
+            brush_editor::show_tab(ui, tab, b, &mut app.taper);
+            ui.add_space(4.0);
+            symmetry_settings(app, ui);
+        }
+        _ => {
+            if eraser {
+                let mut none = artapp_core::Taper::default();
+                brush_editor::show_tab(ui, tab, &mut app.eraser, &mut none);
+            } else {
+                brush_editor::show_tab(ui, tab, &mut app.brush, &mut app.taper);
             }
         }
-    });
-    ui.add(egui::Slider::new(&mut b.opacity, 0.01..=1.0).text("Opacidade"));
-    ui.add(egui::Slider::new(&mut b.flow, 0.01..=1.0).text("Fluxo"));
-    ui.add(egui::Slider::new(&mut b.hardness, 0.0..=1.0).text("Dureza"));
-    let s = &mut b.smoothing;
-    if ui
-        .add(egui::Slider::new(&mut s.amount, 0.0..=1.0).text("Estabilizador"))
-        .changed()
-    {
-        s.enabled = s.amount > 0.0;
     }
-    let pressure_changed = theme::switch(ui, use_pressure, "Usar pressão da caneta").changed();
-    if pressure_changed {
+    if !eraser && tab != BrushTab::Library {
+        ui.add_space(6.0);
+        brush_save_row(app, ui);
+    }
+}
+
+/// Aba Geral: tamanho, opacidade, fluxo, dureza, mesclagem e pressão (e a borracha mágica).
+fn brush_general(app: &mut ArtApp, ui: &mut egui::Ui) {
+    let max = photocraft_max_size().min(1000.0);
+    let eraser = app.tool == Tool::Eraser;
+    {
+        let b = if eraser {
+            &mut app.eraser
+        } else {
+            &mut app.brush
+        };
+        crate::brush_editor::basics(ui, b, max);
+        crate::brush_editor::blend_mode(ui, b);
+    }
+    section(ui, "Pressão da caneta");
+    if theme::switch(ui, &mut app.use_pressure, "Usar pressão da caneta").changed() {
         app.save_prefs();
     }
     if app.use_pressure && pressure_curve(ui, &mut app.pressure_curve) {
         app.save_prefs();
     }
-    ui.add_space(4.0);
-    symmetry_settings(app, ui);
-    if app.tool == Tool::Eraser {
+    if eraser {
         section(ui, "Borracha mágica");
         theme::switch(ui, &mut app.eraser_magic, "Toque apaga a cor parecida");
         if app.eraser_magic {
             ui.add(egui::Slider::new(&mut app.wand_tolerance, 0.0..=1.0).text("Tolerância"));
             ui.checkbox(&mut app.wand_contiguous, "Só a área contígua");
         }
-        let mut none = artapp_core::Taper::default();
-        crate::brush_editor::show(ui, &mut app.eraser, &mut none);
-        return;
     }
-    ui.add_space(4.0);
-    let mut group = String::new();
+}
+
+/// Ícone de cada categoria da biblioteca.
+fn category_icon(group: &str) -> char {
+    match group {
+        "Esboço" => icon::PEN_LINE,
+        "Arte-final" => icon::PEN_TOOL,
+        "Marcadores" => icon::SQUARE_PEN,
+        "Caligrafia" => icon::TYPE,
+        "Pintura" => icon::BRUSH,
+        "Aquarela" => icon::DROPLET,
+        "Aerógrafo" => icon::DROPLETS,
+        "Mistura" => icon::PAINT_ROLLER,
+        "Texturas" => icon::SQUARE_DASHED,
+        "Decoração" => icon::SPARKLES,
+        "Quadrinhos" => icon::FILM,
+        "Borrachas" => icon::ERASER,
+        _ => icon::STAMP,
+    }
+}
+
+/// Aba Pincéis: categorias em botões grandes (fácil no dedo) e os pincéis da categoria.
+fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
+    use artapp_core::brushes::{CATEGORIES, CUSTOM_GROUP};
+    let key = Id::unique("brush-category");
+    let current_group = app
+        .brushes
+        .get(app.brush_index)
+        .map(|b| b.group.clone())
+        .unwrap_or_default();
+    let mut cat: String = ui
+        .ctx()
+        .data_mut(|d| d.get_persisted::<String>(key))
+        .unwrap_or_else(|| current_group.clone());
+    // Categorias que existem (as embutidas e as de pincéis importados com outro grupo).
+    let mut cats: Vec<String> = CATEGORIES
+        .iter()
+        .filter(|c| **c == CUSTOM_GROUP || app.brushes.iter().any(|b| b.group == **c))
+        .map(|c| c.to_string())
+        .collect();
+    for b in &app.brushes {
+        if !cats.contains(&b.group) {
+            cats.push(b.group.clone());
+        }
+    }
+    if !cats.contains(&cat) {
+        cat = cats.first().cloned().unwrap_or_default();
+    }
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::splat(4.0);
+        for c in &cats {
+            let on = *c == cat;
+            let mut text = RichText::new(format!("{}  {c}", category_icon(c))).size(13.5);
+            if on {
+                text = text.strong().color(color::ACCENT);
+            } else if *c == current_group {
+                // Mostra onde está o pincel em uso.
+                text = text.color(color::TEXT);
+            }
+            if ui
+                .add(
+                    egui::Button::new(text)
+                        .selected(on)
+                        .min_size(Vec2::new(0.0, 40.0)),
+                )
+                .clicked()
+            {
+                cat.clone_from(c);
+            }
+        }
+    });
+    ui.ctx().data_mut(|d| d.insert_persisted(key, cat.clone()));
+    ui.separator();
+
     let mut picked = None;
     let mut remove = None;
     let previews = app.brush_previews(ui.ctx());
+    let mut any = false;
     for (i, entry) in app.brushes.iter().enumerate() {
-        if entry.group != group {
-            group.clone_from(&entry.group);
-            section(ui, &group);
+        if entry.group != cat {
+            continue;
         }
+        any = true;
         let selected = app.brush_index == i;
         let row = brush_row(ui, &entry.name, previews.get(i), selected);
         if row.clicked() {
             picked = Some(i);
         }
-        if entry.group == artapp_core::brushes::CUSTOM_GROUP {
+        if entry.group == CUSTOM_GROUP {
             row.context_menu(|ui| {
                 if ui
                     .button(format!("{}  Apagar pincel", icon::TRASH))
@@ -2014,6 +2109,15 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             });
         }
     }
+    if !any {
+        ui.label(
+            RichText::new(
+                "Nenhum pincel aqui ainda. Ajuste um pincel e toque em Salvar, ou importe pincéis.",
+            )
+            .size(12.0)
+            .color(color::TEXT_MUTED),
+        );
+    }
     if let Some(i) = picked {
         app.select_brush(i);
     }
@@ -2021,8 +2125,11 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.delete_brush(i);
     }
     ui.add_space(6.0);
-    section(ui, "Detalhes do pincel");
-    crate::brush_editor::show(ui, &mut app.brush, &mut app.taper);
+    brush_save_row(app, ui);
+}
+
+/// Salvar como pincel novo, restaurar o preset e importar.
+fn brush_save_row(app: &mut ArtApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut app.new_brush_name)
