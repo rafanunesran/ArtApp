@@ -704,6 +704,7 @@ fn mix_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             (MixKind::Desaturate, "Dessaturar"),
             (MixKind::Clone, "Carimbo"),
             (MixKind::Heal, "Corretivo"),
+            (MixKind::BgErase, "Borracha de fundo"),
         ] {
             ui.selectable_value(&mut app.mix_kind, kind, name);
         }
@@ -720,6 +721,9 @@ fn mix_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             MixKind::Clone => "Toque para marcar a origem; depois pinte para copiar dela.",
             MixKind::Heal => {
                 "Pinte por cima da mancha; ao soltar, ela some, refeita com a textura em volta."
+            }
+            MixKind::BgErase => {
+                "Apaga a cor que está sob o centro do pincel e as parecidas (a força é a tolerância), deixando as outras."
             }
         })
         .size(12.5)

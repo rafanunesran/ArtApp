@@ -30,7 +30,12 @@ pub enum MixKind {
     Clone,
     /// Corretivo: refaz a área pintada a partir da textura em volta (fica em `heal`).
     Heal,
+    /// Borracha de fundo: apaga a cor que está sob o centro do pincel (e as parecidas, pela
+    /// força como tolerância), deixando as outras cores.
+    BgErase,
 }
+
+type DabEffect = Box<dyn FnMut(&mut Region, &photocraft_paint::retouch::Footprint)>;
 
 pub struct MixSession {
     kind: MixKind,
@@ -48,6 +53,8 @@ pub struct MixSession {
     /// Carimbo: o ponto de origem e, depois do primeiro ponto, o deslocamento até ela.
     source: Option<[f64; 2]>,
     offset: Option<(i32, i32)>,
+    /// Borracha de fundo: o efeito de cada marca (lê a camada de antes do traço).
+    bg: Option<DabEffect>,
 }
 
 impl MixSession {
@@ -72,8 +79,19 @@ impl MixSession {
         let selection = doc.selection.as_ref().map(|s| s.mask.clone());
         let brush = brush.bounded_for_render();
         let smudge = Smudge::new(strength, None, brush.size).with_alpha(alpha_index(&pre.format()));
+        let bg = (kind == MixKind::BgErase)
+            .then(|| {
+                let bs = photocraft_paint::bg_erase::BgEraseSettings {
+                    tolerance: strength.clamp(0.02, 1.0),
+                    ..Default::default()
+                };
+                photocraft_paint::bg_erase::background_eraser_effect(&pre, &bs)
+                    .map(|e| Box::new(e) as DabEffect)
+            })
+            .flatten();
         doc.checkpoint();
         Some(Self {
+            bg,
             kind,
             brush,
             strength: strength.clamp(0.0, 1.0),
@@ -145,6 +163,11 @@ impl MixSession {
                     tone_dab(&mut work, &fp, k, |c, e| retouch::sponge(c, e, up, true))
                 }
                 MixKind::Heal => {}
+                MixKind::BgErase => {
+                    if let Some(e) = &mut self.bg {
+                        e(&mut work, &fp);
+                    }
+                }
                 MixKind::Clone => {
                     let (dx, dy) = self.offset.unwrap_or_default();
                     clone_dab(&mut work, &self.pre, &fp, k, dx, dy)
@@ -340,6 +363,28 @@ mod tests {
             assert!(doc.undo());
             assert_eq!(doc.layers[0].surface.rgba(52, 20)[3], 0.0);
         }
+    }
+
+    #[test]
+    fn background_eraser_keeps_other_colours() {
+        let mut doc = Document::new(60, 40);
+        doc.layers[0]
+            .surface
+            .fill_rect(Rect::new(0, 0, 60, 40), &[1.0, 1.0, 1.0, 1.0]);
+        doc.layers[0]
+            .surface
+            .fill_rect(Rect::new(28, 0, 32, 40), &[0.0, 0.0, 0.0, 1.0]);
+        let brush = BrushSettings {
+            size: 30.0,
+            ..Default::default()
+        };
+        let mut s = MixSession::begin(&mut doc, MixKind::BgErase, &brush, 0.3).unwrap();
+        let pts: Vec<_> = (0..10)
+            .map(|i| StrokePoint::new(10.0 + f64::from(i) * 0.5, 20.0, 1.0))
+            .collect();
+        s.add(&mut doc, &pts);
+        assert!(doc.layers[0].surface.rgba(12, 20)[3] < 0.1);
+        assert!(doc.layers[0].surface.rgba(29, 20)[3] > 0.9);
     }
 
     #[test]
