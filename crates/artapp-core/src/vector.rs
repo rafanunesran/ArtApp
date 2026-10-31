@@ -498,6 +498,25 @@ impl Document {
         })
     }
 
+    /// Acrescenta um objeto com vários caminhos (um balão com as bolinhas do rabicho, por
+    /// exemplo), num passo só de desfazer.
+    pub fn vector_add_paths(&mut self, subpaths: Vec<SubPath>, style: &VectorStyle) -> Rect {
+        if !subpaths.iter().any(|s| s.anchors.len() >= 2) {
+            return Rect::EMPTY;
+        }
+        let path = PathData::new(subpaths);
+        let appearance = style.appearance();
+        self.edit_vector(true, |art| {
+            let Some(parent) = art.target() else {
+                return false;
+            };
+            let id = art.doc.alloc_id();
+            art.doc
+                .insert(Some(parent), usize::MAX, Node::path(id, path, appearance))
+                .is_ok()
+        })
+    }
+
     /// Acrescenta um traço da caneta vetorial: `points` à mão livre, com a pressão `pressures` de
     /// cada ponto (já passada pela curva) aplicada à largura e à opacidade como `pen` pede.
     pub fn vector_add_pen(

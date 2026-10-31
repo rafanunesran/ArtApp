@@ -56,6 +56,8 @@ enum ActiveKind {
     },
     /// Puxando as alças do último ponto Bézier.
     BezierHandle,
+    /// Balão já desenhado: arrastando a ponta do rabicho.
+    BalloonTail(VPoint),
     /// Seleção retangular ou elíptica: do ponto inicial ao atual.
     Marquee {
         tool: Tool,
@@ -279,6 +281,9 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
     }
     if !app.view.fitted {
         app.view.fit(panel, app.doc.width, app.doc.height);
+    }
+    if app.balloon_pending.is_some() && app.tool != Tool::Balloon {
+        app.finish_balloon(None);
     }
     handle_input(app, ui, panel, response.hovered());
     check_holds(app, ui.ctx(), panel);
@@ -1256,7 +1261,8 @@ fn tool_down(
                 to: vp,
             })
         }
-        Tool::VectorPen | Tool::Line | Tool::Rectangle | Tool::Ellipse => {
+        Tool::Balloon if app.balloon_pending.is_some() => Some(ActiveKind::BalloonTail(vp)),
+        Tool::VectorPen | Tool::Line | Tool::Rectangle | Tool::Ellipse | Tool::Balloon => {
             app.ensure_vector_layer();
             Some(if app.tool == Tool::VectorPen {
                 ActiveKind::Freehand(vec![vp], vec![pt.pressure])
@@ -1397,6 +1403,7 @@ fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, t
                 q[k] = [raw.x.clamp(0.0, w), raw.y.clamp(0.0, h)];
             }
         }
+        ActiveKind::BalloonTail(tip) => *tip = vp,
         ActiveKind::Kit(last, pressure) => {
             *last = vp;
             *pressure = pt.pressure;
@@ -1424,6 +1431,24 @@ fn end_stroke(app: &mut ArtApp) {
     let dirty = match s.kind {
         ActiveKind::Paint(session) => session.end(&mut app.doc),
         ActiveKind::Mix(session) => session.end(),
+        ActiveKind::Shape {
+            tool: Tool::Balloon,
+            from,
+            to,
+        } => {
+            if from.distance(to) < 8.0 {
+                return;
+            }
+            // O rabicho vem no próximo toque: onde ele aponta.
+            app.balloon_pending = Some([from.x, from.y, to.x, to.y]);
+            app.status = "Toque onde o rabicho aponta (ou dentro do balão, para não ter).".into();
+            return;
+        }
+        ActiveKind::BalloonTail(tip) => {
+            app.remember_color();
+            app.finish_balloon(Some([tip.x, tip.y]));
+            return;
+        }
         ActiveKind::Shape { tool, from, to } => {
             if from.distance(to) < 1.0 {
                 return;
@@ -1944,12 +1969,44 @@ fn draw_bez(
     flush(&mut pts);
 }
 
+/// Prévia de um balão de quadrinho.
+fn draw_balloon(
+    app: &ArtApp,
+    painter: &egui::Painter,
+    panel: egui::Rect,
+    r: [f64; 4],
+    tail: Option<[f64; 2]>,
+    stroke: egui::Stroke,
+) {
+    for sp in artapp_core::balloon::balloon(app.balloon_shape, r, tail) {
+        let mut bez = BezPath::new();
+        sp.to_bezpath_into(&mut bez);
+        draw_bez(app, painter, panel, &bez, stroke);
+    }
+}
+
 /// Prévias das ferramentas vetoriais e a seleção, por cima da tela.
 fn draw_overlay(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
     let preview = egui::Stroke::new(
         ((app.vector_width as f32) * app.view.zoom).max(1.0),
         app.color,
     );
+    if let Some(r) = app.balloon_pending {
+        // O balão esperando o rabicho: a ponta segue o dedo/caneta.
+        let tip = match app.view.stroke.as_ref().map(|s| &s.kind) {
+            Some(ActiveKind::BalloonTail(t)) => Some([t.x, t.y]),
+            _ => painter
+                .ctx()
+                .input(|i| i.pointer.hover_pos())
+                .filter(|p| panel.contains(*p))
+                .map(|p| {
+                    let (x, y) = app.view.to_canvas(panel, p);
+                    [x, y]
+                }),
+        };
+        let black = egui::Stroke::new(preview.width, Color32::BLACK);
+        draw_balloon(app, painter, panel, r, tip, black);
+    }
     let guide = egui::Stroke::new(1.5, Color32::from_rgb(40, 170, 255));
     if let Some(s) = &app.view.stroke {
         match &s.kind {
@@ -1971,6 +2028,15 @@ fn draw_overlay(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
                 for p in [line.first(), line.last()].into_iter().flatten() {
                     painter.circle_filled(*p, r, fill);
                 }
+            }
+            ActiveKind::Shape {
+                tool: Tool::Balloon,
+                from,
+                to,
+            } => {
+                let r = [from.x, from.y, to.x, to.y];
+                let tail = artapp_core::balloon::default_tail(r);
+                draw_balloon(app, painter, panel, r, Some(tail), preview);
             }
             ActiveKind::Shape { tool, from, to } => {
                 let shape = match tool {
