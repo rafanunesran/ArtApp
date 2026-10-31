@@ -253,7 +253,6 @@ impl Document {
         bounds
     }
 
-    /// Acrescenta uma forma à camada vetorial ativa.
     /// Texto numa camada nova, com o começo da linha de base em `at`. Com `raster`, a camada
     /// já sai rasterizada (texto em camada raster); senão continua editável no Vetor pro.
     pub fn add_text(
@@ -304,6 +303,63 @@ impl Document {
         r
     }
 
+    /// Põe polígonos preenchidos com `color` na camada vetorial ativa, de uma vez (sem passo
+    /// próprio no desfazer).
+    pub(crate) fn add_filled_polygons(&mut self, polys: &[Vec<[f64; 2]>], color: [f32; 3]) -> Rect {
+        let paths: Vec<Vec<Vec<[f64; 2]>>> = polys.iter().map(|p| vec![p.clone()]).collect();
+        let style = VectorStyle {
+            stroke: None,
+            width: 0.0,
+            fill: Some(color),
+        };
+        self.add_polygon_paths(&paths, &style)
+    }
+
+    /// Acrescenta à camada vetorial ativa um caminho por item de `paths`, cada um feito de
+    /// polígonos fechados (regra não zero: um polígono no sentido contrário vira furo).
+    pub(crate) fn add_polygon_paths(
+        &mut self,
+        paths: &[Vec<Vec<[f64; 2]>>],
+        style: &VectorStyle,
+    ) -> Rect {
+        let appearance = style.appearance();
+        self.edit_vector(false, |art| {
+            let Some(parent) = art.target() else {
+                return false;
+            };
+            for polys in paths {
+                let subpaths: Vec<SubPath> = polys
+                    .iter()
+                    .filter(|p| p.len() >= 3)
+                    .map(|poly| {
+                        let anchors = poly
+                            .iter()
+                            .map(|p| vectorcraft_geom::path::Anchor::corner(Point::new(p[0], p[1])))
+                            .collect();
+                        SubPath::new(anchors, true)
+                    })
+                    .collect();
+                if subpaths.is_empty() {
+                    continue;
+                }
+                let id = art.doc.alloc_id();
+                if art
+                    .doc
+                    .insert(
+                        Some(parent),
+                        usize::MAX,
+                        Node::path(id, PathData::new(subpaths), appearance.clone()),
+                    )
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+            true
+        })
+    }
+
+    /// Acrescenta uma forma à camada vetorial ativa.
     pub fn vector_add(&mut self, shape: &Shape, style: &VectorStyle) -> Rect {
         let Some(path) = shape.to_path() else {
             return Rect::EMPTY;
