@@ -67,6 +67,9 @@ struct Manifest {
     timelapse: crate::timelapse::Timelapse,
     #[serde(default)]
     timelapse_frames: Vec<Blob>,
+    /// Modelo 3D (OBJ) pintado com o desenho como textura.
+    #[serde(default)]
+    model_obj: Option<Blob>,
 }
 
 fn default_dpi() -> f32 {
@@ -224,6 +227,7 @@ pub fn save(doc: &Document) -> Result<Vec<u8>, String> {
         layers,
         timelapse: doc.timelapse.clone(),
         timelapse_frames: doc.timelapse.frames.iter().map(|f| blobs.push(f)).collect(),
+        model_obj: doc.model.as_ref().map(|m| blobs.push(m.as_bytes())),
     };
     let json = serde_json::to_vec(&manifest).map_err(|e| e.to_string())?;
     let mut out = Vec::with_capacity(HEADER_LEN + json.len() + blobs.0.len());
@@ -339,6 +343,10 @@ pub fn load(bytes: &[u8]) -> Result<Document, String> {
     doc.animation = m.animation.clone();
     doc.follow_active_frame();
     doc.timelapse.enabled = m.timelapse.enabled;
+    if let Some(b) = &m.model_obj {
+        let text = String::from_utf8_lossy(slice(data, b)?).into_owned();
+        doc.model = Some(std::sync::Arc::new(text));
+    }
     for b in &m.timelapse_frames {
         // Uma foto estragada não impede de abrir o desenho.
         if let Ok(f) = slice(data, b) {

@@ -87,6 +87,8 @@ pub struct Document {
     pub animation: crate::animation::Animation,
     /// Gravação do processo (timelapse).
     pub timelapse: crate::timelapse::Timelapse,
+    /// Modelo 3D (texto OBJ) pintado com este desenho como textura.
+    pub model: Option<std::sync::Arc<String>>,
     pub(crate) history: History,
     next_id: u64,
 }
@@ -107,6 +109,7 @@ impl Document {
             dpi: DEFAULT_DPI,
             animation: Default::default(),
             timelapse: Default::default(),
+            model: None,
             history: History::default(),
             next_id: 1,
         };
@@ -143,6 +146,7 @@ impl Document {
             dpi: DEFAULT_DPI,
             animation: Default::default(),
             timelapse: Default::default(),
+            model: None,
             history: History::default(),
             next_id,
         };
@@ -166,6 +170,7 @@ impl Document {
         d.dpi = self.dpi;
         d.animation = self.animation.clone();
         d.timelapse = self.timelapse.clone();
+        d.model = self.model.clone();
         d
     }
 

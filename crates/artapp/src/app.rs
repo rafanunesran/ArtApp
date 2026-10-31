@@ -265,6 +265,8 @@ pub struct ArtApp {
     pub anim_settings_open: bool,
     /// Gravação e janela do timelapse.
     pub timelapse: crate::timelapse_view::TimelapseState,
+    /// Pintura 3D: o modelo do documento, se houver.
+    pub view3d: Option<crate::view3d::View3d>,
     /// Pincel histórico: o passo da linha do tempo de onde ele pinta (0 = o mais antigo).
     pub history_brush_step: usize,
     /// Cor principal (a de pintar).
@@ -465,6 +467,7 @@ impl ArtApp {
             anim_next: 0.0,
             anim_settings_open: false,
             timelapse: Default::default(),
+            view3d: None,
             history_brush_step: 0,
             eraser: BrushSettings {
                 size: 30.0,
@@ -1560,7 +1563,14 @@ impl eframe::App for ArtApp {
         }
         crate::anim_bar::tick(self, &ctx);
         crate::timelapse_view::record(self, &ctx);
-        egui::CentralPanel::no_frame().show(ui, |ui| crate::canvas::show(self, ui));
+        crate::view3d::sync(self);
+        egui::CentralPanel::no_frame().show(ui, |ui| {
+            if crate::view3d::active(self) {
+                crate::view3d::show(self, ui);
+            } else {
+                crate::canvas::show(self, ui);
+            }
+        });
 
         let canvas = self.canvas_rect;
         crate::transform_tool::toolbar(self, &ctx, canvas);
@@ -1572,6 +1582,7 @@ impl eframe::App for ArtApp {
         crate::canvas::drop_fill_bar(self, &ctx, canvas);
         crate::canvas::persp_crop_bar(self, &ctx, canvas);
         crate::anim_bar::show(self, &ctx, canvas);
+        crate::view3d::bar(self, &ctx, canvas);
         if hide {
             panels::show_ui_button(self, &ctx, canvas);
             panels::toast(self, &ctx, canvas, 0.0);

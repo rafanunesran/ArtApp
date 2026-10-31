@@ -21,6 +21,7 @@ mod timelapse_view;
 mod transform_tool;
 mod units;
 mod updater;
+mod view3d;
 
 pub use app::ArtApp;
 
