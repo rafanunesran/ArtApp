@@ -77,6 +77,9 @@ pub struct Projects {
     was_focused: bool,
     job: Option<Job>,
     pub dialog: Option<FileDialog>,
+    /// Quando o último "Salvar" feito pela pessoa terminou (para o ✓ no botão do topo).
+    pub saved_at: Option<f64>,
+    just_saved: bool,
 }
 
 impl Default for Projects {
@@ -93,6 +96,8 @@ impl Default for Projects {
             seen_edits: 0,
             was_focused: true,
             job: None,
+            saved_at: None,
+            just_saved: false,
             dialog: recovery_path().is_file().then_some(FileDialog::Recover),
         }
     }
@@ -573,6 +578,9 @@ impl ArtApp {
     /// A cada quadro: termina trabalhos em segundo plano e roda o salvamento automático.
     pub fn projects_tick(&mut self, ctx: &egui::Context) {
         self.finish_job();
+        if std::mem::take(&mut self.projects.just_saved) {
+            self.projects.saved_at = Some(ctx.input(|i| i.time));
+        }
         if self.projects.busy() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
@@ -665,6 +673,7 @@ impl ArtApp {
                         self.projects.path = Some(path.clone());
                         let _ = std::fs::remove_file(recovery_path());
                         if !auto {
+                            self.projects.just_saved = true;
                             self.status = format!("Projeto salvo em {}", path.display());
                         }
                     }
