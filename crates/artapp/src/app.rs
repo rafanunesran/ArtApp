@@ -420,6 +420,10 @@ pub struct ArtApp {
     /// Calha ao dividir quadros (pixels) e se a reta gruda na horizontal/vertical.
     pub frame_gap: f32,
     pub frame_snap: bool,
+    /// Pathfinder do Vetor pro faz forma composta (editável) em vez de cortar de vez.
+    pub kit_live_shapes: bool,
+    /// Nomes dos símbolos da camada vetorial ativa.
+    pub kit_symbols: Vec<String>,
     /// Seletor de cor aberto.
     pub show_color: bool,
     /// Roda de cores flutuante: sempre na tela (não fecha ao desenhar), arrastável e
@@ -589,6 +593,8 @@ impl ArtApp {
             balloon_pending: None,
             frame_gap: 30.0,
             frame_snap: true,
+            kit_live_shapes: false,
+            kit_symbols: Vec::new(),
             show_color: false,
             color_float: false,
             color_float_collapsed: false,
@@ -1381,6 +1387,15 @@ impl ArtApp {
         if let Some(msg) = self.kit.status.take() {
             self.status = msg;
         }
+    }
+
+    /// Relê a lista de símbolos da camada vetorial ativa (só os nomes, direto da arte).
+    pub fn refresh_symbols(&mut self) {
+        self.kit_symbols = self
+            .doc
+            .active_vector()
+            .map(|a| a.doc.symbols.iter().map(|s| s.name.clone()).collect())
+            .unwrap_or_default();
     }
 
     /// Com a ferramenta de texto do kit digitando, o teclado vai todo para ela.

@@ -1237,17 +1237,6 @@ const KIT_COMMANDS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
-        "Combinar formas",
-        &[
-            ("object.pathfinder.unite", "Unir"),
-            ("object.pathfinder.minusFront", "Subtrair"),
-            ("object.pathfinder.intersect", "Interseção"),
-            ("object.pathfinder.exclude", "Excluir sobreposição"),
-            ("object.pathfinder.divide", "Dividir"),
-            ("object.pathfinder.outline", "Contorno"),
-        ],
-    ),
-    (
         "Traçado",
         &[
             ("path.join", "Unir pontas"),
@@ -1340,8 +1329,207 @@ fn kit_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             }
         });
     }
+    kit_pathfinder(app, ui);
     kit_align(app, ui);
     kit_stroke_style(app, ui);
+    kit_appearance(app, ui);
+    kit_symbols(app, ui);
+}
+
+/// Pathfinder: modos de forma (destrutivos ou como forma composta editável) e os recortes.
+fn kit_pathfinder(app: &mut ArtApp, ui: &mut egui::Ui) {
+    use serde_json::json;
+    section(ui, "Combinar formas (pathfinder)");
+    theme::switch(
+        ui,
+        &mut app.kit_live_shapes,
+        "Manter editável (forma composta)",
+    );
+    let modes = [
+        ("Unir", "add", "object.pathfinder.unite"),
+        ("Subtrair", "subtract", "object.pathfinder.minusFront"),
+        ("Interseção", "intersect", "object.pathfinder.intersect"),
+        (
+            "Excluir sobreposição",
+            "exclude",
+            "object.pathfinder.exclude",
+        ),
+    ];
+    ui.horizontal_wrapped(|ui| {
+        for (name, mode, id) in modes {
+            if ui.button(name).clicked() {
+                if app.kit_live_shapes {
+                    app.kit_command("object.compoundShape.make", json!({ "mode": mode }));
+                } else {
+                    app.kit_command(id, json!({}));
+                }
+            }
+        }
+    });
+    if app.kit_live_shapes {
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Expandir forma composta").clicked() {
+                app.kit_command("object.compoundShape.expand", json!({}));
+            }
+            if ui.button("Soltar forma composta").clicked() {
+                app.kit_command("object.compoundShape.release", json!({}));
+            }
+        });
+    }
+    let cuts = [
+        ("Dividir", "object.pathfinder.divide"),
+        ("Aparar", "object.pathfinder.trim"),
+        ("Mesclar", "object.pathfinder.merge"),
+        ("Cortar", "object.pathfinder.crop"),
+        ("Contorno", "object.pathfinder.outline"),
+        ("Menos o de trás", "object.pathfinder.minusBack"),
+    ];
+    ui.horizontal_wrapped(|ui| {
+        for (name, id) in cuts {
+            if ui.button(name).clicked() {
+                app.kit_command(id, json!({}));
+            }
+        }
+    });
+}
+
+/// Aparência do objeto selecionado: vários preenchimentos e traços empilhados.
+fn kit_appearance(app: &mut ArtApp, ui: &mut egui::Ui) {
+    use serde_json::json;
+    section(ui, "Aparência");
+    let Some(rows) = app.kit.selected_appearance(&app.doc) else {
+        ui.label(
+            RichText::new("Selecione um objeto para ver e somar traços e preenchimentos.")
+                .size(12.5)
+                .color(color::TEXT_MUTED),
+        );
+        return;
+    };
+    let hex = |c: [f32; 3]| {
+        let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+        format!("#{:02x}{:02x}{:02x}", b(c[0]), b(c[1]), b(c[2]))
+    };
+    let mut cmd: Option<(&str, serde_json::Value)> = None;
+    // De cima para baixo, como o painel do Illustrator; o índice continua o da pintura.
+    for (i, row) in rows.iter().enumerate().rev() {
+        ui.horizontal(|ui| {
+            let mut visible = row.visible;
+            if ui.checkbox(&mut visible, "").changed() {
+                cmd = Some((
+                    "appearance.setItem",
+                    json!({"index": i, "visible": visible}),
+                ));
+            }
+            ui.label(if row.fill { "Preenchimento" } else { "Traço" });
+            if let Some(c) = row.color {
+                let mut c32 = Color32::from_rgb(
+                    (c[0] * 255.0) as u8,
+                    (c[1] * 255.0) as u8,
+                    (c[2] * 255.0) as u8,
+                );
+                if egui::color_picker::color_edit_button_srgba(
+                    ui,
+                    &mut c32,
+                    egui::color_picker::Alpha::Opaque,
+                )
+                .changed()
+                {
+                    let f = |v: u8| f32::from(v) / 255.0;
+                    let c = hex([f(c32.r()), f(c32.g()), f(c32.b())]);
+                    cmd = Some(("appearance.setItem", json!({"index": i, "color": c})));
+                }
+            } else if ui
+                .small_button("Cor")
+                .on_hover_text("Pinta com a cor principal")
+                .clicked()
+            {
+                let [r, g, b, _] = crate::app::color_to_f32(app.color);
+                cmd = Some((
+                    "appearance.setItem",
+                    json!({"index": i, "color": hex([r, g, b])}),
+                ));
+            }
+            if !row.fill {
+                let mut w = row.width;
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut w)
+                            .range(0.0..=500.0)
+                            .speed(0.2)
+                            .suffix(" pt"),
+                    )
+                    .changed()
+                {
+                    cmd = Some(("appearance.setItem", json!({"index": i, "weight": w})));
+                }
+            }
+            if ui
+                .small_button(icon::X.to_string())
+                .on_hover_text("Tirar")
+                .clicked()
+            {
+                cmd = Some(("appearance.removeItem", json!({ "index": i })));
+            }
+        });
+    }
+    ui.horizontal_wrapped(|ui| {
+        if ui.button("+ Traço").clicked() {
+            cmd = Some(("appearance.addStroke", json!({})));
+        }
+        if ui.button("+ Preenchimento").clicked() {
+            cmd = Some(("appearance.addFill", json!({})));
+        }
+        if ui.button("Só o básico").clicked() {
+            cmd = Some(("appearance.reduceToBasic", json!({})));
+        }
+    });
+    if let Some((id, p)) = cmd {
+        app.kit_command(id, p);
+    }
+}
+
+/// Símbolos: guardar a seleção como símbolo e pôr cópias ligadas (mudar o símbolo muda todas).
+fn kit_symbols(app: &mut ArtApp, ui: &mut egui::Ui) {
+    use serde_json::json;
+    section(ui, "Símbolos");
+    let mut cmd: Option<(&str, serde_json::Value)> = None;
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .add_enabled(
+                app.kit.has_selection(),
+                egui::Button::new("Novo da seleção"),
+            )
+            .clicked()
+        {
+            cmd = Some(("symbol.new", json!({})));
+        }
+        if ui
+            .add_enabled(app.kit.has_selection(), egui::Button::new("Soltar cópia"))
+            .on_hover_text("A cópia vira arte comum, sem ligação com o símbolo.")
+            .clicked()
+        {
+            cmd = Some(("symbol.breakLink", json!({})));
+        }
+    });
+    app.refresh_symbols();
+    for name in app.kit_symbols.clone() {
+        ui.horizontal(|ui| {
+            ui.label(&name);
+            if ui.small_button("Pôr").clicked() {
+                cmd = Some(("symbol.place", json!({ "name": name })));
+            }
+            if ui
+                .small_button(icon::TRASH.to_string())
+                .on_hover_text("Apagar o símbolo")
+                .clicked()
+            {
+                cmd = Some(("symbol.delete", json!({ "name": name })));
+            }
+        });
+    }
+    if let Some((id, p)) = cmd {
+        app.kit_command(id, p);
+    }
 }
 
 /// Alinhar e distribuir os objetos selecionados (painel Alinhar do VectorCraft).
