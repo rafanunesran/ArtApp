@@ -352,6 +352,12 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         theme::switch(ui, &mut app.show_grid, "Grade")
     });
     if app.show_grid {
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut app.grid_iso, false, "Quadrada");
+            ui.selectable_value(&mut app.grid_iso, true, "Isométrica");
+        });
+    }
+    if app.show_grid {
         ui.add(
             egui::Slider::new(&mut app.grid_size, 8.0..=512.0)
                 .logarithmic(true)
@@ -1146,17 +1152,39 @@ fn symmetry_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
     use artapp_core::paint::symmetry::SymmetryMode;
     section(ui, "Simetria");
     ui.horizontal_wrapped(|ui| {
-        ui.selectable_value(&mut app.symmetry, None, "Desligada");
+        if ui
+            .selectable_label(app.symmetry.is_none() && !app.symmetry_radial, "Desligada")
+            .clicked()
+        {
+            app.symmetry = None;
+            app.symmetry_radial = false;
+        }
         for (mode, name) in [
             (SymmetryMode::Vertical, "Vertical"),
             (SymmetryMode::Horizontal, "Horizontal"),
             (SymmetryMode::Dual, "Quatro lados"),
             (SymmetryMode::Diagonal, "Diagonal"),
         ] {
-            ui.selectable_value(&mut app.symmetry, Some(mode), name);
+            if ui
+                .selectable_label(!app.symmetry_radial && app.symmetry == Some(mode), name)
+                .clicked()
+            {
+                app.symmetry = Some(mode);
+                app.symmetry_radial = false;
+            }
+        }
+        if ui.selectable_label(app.symmetry_radial, "Radial").clicked() {
+            app.symmetry_radial = true;
         }
     });
-    if app.symmetry.is_some() {
+    if app.symmetry_radial {
+        ui.add(
+            egui::Slider::new(&mut app.radial_count, 2..=artapp_core::symmetry::RADIAL_MAX)
+                .text("Fatias"),
+        );
+        theme::switch(ui, &mut app.radial_mirror, "Espelhar dentro das fatias");
+    }
+    if app.symmetry.is_some() || app.symmetry_radial {
         let mut deg = app.symmetry_angle.to_degrees();
         if ui
             .add(

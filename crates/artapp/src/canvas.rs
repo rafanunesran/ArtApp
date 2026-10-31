@@ -1576,6 +1576,50 @@ fn draw_grid(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
     }
     let thin = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(60, 140, 255, 60));
     let bold = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(60, 140, 255, 130));
+    if app.grid_iso {
+        // Isométrica: três famílias de linhas (vertical, 30° e 150°) formando triângulos
+        // equiláteros de lado `step`.
+        let gap = step * 0.866_025_4;
+        for deg in [90.0f32, 30.0, 150.0] {
+            let (sn, cs) = deg.to_radians().sin_cos();
+            let (d, n) = ([cs, sn], [-sn, cs]);
+            let along = |p: [f32; 2]| p[0] * n[0] + p[1] * n[1];
+            let corners = [[0.0, 0.0], [w, 0.0], [0.0, h], [w, h]];
+            let lo = corners.iter().map(|c| along(*c)).fold(f32::MAX, f32::min);
+            let hi = corners.iter().map(|c| along(*c)).fold(f32::MIN, f32::max);
+            let mut k = (lo / gap).ceil() as i64;
+            while (k as f32) * gap <= hi {
+                let c = k as f32 * gap;
+                let o = [n[0] * c, n[1] * c];
+                // Recorta a reta o + t·d ao retângulo do documento.
+                let (mut t0, mut t1) = (f32::MIN, f32::MAX);
+                let mut inside = true;
+                for (i, size) in [w, h].into_iter().enumerate() {
+                    if d[i].abs() < 1e-6 {
+                        inside &= o[i] >= 0.0 && o[i] <= size;
+                    } else {
+                        let (a, b) = (-o[i] / d[i], (size - o[i]) / d[i]);
+                        t0 = t0.max(a.min(b));
+                        t1 = t1.min(a.max(b));
+                    }
+                }
+                if inside && t1 > t0 {
+                    let st = if k.rem_euclid(4) == 0 { bold } else { thin };
+                    painter.line_segment(
+                        [
+                            app.view
+                                .doc_to_screen(panel, o[0] + d[0] * t0, o[1] + d[1] * t0),
+                            app.view
+                                .doc_to_screen(panel, o[0] + d[0] * t1, o[1] + d[1] * t1),
+                        ],
+                        st,
+                    );
+                }
+                k += skip as i64;
+            }
+        }
+        return;
+    }
     let mut i = 0usize;
     let mut x = 0.0;
     while x <= w {
