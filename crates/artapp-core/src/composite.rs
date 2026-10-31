@@ -15,6 +15,22 @@ pub enum Pass {
     Final,
     /// Só as camadas de referência (balde quando alguma camada é de referência).
     Reference,
+    /// Tudo menos as camadas de referência (conta-gotas que ignora a referência).
+    NoReference,
+    /// Só a camada de índice dado (conta-gotas na camada atual).
+    Only(usize),
+}
+
+/// De onde o conta-gotas pega a cor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SampleFrom {
+    /// A imagem como aparece na tela.
+    #[default]
+    All,
+    /// Tudo, menos as camadas de referência.
+    NoReference,
+    /// Só a camada ativa (sem o papel).
+    Active,
 }
 
 /// Compõe `r` (recortado à tela) em RGBA 8 bits não pré-multiplicado, linha a linha.
@@ -71,6 +87,8 @@ pub(crate) fn composite_view(
             Pass::Display => true,
             Pass::Final => !layer.draft,
             Pass::Reference => layer.reference,
+            Pass::NoReference => !layer.reference,
+            Pass::Only(k) => i == k,
         };
         // Pastas não têm tinta: só escondem e esmaecem o que está dentro.
         if layer.folder {
@@ -158,7 +176,22 @@ pub fn mask_visibility(p: [f32; 4]) -> f32 {
 
 /// Cor composta (com papel) num pixel da tela, para o conta-gotas.
 pub fn sample(doc: &Document, x: i32, y: i32) -> Option<[f32; 4]> {
-    let (_, px) = composite_rgba8(doc, Rect::new(x, y, x + 1, y + 1), true);
+    sample_from(doc, x, y, SampleFrom::All)
+}
+
+/// Cor no pixel `(x, y)` olhando só as camadas de `from`. Na camada ativa o papel não entra:
+/// alfa 0 = lugar transparente.
+pub fn sample_from(doc: &Document, x: i32, y: i32, from: SampleFrom) -> Option<[f32; 4]> {
+    let r = Rect::new(x, y, x + 1, y + 1);
+    let (_, px) = match from {
+        SampleFrom::All => composite_rgba8(doc, r, true),
+        SampleFrom::NoReference => {
+            let a = &doc.animation;
+            let view = a.enabled.then_some((a.current, !a.pages));
+            composite_view(doc, r, true, Pass::NoReference, view)
+        }
+        SampleFrom::Active => composite_view(doc, r, false, Pass::Only(doc.active), None),
+    };
     px.first().map(|p| {
         [
             p[0] as f32 / 255.0,
@@ -259,6 +292,36 @@ mod tests {
             composite_rgba8(&doc, doc.bounds(), true).1[0],
             [255, 255, 255, 255]
         );
+    }
+
+    #[test]
+    fn eyedropper_can_skip_reference_or_read_only_the_active_layer() {
+        let mut doc = Document::new(2, 1);
+        let b = doc.bounds();
+        paint(&mut doc, 0, b, [1.0, 0.0, 0.0, 1.0]);
+        doc.add_layer();
+        paint(&mut doc, 1, Rect::new(0, 0, 1, 1), [0.0, 0.0, 1.0, 1.0]);
+        doc.layers[1].reference = true;
+        doc.active = 0;
+        let near = |c: Option<[f32; 4]>, want: [f32; 4]| {
+            let c = c.unwrap();
+            assert!(
+                c.iter().zip(want).all(|(a, b)| (a - b).abs() < 0.01),
+                "{c:?}"
+            );
+        };
+        near(sample(&doc, 0, 0), [0.0, 0.0, 1.0, 1.0]);
+        near(
+            sample_from(&doc, 0, 0, SampleFrom::NoReference),
+            [1.0, 0.0, 0.0, 1.0],
+        );
+        doc.active = 1;
+        near(
+            sample_from(&doc, 0, 0, SampleFrom::Active),
+            [0.0, 0.0, 1.0, 1.0],
+        );
+        // Fora da tinta da camada ativa: transparente, mesmo com papel e camada embaixo.
+        assert_eq!(sample_from(&doc, 1, 0, SampleFrom::Active).unwrap()[3], 0.0);
     }
 
     #[test]
