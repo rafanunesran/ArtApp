@@ -30,6 +30,8 @@ const REPEAT_EVERY: f64 = 0.18;
 /// Esfregar três dedos: idas e voltas para limpar a camada.
 const SCRUB_REVERSALS: u32 = 3;
 const SCRUB_MIN_RUN: f32 = 25.0;
+/// Quanto os três dedos descem (pontos) para abrir o menu de copiar e colar.
+const SWIPE_MIN: f32 = 90.0;
 const MIN_ZOOM: f32 = 0.02;
 const MAX_ZOOM: f32 = 64.0;
 
@@ -107,6 +109,9 @@ struct TapGesture {
     scrub_run: f32,
     reversals: u32,
     scrubbed: bool,
+    /// Deslizar três dedos para baixo: centro dos dedos quando eram três, e se já abriu o menu.
+    swipe_from: Option<Pos2>,
+    swiped: bool,
 }
 
 struct ActiveStroke {
@@ -507,6 +512,9 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
                         if app.view.touches.len() >= 3 {
                             scrub(app);
                         }
+                        if app.view.touches.len() == 3 {
+                            swipe(app);
+                        }
                         if app.view.gesturing {
                             continue;
                         }
@@ -648,7 +656,7 @@ fn pen_swap(app: &mut ArtApp, id: u64) {
 /// Studio e no Procreate).
 fn finish_tap(app: &mut ArtApp, time: f64) {
     let tap = std::mem::take(&mut app.view.tap);
-    if tap.repeated || tap.scrubbed {
+    if tap.repeated || tap.scrubbed || tap.swiped {
         return;
     }
     if tap.fingers == 4 && time - tap.started <= TAP_MAX_SECS && tap.moved <= TAP_MAX_MOVE {
@@ -670,6 +678,32 @@ fn finish_tap(app: &mut ArtApp, time: f64) {
         }
         _ => {}
     }
+}
+
+/// Deslizar três dedos para baixo abre o menu de copiar e colar (Procreate).
+fn swipe(app: &mut ArtApp) {
+    let n = app.view.touches.len() as f32;
+    let c = app
+        .view
+        .touches
+        .values()
+        .fold(Pos2::ZERO, |a, p| a + p.to_vec2())
+        / n;
+    let tap = &mut app.view.tap;
+    if tap.swiped || tap.scrubbed {
+        return;
+    }
+    let from = *tap.swipe_from.get_or_insert(c);
+    if is_swipe_down(from, c) {
+        tap.swiped = true;
+        app.copy_menu = Some(c);
+    }
+}
+
+/// O centro dos dedos desceu o bastante, e mais para baixo do que para o lado.
+fn is_swipe_down(from: Pos2, to: Pos2) -> bool {
+    let d = to - from;
+    d.y > SWIPE_MIN && d.x.abs() < d.y * 0.6
 }
 
 /// Esfregar três dedos de um lado para o outro limpa a camada (Procreate).
@@ -999,8 +1033,8 @@ fn tool_down(
 ) {
     end_stroke(app);
     app.ruler_live = None;
-    // O toque que fecha o QuickMenu não desenha.
-    if app.quick_menu.is_some() {
+    // O toque que fecha o QuickMenu (ou o de copiar e colar) não desenha.
+    if app.quick_menu.is_some() || app.copy_menu.is_some() {
         return;
     }
     // Pasta não tem tinta: só as ferramentas que não pintam funcionam com ela ativa.
@@ -2057,5 +2091,19 @@ pub fn drop_fill_bar(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) 
     } else if (tolerance - app.fill_tolerance).abs() > f32::EPSILON {
         app.fill_tolerance = tolerance;
         redo_drop_fill(app);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn three_finger_swipe_needs_a_mostly_downward_move() {
+        let o = Pos2::new(100.0, 100.0);
+        assert!(is_swipe_down(o, Pos2::new(120.0, 220.0)));
+        assert!(!is_swipe_down(o, Pos2::new(100.0, 150.0)));
+        assert!(!is_swipe_down(o, Pos2::new(250.0, 220.0)));
+        assert!(!is_swipe_down(o, Pos2::new(100.0, -50.0)));
     }
 }
