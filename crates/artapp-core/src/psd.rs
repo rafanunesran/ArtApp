@@ -45,18 +45,17 @@ pub fn export(doc: &Document) -> Result<Vec<u8>, String> {
             .collect();
         b.push_layer(LayerSpec::new("Papel", 0, 0, w, h, PixelData::Rgba8(px)));
     }
-    for l in &doc.layers {
-        let r = l.surface.content_bounds();
+    for (i, l) in doc.layers.iter().enumerate() {
+        // A máscara vai aplicada na dona.
+        if l.mask {
+            continue;
+        }
+        let surface = doc.masked_surface(i);
+        let r = surface.content_bounds();
         let (x, y, lw, lh, px) = if r.is_empty() {
             (0, 0, 0, 0, Vec::new())
         } else {
-            (
-                r.x0,
-                r.y0,
-                r.width(),
-                r.height(),
-                l.surface.to_interleaved(r),
-            )
+            (r.x0, r.y0, r.width(), r.height(), surface.to_interleaved(r))
         };
         let mut spec = LayerSpec::new(l.name.clone(), x, y, lw, lh, PixelData::Rgba8(px));
         spec.blend_mode = to_psd_blend(l.blend);

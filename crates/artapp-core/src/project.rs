@@ -90,6 +90,8 @@ struct LayerEntry {
     reference: bool,
     #[serde(default)]
     draft: bool,
+    #[serde(default)]
+    mask: bool,
     /// Pixels: o retângulo pintado e o PNG dele. `None` = camada vazia.
     #[serde(default)]
     pixels: Option<Pixels>,
@@ -167,6 +169,7 @@ pub fn save(doc: &Document) -> Result<Vec<u8>, String> {
             clip: l.clip,
             reference: l.reference,
             draft: l.draft,
+            mask: l.mask,
             pixels,
             vector,
         });
@@ -257,6 +260,7 @@ pub fn load(bytes: &[u8]) -> Result<Document, String> {
         layer.clip = e.clip;
         layer.reference = e.reference;
         layer.draft = e.draft;
+        layer.mask = e.mask;
         if let Some(p) = &e.pixels {
             let (w, h, px) = decode_rgba(slice(data, &p.png)?)?;
             if (w, h) != (p.w, p.h) {

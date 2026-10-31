@@ -1575,12 +1575,17 @@ fn layer_row(
         );
     }
     // Camada recortada: recuada, com uma barra ligando-a à base embaixo (como no Clip Studio).
-    let indent = if layer.clip { 14.0 } else { 0.0 };
-    if layer.clip {
+    // Máscara: recuada também, com a barra azul da seleção.
+    let indent = if layer.clip || layer.mask { 14.0 } else { 0.0 };
+    if layer.clip || layer.mask {
         p.rect_filled(
             egui::Rect::from_min_size(rect.left_top() + Vec2::new(8.0, 4.0), Vec2::new(3.0, 48.0)),
             CornerRadius::same(1),
-            color::ACCENT,
+            if layer.mask {
+                color::SELECTION
+            } else {
+                color::ACCENT
+            },
         );
     }
     let thumb_rect =
@@ -1680,6 +1685,7 @@ fn layer_row(
 fn active_layer_settings(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
     let mut changed = false;
     let mut checkpoint = false;
+    let mask_now = app.doc.active_has_mask();
     let Some(layer) = app.doc.layers.get_mut(app.doc.active) else {
         return false;
     };
@@ -1715,10 +1721,31 @@ fn active_layer_settings(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
     });
     // Os três recursos de camada do Clip Studio que mudam o jeito de pintar.
     let (mut clip, mut reference, mut draft) = (layer.clip, layer.reference, layer.draft);
+    let (mut add_mask, mut apply_mask) = (false, false);
+    if layer.mask {
+        ui.label(
+            RichText::new("Pintando na máscara: preto esconde, branco ou borracha mostra.")
+                .size(12.0)
+                .color(color::TEXT_MUTED),
+        );
+    }
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         if icon_button(ui, icon::CLIP, clip, "Recortar na camada abaixo").clicked() {
             clip = !clip;
+        }
+        if icon_button(
+            ui,
+            icon::CIRCLE_DASHED,
+            mask_now,
+            "Máscara de camada (pinte de preto para esconder)",
+        )
+        .clicked()
+        {
+            add_mask = true;
+        }
+        if mask_now && icon_button(ui, icon::CHECK, false, "Aplicar a máscara").clicked() {
+            apply_mask = true;
         }
         if icon_button(
             ui,
@@ -1741,6 +1768,14 @@ fn active_layer_settings(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
             draft = !draft;
         }
     });
+    if add_mask {
+        app.doc.add_mask();
+        return true;
+    }
+    if apply_mask {
+        app.doc.apply_mask();
+        return true;
+    }
     if blend != layer.blend
         || lock != layer.lock_alpha
         || (clip, reference, draft) != (layer.clip, layer.reference, layer.draft)
