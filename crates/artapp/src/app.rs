@@ -286,6 +286,7 @@ pub struct ArtApp {
     pub timelapse: crate::timelapse_view::TimelapseState,
     /// Biblioteca de materiais.
     pub materials: crate::materials_view::MaterialsState,
+    pub pose: crate::pose_view::PoseState,
     /// Área de trabalho atual, as guardadas pelo usuário e o nome digitado para guardar.
     pub workspace: crate::workspace::Workspace,
     pub workspaces: Vec<crate::workspace::Workspace>,
@@ -515,6 +516,7 @@ impl ArtApp {
             anim_settings_open: false,
             timelapse: Default::default(),
             materials: Default::default(),
+            pose: Default::default(),
             workspace: Default::default(),
             workspaces: Vec::new(),
             workspace_name: String::new(),
@@ -1882,6 +1884,7 @@ impl eframe::App for ArtApp {
         crate::history_panel::show(self, &ctx);
         crate::timelapse_view::show(self, &ctx);
         crate::materials_view::show(self, &ctx);
+        crate::pose_view::show(self, &ctx);
         crate::reference::show(self, &ctx);
         crate::canvas::drop_fill_bar(self, &ctx, canvas);
         crate::canvas::persp_crop_bar(self, &ctx, canvas);

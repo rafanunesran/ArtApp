@@ -36,6 +36,7 @@ pub mod mix;
 pub mod model3d;
 pub mod palette;
 pub mod pdf;
+pub mod pose;
 pub mod pressure;
 pub mod project;
 pub mod psd;

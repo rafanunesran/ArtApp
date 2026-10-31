@@ -42,6 +42,8 @@ pub struct Layer {
     pub tone: Option<crate::tone::Tone>,
     /// Camadas vetoriais: a arte editável. `surface` guarda a cópia rasterizada dela.
     pub vector: Option<crate::vector::VectorArt>,
+    /// Camada de boneco 3D: a pose dele, para editar de novo (a tinta é o boneco desenhado).
+    pub pose: Option<crate::pose::Figure>,
     pub surface: Surface,
 }
 
@@ -64,6 +66,7 @@ impl Layer {
             border: None,
             tone: None,
             vector: None,
+            pose: None,
             surface: Surface::new(PixelFormat::RGBA8),
         }
     }

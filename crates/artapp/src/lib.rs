@@ -14,6 +14,7 @@ mod history_panel;
 mod materials_view;
 mod panels;
 pub mod platform;
+mod pose_view;
 mod projects;
 mod quick_menu;
 mod reference;

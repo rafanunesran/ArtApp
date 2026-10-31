@@ -562,6 +562,16 @@ fn layer_group(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.materials.open = true;
         ui.close();
     }
+    let editing = app.doc.active_layer().is_some_and(|l| l.pose.is_some());
+    let text = if editing {
+        "Editar boneco 3D…"
+    } else {
+        "Boneco 3D de pose…"
+    };
+    if item(ui, icon::PERSON, text).clicked() {
+        app.open_pose();
+        ui.close();
+    }
     if item(ui, icon::SQUARE_PEN, "Texto…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::Text {
             text: String::new(),
