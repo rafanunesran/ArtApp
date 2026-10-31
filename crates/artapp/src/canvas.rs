@@ -728,6 +728,16 @@ fn point(app: &ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, time: f64
     }
 }
 
+/// O último ColorDrop, enquanto a barra dele está aberta: dá para mudar o limite (refaz o
+/// preenchimento) ou continuar preenchendo com toques, como no Procreate.
+pub struct DropFill {
+    pub at: (f64, f64),
+    pub layer: u64,
+    /// Versão do histórico logo depois do preenchimento; se mudou, o passo não é mais o último.
+    pub version: u64,
+    pub continuing: bool,
+}
+
 /// ColorDrop: a cor principal solta no ponto de tela `at` preenche a área ali (como o balde,
 /// com a tolerância do balde).
 pub fn color_drop(app: &mut ArtApp, at: Pos2) {
@@ -736,6 +746,12 @@ pub fn color_drop(app: &mut ArtApp, at: Pos2) {
         return;
     }
     let (x, y) = app.view.to_canvas(panel, at);
+    drop_fill_at(app, x, y);
+}
+
+/// Preenche com a cor principal no ponto do documento e abre (ou mantém) a barra do ColorDrop.
+pub fn drop_fill_at(app: &mut ArtApp, x: f64, y: f64) {
+    let before = app.doc.history_version();
     let r = if app.doc.active_is_vector() {
         let [r, g, b, _] = color_to_f32(app.color);
         app.doc.vector_fill_at(x, y, [r, g, b])
@@ -755,7 +771,31 @@ pub fn color_drop(app: &mut ArtApp, at: Pos2) {
     };
     app.invalidate(r);
     app.remember_color();
+    let continuing = app.drop_fill.as_ref().is_some_and(|d| d.continuing);
+    app.drop_fill = match app.doc.active_layer() {
+        Some(l) if app.doc.history_version() != before && !app.doc.active_is_vector() => {
+            Some(DropFill {
+                at: (x, y),
+                layer: l.id,
+                version: app.doc.history_version(),
+                continuing,
+            })
+        }
+        _ => None,
+    };
     app.status = "Preenchido (ColorDrop)".into();
+}
+
+/// Refaz o último ColorDrop com o limite atual (o passo anterior é desfeito antes).
+pub fn redo_drop_fill(app: &mut ArtApp) {
+    let Some(d) = &app.drop_fill else {
+        return;
+    };
+    let (x, y) = d.at;
+    if app.doc.undo() {
+        app.invalidate_all();
+        drop_fill_at(app, x, y);
+    }
 }
 
 /// Começa um traço de pincel ou borracha com os ajustes atuais.
@@ -972,6 +1012,10 @@ fn tool_down(
         return;
     }
     let mut pt = point(app, panel, p, force, time);
+    if app.drop_fill.as_ref().is_some_and(|d| d.continuing) {
+        drop_fill_at(app, pt.x, pt.y);
+        return;
+    }
     snap_to_ruler(app, &mut pt);
     let (x, y) = (pt.x.floor() as i32, pt.y.floor() as i32);
     let vp = VPoint::new(pt.x, pt.y);
@@ -1974,4 +2018,44 @@ pub fn navigator(app: &mut ArtApp, ctx: &egui::Context, bottom_right: Pos2) {
                 }
             });
         });
+}
+
+/// Barra do ColorDrop, no alto da tela: o limite (arrastar refaz o preenchimento) e o
+/// "continuar preenchendo", em que cada toque preenche outra área.
+pub fn drop_fill_bar(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) {
+    let Some(d) = &app.drop_fill else {
+        return;
+    };
+    // Outro passo depois do preenchimento (ou outra camada): a barra perde o sentido.
+    if d.version != app.doc.history_version()
+        || app.doc.active_layer().map(|l| l.id) != Some(d.layer)
+    {
+        app.drop_fill = None;
+        return;
+    }
+    let mut tolerance = app.fill_tolerance;
+    let mut continuing = d.continuing;
+    let mut done = false;
+    egui::Area::new(egui::Id::unique("drop_fill_bar"))
+        .order(egui::Order::Foreground)
+        .pivot(egui::Align2::CENTER_TOP)
+        .fixed_pos(canvas.center_top() + egui::vec2(0.0, 12.0))
+        .show(ctx, |ui| {
+            crate::theme::panel_frame().show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(egui::Slider::new(&mut tolerance, 0.0..=1.0).text("Limite"));
+                    ui.toggle_value(&mut continuing, "Continuar preenchendo");
+                    done = ui.button("Pronto").clicked();
+                });
+            });
+        });
+    if let Some(d) = &mut app.drop_fill {
+        d.continuing = continuing;
+    }
+    if done {
+        app.drop_fill = None;
+    } else if (tolerance - app.fill_tolerance).abs() > f32::EPSILON {
+        app.fill_tolerance = tolerance;
+        redo_drop_fill(app);
+    }
 }
