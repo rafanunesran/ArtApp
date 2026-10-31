@@ -190,6 +190,8 @@ pub enum ImageUse {
     Brushes,
     /// Modelo 3D (`.obj`) para pintar.
     Model,
+    /// Imagem para guardar nos materiais.
+    Material,
 }
 
 struct Entry {
@@ -943,6 +945,7 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
         (true, ImageUse::Swatches) => "Importar amostras",
         (true, ImageUse::Brushes) => "Importar pincéis",
         (true, ImageUse::Model) => "Abrir modelo 3D",
+        (true, ImageUse::Material) => "Imagem para os materiais",
     };
     window(title).open(&mut open).show(ctx, |ui| {
         ui.set_width(w);
@@ -1227,6 +1230,7 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
                 ImageUse::Swatches => app.import_swatches(&path),
                 ImageUse::Brushes => app.import_brushes(&path),
                 ImageUse::Model => app.open_model(&path),
+                ImageUse::Material => app.import_material_image(&path),
             }
         } else {
             app.open_path(path);
