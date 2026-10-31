@@ -1,7 +1,6 @@
 //! Um traço de pincel em andamento, desenhado ao vivo com o `StrokeRenderer` do PhotoCraft.
 
 use photocraft_geom::Rect;
-use photocraft_paint::symmetry::PresetSymmetry;
 use photocraft_paint::{BrushSettings, StrokePoint, StrokeRenderer, UnionLive};
 use photocraft_raster::Surface;
 
@@ -33,7 +32,7 @@ impl Taper {
 pub struct StrokeOptions {
     pub taper: Taper,
     /// Régua de simetria: o traço é repetido espelhado nos eixos.
-    pub symmetry: Option<PresetSymmetry>,
+    pub symmetry: Option<crate::symmetry::Symmetry>,
 }
 
 pub struct PaintSession {
@@ -129,7 +128,7 @@ impl PaintSession {
     fn push(&mut self, pts: &[StrokePoint]) {
         self.renderer.push(pts);
         if let Some(sym) = self.opts.symmetry {
-            for (m, pass) in self.mirrors.iter_mut().zip(sym.reflected_passes(pts)) {
+            for (m, pass) in self.mirrors.iter_mut().zip(sym.passes(pts)) {
                 m.push(&pass);
             }
         }
@@ -326,7 +325,12 @@ mod tests {
         use photocraft_paint::symmetry::SymmetryMode;
         let mut doc = Document::new(200, 100);
         let opts = StrokeOptions {
-            symmetry: PresetSymmetry::new(SymmetryMode::Vertical, [100.0, 50.0], 0.0),
+            symmetry: photocraft_paint::symmetry::PresetSymmetry::new(
+                SymmetryMode::Vertical,
+                [100.0, 50.0],
+                0.0,
+            )
+            .map(crate::symmetry::Symmetry::Mirror),
             ..Default::default()
         };
         let mut s =

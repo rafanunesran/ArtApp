@@ -284,6 +284,8 @@ pub struct ArtApp {
     /// Estado do painel de cor (aba, HSV, conjuntos, cor intermediária).
     pub color_state: crate::color_panel::ColorState,
     pub grid_size: f32,
+    /// Grade isométrica (triângulos) no lugar da quadrada.
+    pub grid_iso: bool,
     /// Régua especial atual (só uma, como a régua ativa do Clip Studio).
     pub ruler: Option<artapp_core::ruler::Ruler>,
     /// Que régua a ferramenta Régua cria: 0 reta, 1 paralelas, 2 concêntrica, 3 perspectiva.
@@ -302,6 +304,10 @@ pub struct ArtApp {
     /// Régua de simetria (`None` = desligada) e o giro dela em graus.
     pub symmetry: Option<artapp_core::paint::symmetry::SymmetryMode>,
     pub symmetry_angle: f64,
+    /// Simetria radial (no lugar dos espelhos), com quantas fatias e se espelha dentro delas.
+    pub symmetry_radial: bool,
+    pub radial_count: u32,
+    pub radial_mirror: bool,
     /// Transformar na tela em andamento.
     pub transform: Option<crate::transform_tool::Transforming>,
     /// Diálogo aberto no momento (transformar, filtros, ajustes).
@@ -457,6 +463,7 @@ impl ArtApp {
             show_navigator: false,
             color_state: Default::default(),
             grid_size: 64.0,
+            grid_iso: false,
             ruler: None,
             eraser_magic: false,
             ruler_kind: 0,
@@ -469,6 +476,9 @@ impl ArtApp {
             wand_contiguous: true,
             symmetry: None,
             symmetry_angle: 0.0,
+            symmetry_radial: false,
+            radial_count: 6,
+            radial_mirror: false,
             dialog: None,
             transform: None,
             kit: artapp_core::vectorkit::VectorKit::new(),
@@ -778,13 +788,21 @@ impl ArtApp {
     }
 
     /// A régua de simetria atual, no centro da tela.
-    pub fn symmetry_ruler(&self) -> Option<artapp_core::paint::symmetry::PresetSymmetry> {
+    pub fn symmetry_ruler(&self) -> Option<artapp_core::symmetry::Symmetry> {
+        let center = [self.doc.width as f64 / 2.0, self.doc.height as f64 / 2.0];
+        // O ângulo fica guardado em radianos; as simetrias usam graus.
+        let deg = self.symmetry_angle.to_degrees();
+        if self.symmetry_radial {
+            return artapp_core::symmetry::Symmetry::radial(
+                center,
+                self.radial_count,
+                self.radial_mirror,
+                deg,
+            );
+        }
         let mode = self.symmetry?;
-        artapp_core::paint::symmetry::PresetSymmetry::new(
-            mode,
-            [self.doc.width as f64 / 2.0, self.doc.height as f64 / 2.0],
-            self.symmetry_angle,
-        )
+        artapp_core::paint::symmetry::PresetSymmetry::new(mode, center, deg)
+            .map(artapp_core::symmetry::Symmetry::Mirror)
     }
 
     /// Troca a cor principal com a secundária.
