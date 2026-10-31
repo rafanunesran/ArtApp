@@ -4,6 +4,7 @@
 
 mod anim_bar;
 mod app;
+mod backup;
 mod brush_editor;
 mod canvas;
 mod color_panel;
