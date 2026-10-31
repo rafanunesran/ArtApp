@@ -28,6 +28,8 @@ pub enum MixKind {
     Sharpen,
     /// Carimbo: copia de outro lugar da camada (a origem fica em `MixSession::with_source`).
     Clone,
+    /// Corretivo: refaz a área pintada a partir da textura em volta (fica em `heal`).
+    Heal,
 }
 
 pub struct MixSession {
@@ -142,6 +144,7 @@ impl MixSession {
                     let up = self.kind == MixKind::Saturate;
                     tone_dab(&mut work, &fp, k, |c, e| retouch::sponge(c, e, up, true))
                 }
+                MixKind::Heal => {}
                 MixKind::Clone => {
                     let (dx, dy) = self.offset.unwrap_or_default();
                     clone_dab(&mut work, &self.pre, &fp, k, dx, dy)

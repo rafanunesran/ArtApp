@@ -69,6 +69,8 @@ enum ActiveKind {
         handle: Option<usize>,
         from: VPoint,
     },
+    /// Pincel corretivo: o traço marca a área; ao soltar, ela é refeita.
+    Heal(Box<artapp_core::heal::HealSession>),
 }
 
 /// Acompanha os dedos desde que o primeiro encostou, para reconhecer o toque de vários dedos.
@@ -727,6 +729,13 @@ fn tool_down(
             }
             None
         }
+        Tool::Eraser if app.eraser_magic => {
+            let r = app
+                .doc
+                .magic_erase(x, y, app.wand_tolerance, app.wand_contiguous);
+            app.invalidate(r);
+            None
+        }
         Tool::Brush | Tool::Eraser => {
             if vector_layer {
                 app.status =
@@ -760,6 +769,21 @@ fn tool_down(
         Tool::Blend => {
             if vector_layer {
                 app.status = "Misturar funciona em camadas raster.".into();
+                return;
+            }
+            if app.mix_kind == artapp_core::mix::MixKind::Heal {
+                let Some(mut heal) =
+                    artapp_core::heal::HealSession::begin(&app.doc, app.mix_brush.size)
+                else {
+                    app.status = "A camada ativa está oculta.".into();
+                    return;
+                };
+                heal.add(vp.x, vp.y);
+                app.view.stroke = Some(ActiveStroke {
+                    kind: ActiveKind::Heal(Box::new(heal)),
+                    touch,
+                    started: time,
+                });
                 return;
             }
             let clone = app.mix_kind == artapp_core::mix::MixKind::Clone;
@@ -948,6 +972,7 @@ fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, t
             let r = session.add(&mut app.doc, vp.x, vp.y, pt.pressure);
             app.invalidate(r);
         }
+        ActiveKind::Heal(heal) => heal.add(vp.x, vp.y),
         ActiveKind::Ruler { handle, from } => {
             let (handle, from) = (*handle, *from);
             ruler_drag(app, handle, from, vp);
@@ -1016,6 +1041,7 @@ fn end_stroke(app: &mut ArtApp) {
         ActiveKind::Kit(last, pressure) => kit_pointer(app, PointerKind::Up, last, pressure),
         ActiveKind::Liquify(session) => session.end(),
         ActiveKind::Ruler { .. } => return,
+        ActiveKind::Heal(heal) => heal.end(&mut app.doc),
         ActiveKind::Marquee { tool, from, to } => {
             let (w, h) = (app.doc.width, app.doc.height);
             let (a, b) = ([from.x, from.y], [to.x, to.y]);
@@ -1403,6 +1429,25 @@ fn draw_overlay(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
     let guide = egui::Stroke::new(1.5, Color32::from_rgb(40, 170, 255));
     if let Some(s) = &app.view.stroke {
         match &s.kind {
+            ActiveKind::Heal(heal) => {
+                // A área a corrigir, em vermelho translúcido.
+                let r = (heal.radius() as f32 * app.view.zoom).max(1.0);
+                let fill = Color32::from_rgba_unmultiplied(255, 60, 60, 70);
+                let line: Vec<Pos2> = heal
+                    .points
+                    .iter()
+                    .map(|p| app.view.doc_to_screen(panel, p[0] as f32, p[1] as f32))
+                    .collect();
+                if line.len() > 1 {
+                    painter.add(egui::Shape::line(
+                        line.clone(),
+                        egui::Stroke::new(r * 2.0, fill),
+                    ));
+                }
+                for p in [line.first(), line.last()].into_iter().flatten() {
+                    painter.circle_filled(*p, r, fill);
+                }
+            }
             ActiveKind::Shape { tool, from, to } => {
                 let shape = match tool {
                     Tool::Line => Shape::Line(*from, *to),
