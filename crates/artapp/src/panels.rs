@@ -33,6 +33,9 @@ fn rail_cols(canvas: egui::Rect) -> usize {
 }
 
 /// Largura ocupada pelo trilho.
+/// Largura dos sliders laterais.
+const SLIDER_W: f32 = 36.0;
+
 fn rail_w(canvas: egui::Rect) -> f32 {
     RAIL_W + (rail_cols(canvas) - 1) as f32 * (theme::TOUCH + 2.0)
 }
@@ -209,6 +212,58 @@ fn pen_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
     }
 }
 
+/// Preferências gerais: interface, desfazer e papel.
+fn app_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
+    ui.separator();
+    ui.label(
+        RichText::new("Preferências")
+            .size(13.0)
+            .color(color::TEXT_MUTED),
+    );
+    let mut changed = false;
+    ui.label("Tamanho da interface");
+    ui.horizontal_wrapped(|ui| {
+        for pct in [80u32, 90, 100, 115, 130, 150] {
+            let v = pct as f32 / 100.0;
+            if ui
+                .selectable_label((app.ui_scale - v).abs() < 0.01, format!("{pct}%"))
+                .clicked()
+            {
+                app.ui_scale = v.clamp(crate::app::UI_SCALE.0, crate::app::UI_SCALE.1);
+                changed = true;
+            }
+        }
+    });
+    changed |= ui
+        .add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
+            theme::switch(ui, &mut app.left_handed, "Ferramentas à direita (canhoto)")
+        })
+        .changed();
+    let r = artapp_core::history::UNDO_RANGE;
+    let resp = ui.add(
+        egui::Slider::new(&mut app.undo_steps, *r.start()..=*r.end())
+            .logarithmic(true)
+            .text("Passos de desfazer"),
+    );
+    changed |= resp.drag_stopped() || (resp.changed() && !resp.dragged());
+    ui.horizontal(|ui| {
+        ui.label("Papel das telas novas");
+        let mut rgb = [app.paper_color[0], app.paper_color[1], app.paper_color[2]];
+        if ui.color_edit_button_rgb(&mut rgb).changed() {
+            app.paper_color = [rgb[0], rgb[1], rgb[2], app.paper_color[3]];
+            changed = true;
+        }
+        let mut clear = app.paper_color[3] == 0.0;
+        if ui.checkbox(&mut clear, "Transparente").changed() {
+            app.paper_color[3] = if clear { 0.0 } else { 1.0 };
+            changed = true;
+        }
+    });
+    if changed {
+        app.save_prefs();
+    }
+}
+
 fn file_menu(app: &mut ArtApp, ui: &mut egui::Ui) {
     // O menu cresceu: rola quando não cabe na altura da tela.
     let max_h = (ui.ctx().content_rect().height() - 80.0).max(200.0);
@@ -305,6 +360,7 @@ fn file_menu_items(app: &mut ArtApp, ui: &mut egui::Ui) {
         );
     }
     pen_settings(app, ui);
+    app_settings(app, ui);
     ui.separator();
     if item(ui, icon::SQUARE_DASHED, "Selecionar tudo").clicked() {
         app.select_all();
@@ -480,7 +536,14 @@ pub fn tool_rail(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) {
     let y = (canvas.center().y - h / 2.0).max(canvas.min.y + GAP);
     egui::Area::new(Id::unique("rail"))
         .order(Order::Foreground)
-        .fixed_pos(Pos2::new(canvas.min.x + GAP, y))
+        .fixed_pos(Pos2::new(
+            if app.left_handed {
+                canvas.max.x - GAP - rail_w(canvas)
+            } else {
+                canvas.min.x + GAP
+            },
+            y,
+        ))
         .show(ctx, |ui| {
             panel_frame()
                 .inner_margin(egui::Margin::same(4))
@@ -525,10 +588,12 @@ pub fn side_sliders(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect, p
         return;
     }
     let h = slider_h(canvas);
-    let x = if portrait {
-        canvas.min.x + 6.0
-    } else {
-        canvas.min.x + GAP + rail_w(canvas) + 8.0
+    // Canhoto: as ferramentas e os sliders vão para a direita.
+    let x = match (portrait, app.left_handed) {
+        (true, false) => canvas.min.x + 6.0,
+        (true, true) => canvas.max.x - 6.0 - SLIDER_W,
+        (false, false) => canvas.min.x + GAP + rail_w(canvas) + 8.0,
+        (false, true) => canvas.max.x - GAP - rail_w(canvas) - 8.0 - SLIDER_W,
     };
     let y = if portrait {
         canvas.min.y + GAP

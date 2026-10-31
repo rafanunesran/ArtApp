@@ -401,6 +401,11 @@ impl Document {
         true
     }
 
+    /// Quantos passos de desfazer guardar (preferência).
+    pub fn set_undo_limit(&mut self, n: usize) {
+        self.history.set_limit(n);
+    }
+
     pub fn can_undo(&self) -> bool {
         self.history.can_undo()
     }
