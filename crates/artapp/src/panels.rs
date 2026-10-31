@@ -443,6 +443,10 @@ fn file_group(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.export_psd();
         ui.close();
     }
+    if item(ui, icon::FILM, "Timelapse…").clicked() {
+        app.timelapse.open = true;
+        ui.close();
+    }
 }
 
 /// Editar: área de transferência, transformar e histórico.

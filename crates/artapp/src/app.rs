@@ -263,6 +263,8 @@ pub struct ArtApp {
     pub anim_dir: i8,
     pub anim_next: f64,
     pub anim_settings_open: bool,
+    /// Gravação e janela do timelapse.
+    pub timelapse: crate::timelapse_view::TimelapseState,
     /// Pincel histórico: o passo da linha do tempo de onde ele pinta (0 = o mais antigo).
     pub history_brush_step: usize,
     /// Cor principal (a de pintar).
@@ -461,6 +463,7 @@ impl ArtApp {
             anim_dir: 1,
             anim_next: 0.0,
             anim_settings_open: false,
+            timelapse: Default::default(),
             history_brush_step: 0,
             eraser: BrushSettings {
                 size: 30.0,
@@ -1140,6 +1143,7 @@ impl ArtApp {
     pub fn new_canvas(&mut self, w: u32, h: u32) {
         self.doc = Document::new(w, h);
         self.doc.paper = self.paper_color;
+        self.timelapse.new_document(self.projects.edits);
         self.saved_selections.clear();
         self.view = CanvasView::default();
         self.selected = None;
@@ -1537,6 +1541,7 @@ impl eframe::App for ArtApp {
                 .show(ui, |ui| panels::bottom_tools(self, ui));
         }
         crate::anim_bar::tick(self, &ctx);
+        crate::timelapse_view::record(self, &ctx);
         egui::CentralPanel::no_frame().show(ui, |ui| crate::canvas::show(self, ui));
 
         let canvas = self.canvas_rect;
@@ -1544,6 +1549,7 @@ impl eframe::App for ArtApp {
         crate::quick_menu::show(self, &ctx);
         crate::quick_menu::copy_paste(self, &ctx);
         crate::history_panel::show(self, &ctx);
+        crate::timelapse_view::show(self, &ctx);
         crate::reference::show(self, &ctx);
         crate::canvas::drop_fill_bar(self, &ctx, canvas);
         crate::canvas::persp_crop_bar(self, &ctx, canvas);
