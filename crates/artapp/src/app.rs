@@ -310,6 +310,8 @@ pub struct ArtApp {
     pub kit_overlays: Vec<artapp_core::vectorkit::Overlay>,
     /// Usa a pressão da caneta/dedo (desligue se o dedo gerar pressão errática).
     pub use_pressure: bool,
+    /// Pontos do meio da curva de pressão (vazio = linear).
+    pub pressure_curve: Vec<[f32; 2]>,
     /// Girar a vista com dois dedos (além de zoom e mover).
     pub gesture_rotate: bool,
     /// Ferramenta usada enquanto o botão lateral da caneta fica apertado (`None` = desligado).
@@ -454,6 +456,7 @@ impl ArtApp {
             kit_tool: "directSelection",
             kit_overlays: Vec::new(),
             use_pressure: true,
+            pressure_curve: Vec::new(),
             gesture_rotate: true,
             pen_button_tool: Some(Tool::Eraser),
             autoclose_panels: true,
@@ -506,6 +509,13 @@ impl ArtApp {
         let flag = |k: &str| v.get(k).and_then(serde_json::Value::as_bool);
         if let Some(b) = flag("use_pressure") {
             self.use_pressure = b;
+        }
+        if let Some(c) = v
+            .get("pressure_curve")
+            .and_then(|c| serde_json::from_value::<Vec<[f32; 2]>>(c.clone()).ok())
+        {
+            self.pressure_curve = c;
+            artapp_core::pressure::sanitize(&mut self.pressure_curve);
         }
         if let Some(b) = flag("gesture_rotate") {
             self.gesture_rotate = b;
@@ -563,6 +573,7 @@ impl ArtApp {
     pub fn save_prefs(&mut self) {
         let v = serde_json::json!({
             "use_pressure": self.use_pressure,
+            "pressure_curve": self.pressure_curve,
             "gesture_rotate": self.gesture_rotate,
             "autoclose_panels": self.autoclose_panels,
             "tap_undo": self.tap_undo,

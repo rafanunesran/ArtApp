@@ -22,6 +22,7 @@ pub mod layer_mask;
 pub mod liquify;
 pub mod mask;
 pub mod mix;
+pub mod pressure;
 pub mod project;
 pub mod psd;
 pub mod quickshape;
