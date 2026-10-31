@@ -6,17 +6,32 @@ use eframe::egui::{self, Align2, Color32, Pos2, Sense, Stroke, Vec2};
 use crate::app::{ArtApp, Tool};
 use crate::theme::{color, icon, icon_font, panel_frame};
 
-#[derive(Clone, Copy)]
-enum Action {
+/// O que cada botão do QuickMenu faz; a pessoa escolhe seis nas preferências.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Action {
     Undo,
     Redo,
     NewLayer,
     Eyedropper,
     Transform,
     HideUi,
+    Brush,
+    Eraser,
+    Fill,
+    Copy,
+    Paste,
+    ClearLayer,
+    MergeDown,
+    DuplicateLayer,
+    SelectAll,
+    Deselect,
+    FlipView,
+    SwapColors,
+    History,
 }
 
-const ACTIONS: [Action; 6] = [
+/// Os seis de fábrica.
+pub const DEFAULT: [Action; 6] = [
     Action::Undo,
     Action::Redo,
     Action::NewLayer,
@@ -26,6 +41,33 @@ const ACTIONS: [Action; 6] = [
 ];
 
 impl Action {
+    pub const ALL: [Action; 19] = [
+        Action::Undo,
+        Action::Redo,
+        Action::NewLayer,
+        Action::Eyedropper,
+        Action::Transform,
+        Action::HideUi,
+        Action::Brush,
+        Action::Eraser,
+        Action::Fill,
+        Action::Copy,
+        Action::Paste,
+        Action::ClearLayer,
+        Action::MergeDown,
+        Action::DuplicateLayer,
+        Action::SelectAll,
+        Action::Deselect,
+        Action::FlipView,
+        Action::SwapColors,
+        Action::History,
+    ];
+
+    /// Pelo nome gravado nas preferências.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|a| format!("{a:?}") == name)
+    }
+
     fn glyph(self) -> char {
         match self {
             Action::Undo => icon::UNDO,
@@ -34,10 +76,23 @@ impl Action {
             Action::Eyedropper => icon::PIPETTE,
             Action::Transform => icon::SCALING,
             Action::HideUi => icon::MAXIMIZE,
+            Action::Brush => icon::BRUSH,
+            Action::Eraser => icon::ERASER,
+            Action::Fill => icon::BUCKET,
+            Action::Copy => icon::COPY,
+            Action::Paste => icon::IMAGE_DOWN,
+            Action::ClearLayer => icon::TRASH,
+            Action::MergeDown => icon::MERGE_DOWN,
+            Action::DuplicateLayer => icon::LAYERS,
+            Action::SelectAll => icon::SQUARE_DASHED,
+            Action::Deselect => icon::DESELECT,
+            Action::FlipView => icon::FLIP_H,
+            Action::SwapColors => icon::SWAP,
+            Action::History => icon::ROTATE_CCW,
         }
     }
 
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Action::Undo => "Desfazer",
             Action::Redo => "Refazer",
@@ -45,6 +100,19 @@ impl Action {
             Action::Eyedropper => "Conta-gotas",
             Action::Transform => "Transformar",
             Action::HideUi => "Tela cheia",
+            Action::Brush => "Pincel",
+            Action::Eraser => "Borracha",
+            Action::Fill => "Balde",
+            Action::Copy => "Copiar",
+            Action::Paste => "Colar",
+            Action::ClearLayer => "Limpar camada",
+            Action::MergeDown => "Mesclar abaixo",
+            Action::DuplicateLayer => "Duplicar camada",
+            Action::SelectAll => "Selecionar tudo",
+            Action::Deselect => "Tirar a seleção",
+            Action::FlipView => "Espelhar a vista",
+            Action::SwapColors => "Trocar as cores",
+            Action::History => "Histórico",
         }
     }
 
@@ -59,8 +127,65 @@ impl Action {
             Action::Eyedropper => app.set_tool(Tool::Eyedropper),
             Action::Transform => app.start_transform(),
             Action::HideUi => app.hide_ui = !app.hide_ui,
+            Action::Brush => app.set_tool(Tool::Brush),
+            Action::Eraser => app.set_tool(Tool::Eraser),
+            Action::Fill => app.set_tool(Tool::Fill),
+            Action::Copy => app.copy(),
+            Action::Paste => app.paste(),
+            Action::ClearLayer => {
+                app.doc.clear_layer();
+                app.invalidate_all();
+            }
+            Action::MergeDown => {
+                app.doc.merge_down();
+                app.invalidate_all();
+            }
+            Action::DuplicateLayer => {
+                app.doc.duplicate_layer();
+                app.invalidate_all();
+            }
+            Action::SelectAll => app.select_all(),
+            Action::Deselect => app.deselect(),
+            Action::FlipView => app.view.flip = !app.view.flip,
+            Action::SwapColors => app.swap_colors(),
+            Action::History => app.history_open = true,
         }
     }
+}
+
+/// Escolha das seis ações (nas preferências de gestos).
+pub fn settings(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
+    let mut changed = false;
+    ui.label(
+        egui::RichText::new("Botões do QuickMenu")
+            .size(12.0)
+            .color(color::TEXT_MUTED),
+    );
+    // Setas em vez de uma lista suspensa: a lista abriria por cima do menu e o fecharia.
+    let n = Action::ALL.len();
+    for k in 0..app.quick_actions.len() {
+        let a = app.quick_actions[k];
+        let at = Action::ALL.iter().position(|b| *b == a).unwrap_or(0);
+        let mut next = None;
+        ui.horizontal(|ui| {
+            if ui.small_button(" < ").clicked() {
+                next = Some(Action::ALL[(at + n - 1) % n]);
+            }
+            if ui.small_button(" > ").clicked() {
+                next = Some(Action::ALL[(at + 1) % n]);
+            }
+            ui.label(
+                egui::RichText::new(format!("{}  {}", a.glyph(), a.label()))
+                    .size(13.0)
+                    .color(color::TEXT),
+            );
+        });
+        if let Some(b) = next {
+            app.quick_actions[k] = b;
+            changed = true;
+        }
+    }
+    changed
 }
 
 const RADIUS: f32 = 74.0;
@@ -82,6 +207,7 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
             .clamp(screen.top(), screen.bottom().max(screen.top())),
     );
     let size = Vec2::splat((RADIUS + BUTTON) * 2.0);
+    let actions = app.quick_actions;
     let mut picked = None;
     let mut close = false;
     egui::Area::new(egui::Id::unique("quick_menu"))
@@ -95,7 +221,7 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
                 RADIUS + BUTTON + 2.0,
                 Color32::from_black_alpha(90),
             );
-            for (k, a) in ACTIONS.iter().enumerate() {
+            for (k, a) in actions.iter().enumerate() {
                 let ang = -std::f32::consts::FRAC_PI_2 + k as f32 * std::f32::consts::TAU / 6.0;
                 let c = rect.center() + Vec2::angled(ang) * RADIUS;
                 let r = egui::Rect::from_center_size(c, Vec2::splat(BUTTON * 2.0));
