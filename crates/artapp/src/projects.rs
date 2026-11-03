@@ -245,8 +245,9 @@ impl Browser {
             } else if self.import && self.image_use == ImageUse::Brushes {
                 is_image(&path)
                     || path.extension().is_some_and(|e| {
-                        e.eq_ignore_ascii_case("abr")
-                            || e.eq_ignore_ascii_case(artapp_core::brushes::PACK_EXT)
+                        artapp_core::brushes::IMPORT_EXTS
+                            .iter()
+                            .any(|x| e.eq_ignore_ascii_case(x))
                     })
             } else if self.import {
                 is_image(&path)
@@ -380,6 +381,15 @@ impl ArtApp {
     /// Escolher uma imagem para `use_for` (camada nova, referência ou paleta).
     pub fn pick_image_for(&mut self, use_for: ImageUse) {
         self.import_image_dialog();
+        // Pincéis baixados da internet ficam em Downloads: começa lá.
+        if use_for == ImageUse::Brushes
+            && let Some(FileDialog::Open(b)) = &mut self.projects.dialog
+            && let Some((_, d)) = platform::browse_roots()
+                .into_iter()
+                .find(|(label, d)| *label == "Downloads" && d.is_dir())
+        {
+            *b = Browser::with_mode(d, true);
+        }
         if let Some(FileDialog::Open(b)) = &mut self.projects.dialog {
             b.image_use = use_for;
             b.refresh();
@@ -438,6 +448,10 @@ impl ArtApp {
             Ok(list) => {
                 let n = list.len();
                 let first = self.brushes.len();
+                // Mostra a pasta do pacote em Meus pincéis.
+                if let Some(f) = list.first() {
+                    self.brush_folder.clone_from(&f.folder);
+                }
                 self.brushes.extend(list);
                 self.brush_previews.clear();
                 self.select_brush(first);
@@ -1061,7 +1075,8 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
                 } else if b.import && b.image_use == ImageUse::Model {
                     "Nenhum modelo 3D (.obj) nesta pasta."
                 } else if b.import && b.image_use == ImageUse::Brushes {
-                    "Nenhum pincel (.abr, .artbrushes) nem imagem nesta pasta."
+                    "Nenhum pincel (.sut, .abr, .zip, .artbrushes) nem imagem nesta pasta. \
+                     Os baixados da internet ficam em Downloads."
                 } else if b.import {
                     "Nenhuma imagem (PNG, JPEG, WebP, GIF, BMP) nesta pasta."
                 } else {

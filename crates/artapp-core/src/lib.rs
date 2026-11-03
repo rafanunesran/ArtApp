@@ -46,8 +46,10 @@ pub mod psd;
 pub mod quickshape;
 pub mod ruler;
 pub mod selection;
+pub mod sqlite_lite;
 pub mod stroke;
 pub mod subject;
+pub mod sut;
 pub mod symmetry;
 pub mod timelapse;
 pub mod tone;
@@ -56,6 +58,7 @@ pub mod transform;
 pub mod vector;
 pub mod vectorkit;
 pub mod warp;
+pub mod zip_lite;
 
 pub use document::{Document, Layer};
 pub use photocraft_algo::FilterParams;
