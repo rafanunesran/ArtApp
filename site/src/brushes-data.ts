@@ -20,6 +20,8 @@ export type BrushPack = {
   host: Host;
   /** Imagem de prévia oficial (a og:image da página do autor), mostrada direto do site dele. */
   preview?: string;
+  /** Fora da lista por enquanto (motivo). */
+  hidden?: string;
 };
 
 export const hostHelp: Record<Host, { name: string; how: string }> = {
@@ -165,6 +167,7 @@ export const packs: BrushPack[] = [
     preview: "https://myphotoshopbrushes.com/i/w1200-h630-fitcover/images/64-free-watercolor-splatter-brushes/preview-1771961137300.jpg",
     download: "https://myphotoshopbrushes.com/resources/4203/64-free-watercolor-splatter-brushes",
     host: "mpb",
+    hidden: "03/11/2026: a página do site abre com \"Algo deu errado\" no Chrome do Android.",
   },
   {
     name: "16 Free Graphite & Pencil Brushes",
@@ -178,6 +181,7 @@ export const packs: BrushPack[] = [
     preview: "https://myphotoshopbrushes.com/i/w1200-h630-fitcover/images/16-free-graphite-pencil-photoshop-brushes/preview-20261013-143135.png",
     download: "https://myphotoshopbrushes.com/resources/4275/16-free-graphite-pencil-photoshop-brushes",
     host: "mpb",
+    hidden: "03/11/2026: a página do site abre com \"Algo deu errado\" no Chrome do Android.",
   },
   {
     name: "24 Free Gouache Brushes",
@@ -191,6 +195,7 @@ export const packs: BrushPack[] = [
     preview: "https://myphotoshopbrushes.com/i/w1200-h630-fitcover/images/24-free-gouache-photoshop-brushes/preview-20261011-005507.png",
     download: "https://myphotoshopbrushes.com/resources/4274/24-free-gouache-photoshop-brushes",
     host: "mpb",
+    hidden: "03/11/2026: a página do site abre com \"Algo deu errado\" no Chrome do Android.",
   },
   {
     name: "12 Free Distressed Halftone Brushes",
@@ -204,5 +209,6 @@ export const packs: BrushPack[] = [
     preview: "https://myphotoshopbrushes.com/i/w1200-h630-fitcover/images/12-free-distressed-halftone-photoshop-brushes/preview-20261019-225822.png",
     download: "https://myphotoshopbrushes.com/resources/4278/12-free-distressed-halftone-photoshop-brushes",
     host: "mpb",
+    hidden: "03/11/2026: a página do site abre com \"Algo deu errado\" no Chrome do Android.",
   },
 ];

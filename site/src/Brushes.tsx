@@ -3,6 +3,7 @@ import { ExternalLink, Info, Smartphone, FolderOpen, Sparkles, ShieldCheck } fro
 import { Header, Footer, DownloadButton } from "./Layout";
 import { packs, hostHelp, type BrushPack } from "./brushes-data";
 
+const shown = packs.filter((p) => !p.hidden);
 const filters = ["Todos", "Clip Studio (.sut)", "Photoshop (.abr)"] as const;
 
 const WAVE = "M14 70 C 60 20, 100 20, 140 52 S 220 96, 262 46 S 330 20, 346 40";
@@ -107,7 +108,7 @@ const steps = [
 
 export default function Brushes() {
   const [f, setF] = useState<(typeof filters)[number]>("Todos");
-  const list = useMemo(() => (f === "Todos" ? packs : packs.filter((p) => p.format === f)), [f]);
+  const list = useMemo(() => (f === "Todos" ? shown : shown.filter((p) => p.format === f)), [f]);
   return (
     <div className="min-h-screen font-sans">
       <Header home={false} />
@@ -154,8 +155,8 @@ export default function Brushes() {
             {list.map((p) => <Card key={p.page} p={p} />)}
           </ul>
 
-          <div className="mt-10 grid gap-4 md:grid-cols-3">
-            {Object.values(hostHelp).map((h) => (
+          <div className="mt-10 grid gap-4 md:grid-cols-2">
+            {Object.entries(hostHelp).filter(([k]) => shown.some((p) => p.host === k)).map(([, h]) => h).map((h) => (
               <p key={h.name} className="rounded-2xl border border-border bg-card p-4 text-sm text-muted-foreground">
                 <b className="text-foreground">Baixar no {h.name}:</b> {h.how}
               </p>
