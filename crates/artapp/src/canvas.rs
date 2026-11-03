@@ -184,7 +184,29 @@ pub struct CanvasView {
     pen_seen: bool,
     /// O toque da caneta encostada agora: dedos que chegam enquanto ela está na tela são palma.
     pen_touch: Option<u64>,
+    /// Um dedo só, parado: segurando vira conta-gotas (com lupa) até sair da tela.
+    finger_hold: Option<FingerHold>,
 }
+
+/// Segurar um dedo parado na tela pega a cor (como no Procreate): vale mesmo com os dedos só
+/// navegando (rejeição de palma). Enquanto segura, a lupa mostra a cor nova sobre a antiga; ao
+/// soltar, a cor fica.
+struct FingerHold {
+    id: u64,
+    started: f64,
+    origin: Pos2,
+    pos: Pos2,
+    /// Já virou conta-gotas.
+    active: bool,
+    /// A ferramenta deixa (um toque de balde, por exemplo, já fez o trabalho dele).
+    allowed: bool,
+    /// Cor sob o dedo e a cor de antes.
+    color: Color32,
+    before: Color32,
+}
+
+/// Quanto o dedo pode tremer antes de virar traço (o dedo treme mais que a caneta).
+const FINGER_HOLD_MOVE: f32 = 10.0;
 
 impl CanvasView {
     pub fn fit(&mut self, panel: egui::Rect, w: u32, h: u32) {
@@ -356,6 +378,7 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
     draw_persp_crop(app, &painter, panel);
     draw_ruler(app, &painter, panel);
     draw_kit_overlays(app, &painter, panel);
+    draw_finger_loupe(app, &painter, panel);
     if app.tool == Tool::Blend
         && app.mix_kind == artapp_core::mix::MixKind::Clone
         && let Some([x, y]) = app.clone_source
@@ -499,6 +522,11 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
                         if pen.stylus {
                             app.view.pen_seen = true;
                         }
+                        // Conta-gotas do dedo ligado: outros toques esperam ele sair.
+                        if app.view.finger_hold.as_ref().is_some_and(|h| h.active) {
+                            continue;
+                        }
+                        app.view.finger_hold = None;
                         let finger_blocked = !pen.stylus && fingers_blocked(app);
                         // Palma: com a caneta encostada, outros toques não contam.
                         if finger_blocked && app.view.pen_touch.is_some() {
@@ -532,6 +560,25 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
                             pen_swap(app, id);
                             tool_down(app, panel, *pos, *force, Some(id), time);
                         }
+                        if app.view.touches.len() == 1
+                            && !pen.stylus
+                            && (app.hold_eyedropper || app.hold_quickmenu)
+                        {
+                            let own = app.view.stroke.as_ref().filter(|s| s.touch == Some(id));
+                            let allowed = finger_blocked
+                                || app.tool == Tool::Hand
+                                || own.is_some_and(|s| matches!(s.kind, ActiveKind::Paint(_)));
+                            app.view.finger_hold = Some(FingerHold {
+                                id,
+                                started: time,
+                                origin: *pos,
+                                pos: *pos,
+                                active: false,
+                                allowed,
+                                color: app.color,
+                                before: app.color,
+                            });
+                        }
                     }
                     TouchPhase::Move => {
                         // Toques ignorados (palma) nunca entram em `touches`.
@@ -539,6 +586,24 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
                             continue;
                         };
                         app.view.touches.insert(id, *pos);
+                        let (x, y) = app.view.to_canvas(panel, *pos);
+                        if let Some(h) = app.view.finger_hold.as_mut().filter(|h| h.id == id) {
+                            h.pos = *pos;
+                            if h.active {
+                                if let Some(c) = artapp_core::composite::sample_from(
+                                    &app.doc,
+                                    x.floor() as i32,
+                                    y.floor() as i32,
+                                    app.eyedropper_from,
+                                ) {
+                                    h.color = crate::app::color_from_f32(c);
+                                }
+                                continue;
+                            }
+                            if h.origin.distance(*pos) > FINGER_HOLD_MOVE {
+                                app.view.finger_hold = None;
+                            }
+                        }
                         let tap = &mut app.view.tap;
                         if let Some(o) = tap.origins.get(&id) {
                             tap.moved = tap.moved.max(o.distance(*pos));
@@ -569,6 +634,23 @@ fn handle_input(app: &mut ArtApp, ui: &egui::Ui, panel: egui::Rect, hovered: boo
                             app.view.pen_touch = None;
                         }
                         if app.view.touches.remove(&id).is_none() {
+                            continue;
+                        }
+                        if let Some(h) = app.view.finger_hold.take_if(|h| h.id == id)
+                            && h.active
+                        {
+                            if *phase == TouchPhase::End {
+                                let (x, y) = app.view.to_canvas(panel, h.pos);
+                                if let Some(msg) =
+                                    app.pick_color_at(x.floor() as i32, y.floor() as i32)
+                                {
+                                    app.status = msg.into();
+                                }
+                            }
+                            if app.view.touches.is_empty() {
+                                app.view.gesturing = false;
+                                app.view.tap = TapGesture::default();
+                            }
                             continue;
                         }
                         if app
@@ -925,6 +1007,7 @@ fn redraw_quick(app: &mut ArtApp, shape: artapp_core::quickshape::QuickShape) {
 /// segurar dois ou três dedos desfaz/refaz em sequência.
 fn check_holds(app: &mut ArtApp, ctx: &egui::Context, panel: egui::Rect) {
     let time = ctx.input(|i| i.time);
+    finger_hold_tick(app, ctx, panel, time);
     // Desfazer/refazer em sequência.
     let tap = &app.view.tap;
     if app.tap_undo
@@ -989,6 +1072,82 @@ fn check_holds(app: &mut ArtApp, ctx: &egui::Context, panel: egui::Rect) {
         .into();
         redraw_quick(app, shape);
     }
+}
+
+/// Um dedo parado tempo bastante: vira conta-gotas (ou abre o menu rápido, se for o ajuste).
+/// Só pede quadro novo enquanto espera, para não gastar bateria à toa.
+fn finger_hold_tick(app: &mut ArtApp, ctx: &egui::Context, panel: egui::Rect, time: f64) {
+    let Some(h) = &app.view.finger_hold else {
+        return;
+    };
+    if h.active || !h.allowed || app.view.touches.len() != 1 || app.view.gesturing {
+        return;
+    }
+    if time - h.started < HOLD_SECS {
+        ctx.request_repaint_after(std::time::Duration::from_millis(60));
+        return;
+    }
+    let (id, at) = (h.id, h.pos);
+    if app
+        .view
+        .stroke
+        .as_ref()
+        .is_some_and(|s| s.touch == Some(id))
+    {
+        cancel_stroke(app);
+    }
+    app.view.pan_from = None;
+    if app.hold_quickmenu {
+        app.view.finger_hold = None;
+        app.quick_menu = Some(at);
+        return;
+    }
+    let (x, y) = app.view.to_canvas(panel, at);
+    let color = artapp_core::composite::sample_from(
+        &app.doc,
+        x.floor() as i32,
+        y.floor() as i32,
+        app.eyedropper_from,
+    )
+    .map_or(app.color, crate::app::color_from_f32);
+    let before = app.color;
+    if let Some(h) = &mut app.view.finger_hold {
+        h.active = true;
+        h.color = color;
+        h.before = before;
+    }
+    ctx.request_repaint();
+}
+
+/// A lupa do conta-gotas do dedo: em cima do dedo (ou embaixo, perto da beira), metade de cima
+/// com a cor sob o dedo e a de baixo com a cor de antes.
+fn draw_finger_loupe(app: &ArtApp, painter: &egui::Painter, panel: egui::Rect) {
+    let Some(h) = app.view.finger_hold.as_ref().filter(|h| h.active) else {
+        return;
+    };
+    let r = 42.0;
+    let above = h.pos.y - 96.0 - r > panel.top();
+    let c = h.pos + egui::vec2(0.0, if above { -96.0 } else { 96.0 });
+    painter.circle_filled(c, r + 4.0, Color32::from_black_alpha(140));
+    painter.circle_filled(c, r, h.color);
+    let half: Vec<Pos2> = (0..=24)
+        .map(|k| {
+            let a = std::f32::consts::PI * k as f32 / 24.0;
+            c + egui::vec2(r * a.cos(), r * a.sin())
+        })
+        .collect();
+    painter.add(egui::Shape::convex_polygon(
+        half,
+        h.before,
+        egui::Stroke::NONE,
+    ));
+    painter.circle_stroke(c, r, egui::Stroke::new(2.0, Color32::WHITE));
+    painter.circle_stroke(h.pos, 10.0, egui::Stroke::new(2.0, Color32::WHITE));
+    painter.circle_stroke(
+        h.pos,
+        12.0,
+        egui::Stroke::new(1.0, Color32::from_black_alpha(160)),
+    );
 }
 
 /// Prende o ponto do pincel, da borracha ou do misturar à régua especial, se ligada.

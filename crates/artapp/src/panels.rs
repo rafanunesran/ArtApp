@@ -3081,6 +3081,12 @@ fn vector_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
     }
 }
 
+/// Lado dos botões da barra do painel de camadas: menores que os do resto da interface, todos no
+/// topo, como na paleta de camadas do Clip Studio.
+const LBTN: f32 = 32.0;
+/// Altura de uma linha da lista de camadas.
+const ROW_H: f32 = 48.0;
+
 pub fn layers_panel(app: &mut ArtApp, place: Place<'_>) {
     let ev = panel_area(
         "layers_panel",
@@ -3088,133 +3094,16 @@ pub fn layers_panel(app: &mut ArtApp, place: Place<'_>) {
         icon::LAYERS,
         "Camadas",
         |ui, body_h| {
-            let mut changed = false;
-            let list_h = (body_h - 210.0).max(120.0);
-            egui::ScrollArea::vertical()
-                .id_salt("layer_list")
-                .max_height(list_h)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    let thumbs = app.layer_thumbnails(ui.ctx());
-                    let active = app.doc.active;
-                    let mut select = None;
-                    let mut toggle = None;
-                    let mut fold = None;
-                    let closed: Vec<u64> = app
-                        .doc
-                        .layers
-                        .iter()
-                        .filter(|l| l.folder && l.collapsed)
-                        .map(|l| l.id)
-                        .collect();
-                    for i in (0..app.doc.layers.len()).rev() {
-                        let Some(layer) = app.doc.layers.get(i) else {
-                            continue;
-                        };
-                        // Pasta fechada: as de dentro não aparecem na lista.
-                        if layer.parent.is_some_and(|p| closed.contains(&p)) {
-                            continue;
-                        }
-                        let (sel, tog, f) =
-                            layer_row(ui, layer, thumbs.get(&layer.id), i == active);
-                        if sel {
-                            select = Some(i);
-                        }
-                        if tog {
-                            toggle = Some(i);
-                        }
-                        if f {
-                            fold = Some(i);
-                        }
-                    }
-                    if let Some(l) = fold.and_then(|i| app.doc.layers.get_mut(i)) {
-                        l.collapsed = !l.collapsed;
-                    }
-                    if let Some(i) = toggle {
-                        app.doc.checkpoint();
-                        if let Some(l) = app.doc.layers.get_mut(i) {
-                            l.visible = !l.visible;
-                        }
-                        changed = true;
-                    }
-                    if let Some(i) = select {
-                        app.doc.active = i;
-                        app.selected = None;
-                    }
-                });
+            let top = ui.cursor().min.y;
+            let mut changed = layer_toolbar(app, ui);
+            if app.layers_more {
+                ui.separator();
+                changed |= layer_extras(app, ui);
+            }
             ui.separator();
-            changed |= active_layer_settings(app, ui);
-            ui.separator();
-            let n = app.doc.layers.len();
-            let is_vector = app.doc.active_is_vector();
-            let (is_folder, in_folder) = app
-                .doc
-                .active_layer()
-                .map_or((false, false), |l| (l.folder, l.parent.is_some()));
-            let b = |ui: &mut egui::Ui, g: char, tip: &str, enabled: bool| {
-                ui.add_enabled_ui(enabled, |ui| icon_button(ui, g, false, tip))
-                    .inner
-                    .clicked()
-            };
-            // Duas fileiras de botões, para caber na largura do painel.
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                if b(ui, icon::PLUS, "Nova camada", true) {
-                    app.doc.add_layer();
-                }
-                if b(ui, icon::SQUARE_PEN, "Nova camada vetorial", true) {
-                    app.doc.add_vector_layer();
-                }
-                if b(ui, icon::COPY, "Duplicar", true) {
-                    app.doc.duplicate_layer();
-                    changed = true;
-                }
-                let merge_tip = if is_folder {
-                    "Achatar a pasta"
-                } else {
-                    "Mesclar abaixo"
-                };
-                if b(ui, icon::MERGE_DOWN, merge_tip, app.doc.active > 0) {
-                    app.doc.merge_down();
-                    changed = true;
-                }
-                if b(ui, icon::TRASH, "Apagar camada", true) {
-                    app.doc.delete_layer();
-                    changed = true;
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                if b(ui, icon::CHEVRON_UP, "Subir", app.doc.active + 1 < n) {
-                    app.doc.move_layer(true);
-                    changed = true;
-                }
-                if b(ui, icon::CHEVRON_DOWN, "Descer", app.doc.active > 0) {
-                    app.doc.move_layer(false);
-                    changed = true;
-                }
-                if b(ui, icon::IMAGE, "Rasterizar camada vetorial", is_vector) {
-                    app.doc.rasterize_layer();
-                }
-                if b(ui, icon::ERASER, "Limpar camada", !is_folder) {
-                    app.doc.clear_layer();
-                    changed = true;
-                }
-                if is_folder {
-                    if b(
-                        ui,
-                        icon::FOLDER_OPEN,
-                        "Desfazer a pasta (tira as camadas)",
-                        true,
-                    ) {
-                        app.doc.ungroup();
-                        changed = true;
-                    }
-                } else if b(ui, icon::FOLDER_OPEN, "Pôr numa pasta nova", !in_folder) {
-                    app.doc.new_folder();
-                    changed = true;
-                }
-            });
+            let used = ui.cursor().min.y - top;
+            let list_h = (body_h - used - 4.0).max(120.0);
+            changed |= layer_list(app, ui, list_h);
             if changed {
                 app.invalidate_all();
             }
@@ -3223,42 +3112,741 @@ pub fn layers_panel(app: &mut ArtApp, place: Place<'_>) {
     panel_events(app, ev, false);
 }
 
-/// Uma linha da lista de camadas. Devolve (selecionar, alternar visibilidade).
+/// As camadas escolhidas: a ativa mais as marcadas, em ordem de pilha (de baixo para cima).
+fn chosen_layers(app: &ArtApp) -> Vec<u64> {
+    let active = app.doc.layers.get(app.doc.active).map(|l| l.id);
+    app.doc
+        .layers
+        .iter()
+        .map(|l| l.id)
+        .filter(|id| Some(*id) == active || app.layer_sel.contains(id))
+        .collect()
+}
+
+fn small_button(ui: &mut egui::Ui, g: char, tip: &str, on: bool, enabled: bool) -> bool {
+    ui.add_enabled_ui(enabled, |ui| theme::icon_button_sized(ui, g, on, tip, LBTN))
+        .inner
+        .clicked()
+}
+
+/// A barra de cima: criar, agrupar, duplicar, mesclar, apagar, selecionar várias e "mais"; embaixo,
+/// o modo de mesclagem, os travamentos e a opacidade. Com várias escolhidas, vale para todas.
+fn layer_toolbar(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
+    let mut changed = false;
+    let chosen = chosen_layers(app);
+    let many = chosen.len() > 1;
+    let (is_folder, in_folder, is_mask) =
+        app.doc.active_layer().map_or((false, false, false), |l| {
+            (l.folder, l.parent.is_some(), l.mask)
+        });
+    let b = small_button;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        if b(ui, icon::PLUS, "Nova camada", false, true) {
+            app.doc.add_layer();
+            changed = true;
+        }
+        if b(ui, icon::SQUARE_PEN, "Nova camada vetorial", false, true) {
+            app.doc.add_vector_layer();
+            changed = true;
+        }
+        let tip = if many {
+            "Agrupar as escolhidas numa pasta"
+        } else {
+            "Pôr numa pasta nova"
+        };
+        if b(
+            ui,
+            icon::FOLDER_PLUS,
+            tip,
+            false,
+            many || (!is_folder && !in_folder && !is_mask),
+        ) {
+            changed |= if many {
+                app.doc.group_layers(&chosen)
+            } else {
+                app.doc.new_folder()
+            };
+            app.layer_sel.clear();
+        }
+        if b(ui, icon::COPY, "Duplicar", false, !many) {
+            app.doc.duplicate_layer();
+            changed = true;
+        }
+        let tip = if many {
+            "Mesclar as escolhidas (na mais baixa)"
+        } else if is_folder {
+            "Achatar a pasta"
+        } else {
+            "Mesclar abaixo"
+        };
+        if b(ui, icon::MERGE_DOWN, tip, false, many || app.doc.active > 0) {
+            if many {
+                changed |= app.doc.merge_layers(&chosen);
+                app.layer_sel.clear();
+            } else {
+                app.doc.merge_down();
+                changed = true;
+            }
+        }
+        let tip = if many {
+            "Apagar as escolhidas"
+        } else {
+            "Apagar camada"
+        };
+        if b(ui, icon::TRASH, tip, false, true) {
+            if many {
+                app.doc.delete_layers(&chosen);
+                app.layer_sel.clear();
+            } else {
+                app.doc.delete_layer();
+            }
+            changed = true;
+        }
+        if b(
+            ui,
+            icon::CHECK,
+            "Selecionar várias (toque marca e desmarca; também Ctrl/Shift ou segurar a camada)",
+            app.layer_multi,
+            true,
+        ) {
+            app.layer_multi = !app.layer_multi;
+            if !app.layer_multi {
+                app.layer_sel.clear();
+            }
+        }
+        if b(
+            ui,
+            icon::ELLIPSIS,
+            "Mais: nome, borda, retícula, subir/descer…",
+            app.layers_more,
+            true,
+        ) {
+            app.layers_more = !app.layers_more;
+        }
+    });
+    changed | layer_props(app, ui, &chosen)
+}
+
+/// Modo de mesclagem, travamentos, máscara e opacidade (da ativa, ou de todas as escolhidas).
+fn layer_props(app: &mut ArtApp, ui: &mut egui::Ui, chosen: &[u64]) -> bool {
+    let many = chosen.len() > 1;
+    let mask_now = app.doc.active_has_mask();
+    let Some(l) = app.doc.active_layer() else {
+        return false;
+    };
+    let folder = l.folder;
+    let before = (
+        l.blend,
+        l.lock_alpha,
+        l.clip,
+        l.reference,
+        l.draft,
+        l.visible,
+    );
+    let (mut blend, mut lock, mut clip, mut reference, mut draft, mut visible) = before;
+    let mut pct = l.opacity * 100.0;
+    let (mut add_mask, mut apply_mask) = (false, false);
+    let (mut drag_start, mut op_changed) = (false, false);
+    let b = small_button;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(0.0, 2.0);
+        if !folder {
+            egui::ComboBox::from_id_salt("blend")
+                .selected_text(blend.label())
+                .width(92.0)
+                .show_ui(ui, |ui| {
+                    for m in BlendMode::layer_modes().filter(|m| *m != BlendMode::Dissolve) {
+                        ui.selectable_value(&mut blend, m, m.label());
+                    }
+                });
+            ui.add_space(4.0);
+            let g = if lock { icon::LOCK } else { icon::UNLOCK };
+            if b(ui, g, "Bloquear transparência", lock, true) {
+                lock = !lock;
+            }
+            if b(ui, icon::CLIP, "Recortar na camada abaixo", clip, true) {
+                clip = !clip;
+            }
+            if b(
+                ui,
+                icon::CIRCLE_DASHED,
+                "Máscara de camada (pinte de preto para esconder)",
+                mask_now,
+                !many,
+            ) {
+                add_mask = true;
+            }
+            if mask_now && !many && b(ui, icon::CHECK, "Aplicar a máscara", false, true) {
+                apply_mask = true;
+            }
+            if b(
+                ui,
+                icon::REFERENCE,
+                "Camada de referência (o balde olha só ela)",
+                reference,
+                true,
+            ) {
+                reference = !reference;
+            }
+            if b(
+                ui,
+                icon::DRAFT,
+                "Camada de rascunho (fica fora da exportação)",
+                draft,
+                true,
+            ) {
+                draft = !draft;
+            }
+        }
+        if many {
+            let g = if visible { icon::EYE } else { icon::EYE_OFF };
+            if b(ui, g, "Mostrar ou ocultar as escolhidas", false, true) {
+                visible = !visible;
+            }
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.label(
+            RichText::new(icon::CONTRAST.to_string())
+                .font(theme::icon_font(14.0))
+                .color(color::TEXT_MUTED),
+        )
+        .on_hover_text("Opacidade");
+        ui.spacing_mut().slider_width = (ui.available_width() - 64.0).max(60.0);
+        let r = ui.add(
+            egui::Slider::new(&mut pct, 0.0..=100.0)
+                .suffix("%")
+                .integer(),
+        );
+        drag_start = r.drag_started();
+        op_changed = r.changed();
+    });
+    if add_mask {
+        return app.doc.add_mask();
+    }
+    if apply_mask {
+        return app.doc.apply_mask();
+    }
+    let now = (blend, lock, clip, reference, draft, visible);
+    let toggled = now != before;
+    if !toggled && !op_changed {
+        return false;
+    }
+    // Um passo do histórico por toque; no arraste da opacidade, só no começo dele.
+    if toggled || drag_start {
+        app.doc.checkpoint();
+    }
+    let active = app.doc.active_layer().map(|l| l.id);
+    for l in app
+        .doc
+        .layers
+        .iter_mut()
+        .filter(|l| Some(l.id) == active || (many && chosen.contains(&l.id)))
+    {
+        if op_changed {
+            l.opacity = pct / 100.0;
+        }
+        if visible != before.5 {
+            l.visible = visible;
+        }
+        if l.folder {
+            continue;
+        }
+        if blend != before.0 && !l.mask {
+            l.blend = blend;
+        }
+        if lock != before.1 {
+            l.lock_alpha = lock;
+        }
+        if clip != before.2 && !l.mask {
+            l.clip = clip;
+        }
+        if reference != before.3 && !l.mask {
+            l.reference = reference;
+        }
+        if draft != before.4 && !l.mask {
+            l.draft = draft;
+        }
+    }
+    true
+}
+
+/// Ajustes que aparecem com "mais": nome, borda, retícula e as ações menos usadas.
+fn layer_extras(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
+    let mut changed = false;
+    let mut checkpoint = false;
+    let n = app.doc.layers.len();
+    let is_vector = app.doc.active_is_vector();
+    let [mr, mg, mb, _] = crate::app::color_to_f32(app.color);
+    let Some(layer) = app.doc.layers.get_mut(app.doc.active) else {
+        return false;
+    };
+    let is_folder = layer.folder;
+    ui.add(egui::TextEdit::singleline(&mut layer.name).desired_width(ui.available_width()));
+    if layer.mask {
+        ui.label(
+            RichText::new("Pintando na máscara: preto esconde, branco ou borracha mostra.")
+                .size(12.0)
+                .color(color::TEXT_MUTED),
+        );
+    }
+    // Borda da camada: liga com a cor principal; a espessura e a cor mudam ao vivo.
+    let mut border = layer.border;
+    let mut tone = layer.tone;
+    if !layer.mask && !is_folder {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if small_button(ui, icon::HEXAGON, "Borda da camada", border.is_some(), true) {
+                border = match border {
+                    Some(_) => None,
+                    None => Some(artapp_core::border::Border {
+                        width: 4.0,
+                        color: [mr, mg, mb],
+                    }),
+                };
+                checkpoint = true;
+            }
+            if let Some(b) = &mut border {
+                let r = ui.add(
+                    egui::Slider::new(&mut b.width, 1.0..=artapp_core::border::MAX_WIDTH)
+                        .integer()
+                        .suffix(" px"),
+                );
+                checkpoint |= r.drag_started();
+                ui.color_edit_button_rgb(&mut b.color);
+            } else {
+                ui.label(RichText::new("Borda").size(12.0).color(color::TEXT_MUTED));
+            }
+        });
+        // Retícula de quadrinho: a tinta vira pontos.
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if small_button(
+                ui,
+                icon::GRID_3X3,
+                "Retícula (quadrinho)",
+                tone.is_some(),
+                true,
+            ) {
+                tone = match tone {
+                    Some(_) => None,
+                    None => Some(artapp_core::tone::Tone::default()),
+                };
+                checkpoint = true;
+            }
+            if let Some(t) = &mut tone {
+                let r = ui.add(
+                    egui::Slider::new(
+                        &mut t.period,
+                        artapp_core::tone::MIN_PERIOD..=artapp_core::tone::MAX_PERIOD,
+                    )
+                    .integer()
+                    .suffix(" px"),
+                );
+                checkpoint |= r.drag_started();
+                let r = ui.add(
+                    egui::DragValue::new(&mut t.angle)
+                        .range(0.0..=90.0)
+                        .suffix("°"),
+                );
+                checkpoint |= r.drag_started();
+            } else {
+                ui.label(
+                    RichText::new("Retícula")
+                        .size(12.0)
+                        .color(color::TEXT_MUTED),
+                );
+            }
+        });
+    }
+    if border != layer.border || tone != layer.tone {
+        changed = true;
+        if !checkpoint {
+            layer.border = border;
+            layer.tone = tone;
+        }
+    }
+    if checkpoint {
+        app.doc.checkpoint();
+        if let Some(layer) = app.doc.active_layer_mut() {
+            layer.border = border;
+            layer.tone = tone;
+        }
+        changed = true;
+    }
+    let b = small_button;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        if b(ui, icon::CHEVRON_UP, "Subir", false, app.doc.active + 1 < n) {
+            app.doc.move_layer(true);
+            changed = true;
+        }
+        if b(ui, icon::CHEVRON_DOWN, "Descer", false, app.doc.active > 0) {
+            app.doc.move_layer(false);
+            changed = true;
+        }
+        if b(
+            ui,
+            icon::IMAGE,
+            "Rasterizar camada vetorial",
+            false,
+            is_vector,
+        ) {
+            app.doc.rasterize_layer();
+            changed = true;
+        }
+        if b(ui, icon::ERASER, "Limpar camada", false, !is_folder) {
+            app.doc.clear_layer();
+            changed = true;
+        }
+        if is_folder
+            && b(
+                ui,
+                icon::FOLDER_OPEN,
+                "Desfazer a pasta (tira as camadas)",
+                false,
+                true,
+            )
+        {
+            app.doc.ungroup();
+            changed = true;
+        }
+    });
+    changed
+}
+
+/// Uma linha da lista na hora de soltar: retângulo, id, se é pasta.
+struct RowHit {
+    rect: egui::Rect,
+    id: u64,
+    folder: bool,
+}
+
+/// Onde as camadas arrastadas cairiam com o dedo/ponteiro em `p`, e a marca a desenhar (uma
+/// linha, ou o contorno da pasta quando entram nela).
+fn drop_target(
+    rows: &[RowHit],
+    moving: &[u64],
+    p: Pos2,
+) -> Option<(artapp_core::layer_batch::DropAt, egui::Rect)> {
+    use artapp_core::layer_batch::DropAt;
+    let line = |r: egui::Rect, y: f32| {
+        egui::Rect::from_min_max(Pos2::new(r.left(), y - 1.5), Pos2::new(r.right(), y + 1.5))
+    };
+    let (first, last) = (rows.first()?, rows.last()?);
+    if p.y < first.rect.top() {
+        return (!moving.contains(&first.id))
+            .then(|| (DropAt::Above(first.id), line(first.rect, first.rect.top())));
+    }
+    if p.y > last.rect.bottom() {
+        return (!moving.contains(&last.id))
+            .then(|| (DropAt::Below(last.id), line(last.rect, last.rect.bottom())));
+    }
+    let row = rows
+        .iter()
+        .find(|r| p.y >= r.rect.top() - 2.0 && p.y <= r.rect.bottom() + 2.0)?;
+    if moving.contains(&row.id) {
+        return None;
+    }
+    let f = (p.y - row.rect.top()) / row.rect.height();
+    Some(if row.folder && (0.28..=0.72).contains(&f) {
+        (DropAt::Into(row.id), row.rect)
+    } else if f < 0.5 {
+        (DropAt::Above(row.id), line(row.rect, row.rect.top()))
+    } else {
+        (DropAt::Below(row.id), line(row.rect, row.rect.bottom()))
+    })
+}
+
+/// A lista: toque escolhe (com o modo "várias", Ctrl/Shift ou segurando, marca várias); a alça à
+/// direita arrasta a camada (ou todas as marcadas) para outra posição ou para dentro de uma pasta.
+fn layer_list(app: &mut ArtApp, ui: &mut egui::Ui, list_h: f32) -> bool {
+    let mut changed = false;
+    if !app.layer_sel.is_empty() {
+        let ids: Vec<u64> = app.doc.layers.iter().map(|l| l.id).collect();
+        app.layer_sel.retain(|id| ids.contains(id));
+    }
+    let mods = ui.input(|i| i.modifiers);
+    let dragging = app.layer_drag.take();
+    let mut rows: Vec<RowHit> = Vec::new();
+    let mut clicked: Option<(usize, bool)> = None;
+    let (mut toggle, mut fold) = (None, None);
+    let (mut drag_begin, mut drag_end) = (None, false);
+    let pointer = ui.ctx().pointer_latest_pos();
+    egui::ScrollArea::vertical()
+        .id_salt("layer_list")
+        .max_height(list_h)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            let clip = ui.clip_rect();
+            let thumbs = app.layer_thumbnails(ui.ctx());
+            let active = app.doc.active;
+            let closed: Vec<u64> = app
+                .doc
+                .layers
+                .iter()
+                .filter(|l| l.folder && l.collapsed)
+                .map(|l| l.id)
+                .collect();
+            for i in (0..app.doc.layers.len()).rev() {
+                let Some(layer) = app.doc.layers.get(i) else {
+                    continue;
+                };
+                // Pasta fechada: as de dentro não aparecem na lista.
+                if layer.parent.is_some_and(|p| closed.contains(&p)) {
+                    continue;
+                }
+                let state = RowState {
+                    active: i == active,
+                    picked: app.layer_sel.contains(&layer.id),
+                    multi: app.layer_multi,
+                    moving: dragging.as_ref().is_some_and(|d| d.contains(&layer.id)),
+                };
+                let out = layer_row(ui, layer, thumbs.get(&layer.id), state);
+                rows.push(RowHit {
+                    rect: out.rect,
+                    id: layer.id,
+                    folder: layer.folder,
+                });
+                if out.select {
+                    clicked = Some((i, false));
+                }
+                if out.long {
+                    clicked = Some((i, true));
+                }
+                if out.eye {
+                    toggle = Some(i);
+                }
+                if out.fold {
+                    fold = Some(i);
+                }
+                if out.drag_start {
+                    drag_begin = Some(layer.id);
+                }
+                drag_end |= out.drag_end;
+            }
+            // Arrastando perto da beira: a lista rola sozinha.
+            if dragging.is_some()
+                && let Some(p) = pointer
+            {
+                let edge = 32.0;
+                let step = if p.y < clip.top() + edge {
+                    8.0
+                } else if p.y > clip.bottom() - edge {
+                    -8.0
+                } else {
+                    0.0
+                };
+                if step != 0.0 {
+                    ui.scroll_with_delta(Vec2::new(0.0, step));
+                    ui.ctx().request_repaint();
+                }
+            }
+        });
+    app.layer_drag = dragging;
+    if let Some(l) = fold.and_then(|i| app.doc.layers.get_mut(i)) {
+        l.collapsed = !l.collapsed;
+    }
+    if let Some(i) = toggle {
+        app.doc.checkpoint();
+        if let Some(l) = app.doc.layers.get_mut(i) {
+            l.visible = !l.visible;
+        }
+        changed = true;
+    }
+    if let Some((i, long)) = clicked {
+        pick_layer(app, i, long, mods);
+    }
+    if let Some(id) = drag_begin {
+        let mut set = chosen_layers(app);
+        if !set.contains(&id) {
+            set = vec![id];
+        }
+        app.layer_drag = Some(set);
+    }
+    let Some(moving) = app.layer_drag.clone() else {
+        return changed;
+    };
+    let target = pointer.and_then(|p| drop_target(&rows, &moving, p));
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(
+        Order::Tooltip,
+        Id::unique("layer_drop_mark"),
+    ));
+    if let Some((at, mark)) = target {
+        if matches!(at, artapp_core::layer_batch::DropAt::Into(_)) {
+            painter.rect_stroke(
+                mark,
+                CornerRadius::same(8),
+                Stroke::new(2.0, color::ACCENT),
+                egui::StrokeKind::Inside,
+            );
+        } else {
+            painter.rect_filled(mark, CornerRadius::same(2), color::ACCENT);
+        }
+    }
+    if let Some(p) = pointer {
+        let label = match moving.as_slice() {
+            [one] => app
+                .doc
+                .index_of(*one)
+                .and_then(|i| app.doc.layers.get(i))
+                .map_or_else(String::new, |l| l.name.clone()),
+            many => format!("{} camadas", many.len()),
+        };
+        let galley = painter.layout_no_wrap(label, egui::FontId::proportional(13.0), color::TEXT);
+        let r = egui::Rect::from_min_size(
+            p + Vec2::new(-galley.size().x - 24.0, -galley.size().y - 18.0),
+            galley.size() + Vec2::new(16.0, 8.0),
+        );
+        painter.rect_filled(r, CornerRadius::same(6), color::PANEL);
+        painter.rect_stroke(
+            r,
+            CornerRadius::same(6),
+            Stroke::new(1.0, color::ACCENT),
+            egui::StrokeKind::Inside,
+        );
+        painter.galley(r.min + Vec2::new(8.0, 4.0), galley, color::TEXT);
+    }
+    ui.ctx().request_repaint();
+    let released = !ui.input(|i| i.pointer.any_down());
+    if drag_end || released {
+        app.layer_drag = None;
+        if let Some((at, _)) = target {
+            changed |= app.doc.move_layers(&moving, at);
+        }
+    }
+    changed
+}
+
+/// Toque numa camada da lista: escolhe (e desmarca as outras), ou marca/desmarca no modo de
+/// várias (botão, Ctrl ou segurar); Shift marca tudo entre a ativa e ela.
+fn pick_layer(app: &mut ArtApp, i: usize, long: bool, mods: egui::Modifiers) {
+    let Some(id) = app.doc.layers.get(i).map(|l| l.id) else {
+        return;
+    };
+    let active_id = app.doc.active_layer().map(|l| l.id);
+    if mods.shift && !long {
+        let (a, b) = (app.doc.active.min(i), app.doc.active.max(i));
+        for l in &app.doc.layers[a..=b] {
+            if Some(l.id) != active_id && !app.layer_sel.contains(&l.id) {
+                app.layer_sel.push(l.id);
+            }
+        }
+        return;
+    }
+    if !(long || app.layer_multi || mods.command) {
+        app.doc.active = i;
+        app.selected = None;
+        app.layer_sel.clear();
+        return;
+    }
+    if long {
+        app.layer_multi = true;
+    }
+    if Some(id) == active_id {
+        // Desmarcar a ativa: outra marcada passa a ser a ativa.
+        if long || app.layer_sel.is_empty() {
+            return;
+        }
+        let next = app.layer_sel.remove(0);
+        if let Some(k) = app.doc.index_of(next) {
+            app.doc.active = k;
+            app.selected = None;
+        }
+    } else if let Some(k) = app.layer_sel.iter().position(|x| *x == id) {
+        if !long {
+            app.layer_sel.remove(k);
+        }
+    } else {
+        app.layer_sel.push(id);
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RowState {
+    active: bool,
+    /// Marcada na seleção múltipla.
+    picked: bool,
+    /// Modo de selecionar várias ligado (mostra a bolinha de marcar).
+    multi: bool,
+    /// Está sendo arrastada.
+    moving: bool,
+}
+
+struct RowOut {
+    rect: egui::Rect,
+    select: bool,
+    long: bool,
+    eye: bool,
+    fold: bool,
+    drag_start: bool,
+    drag_end: bool,
+}
+
+/// Uma linha da lista de camadas.
 fn layer_row(
     ui: &mut egui::Ui,
     layer: &artapp_core::Layer,
     thumb: Option<&TextureHandle>,
-    active: bool,
-) -> (bool, bool, bool) {
+    st: RowState,
+) -> RowOut {
     let w = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 52.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, ROW_H), Sense::click());
     let p = ui.painter();
-    let bg = if active {
+    let bg = if st.active {
         color::SELECTION.gamma_multiply(0.25)
+    } else if st.picked {
+        color::SELECTION.gamma_multiply(0.14)
     } else if resp.hovered() {
         color::SURFACE_HOVER
     } else {
         Color32::TRANSPARENT
     };
     p.rect_filled(rect, CornerRadius::same(8), bg);
-    if active {
+    if st.active || st.picked {
         p.rect_stroke(
             rect,
             CornerRadius::same(8),
-            Stroke::new(1.0, color::SELECTION),
+            Stroke::new(
+                1.0,
+                color::SELECTION.gamma_multiply(if st.active { 1.0 } else { 0.6 }),
+            ),
             egui::StrokeKind::Inside,
         );
+    }
+    // Bolinha de marcar, no modo de selecionar várias.
+    let check_w = if st.multi { 24.0 } else { 0.0 };
+    if st.multi {
+        let c = Pos2::new(rect.left() + 13.0, rect.center().y);
+        let on = st.active || st.picked;
+        p.circle_stroke(
+            c,
+            8.0,
+            Stroke::new(
+                1.5,
+                if on {
+                    color::SELECTION
+                } else {
+                    color::TEXT_MUTED
+                },
+            ),
+        );
+        if on {
+            p.circle_filled(c, 5.0, color::SELECTION);
+        }
     }
     // Camada recortada: recuada, com uma barra ligando-a à base embaixo (como no Clip Studio).
     // Máscara: recuada também, com a barra azul da seleção.
     // Dentro de pasta: mais recuada ainda.
-    let nest = if layer.parent.is_some() { 16.0 } else { 0.0 };
+    let nest = check_w + if layer.parent.is_some() { 16.0 } else { 0.0 };
     let indent = nest + if layer.clip || layer.mask { 14.0 } else { 0.0 };
     if layer.clip || layer.mask {
         p.rect_filled(
             egui::Rect::from_min_size(
                 rect.left_top() + Vec2::new(8.0 + nest, 4.0),
-                Vec2::new(3.0, 48.0),
+                Vec2::new(3.0, ROW_H - 8.0),
             ),
             CornerRadius::same(1),
             if layer.mask {
@@ -3268,8 +3856,10 @@ fn layer_row(
             },
         );
     }
-    let thumb_rect =
-        egui::Rect::from_min_size(rect.left_top() + Vec2::new(6.0 + indent, 6.0), THUMB);
+    let thumb_rect = egui::Rect::from_min_size(
+        rect.left_top() + Vec2::new(6.0 + indent, (ROW_H - THUMB.y) / 2.0),
+        THUMB,
+    );
     if layer.folder {
         // Pasta: o ícone no lugar da miniatura, e uma seta para abrir e fechar.
         p.text(
@@ -3315,7 +3905,13 @@ fn layer_row(
     } else {
         color::TEXT_MUTED
     };
-    p.text(
+    // O nome não passa por baixo da alça e do olho.
+    let text_clip = egui::Rect::from_min_max(
+        Pos2::new(text_x, rect.top()),
+        Pos2::new(rect.max.x - 70.0, rect.bottom()),
+    );
+    let tp = p.with_clip_rect(text_clip.intersect(p.clip_rect()));
+    tp.text(
         Pos2::new(text_x, rect.center().y - 8.0),
         Align2::LEFT_CENTER,
         &layer.name,
@@ -3323,6 +3919,9 @@ fn layer_row(
         fg,
     );
     let mut sub = format!("{:.0}%  ·  {}", layer.opacity * 100.0, layer.blend.label());
+    if layer.is_vector() {
+        sub = format!("vetor  ·  {sub}");
+    }
     for (on, glyph) in [
         (layer.lock_alpha, icon::LOCK),
         (layer.reference, icon::REFERENCE),
@@ -3332,34 +3931,17 @@ fn layer_row(
             sub.push_str(&format!("  {glyph}"));
         }
     }
-    p.text(
+    tp.text(
         Pos2::new(text_x, rect.center().y + 10.0),
         Align2::LEFT_CENTER,
         sub,
         egui::FontId::proportional(11.0),
         color::TEXT_MUTED,
     );
-    if layer.is_vector() {
-        let badge = egui::Rect::from_min_size(
-            Pos2::new(rect.max.x - 96.0, rect.center().y - 9.0),
-            Vec2::new(40.0, 18.0),
-        );
-        p.rect_filled(
-            badge,
-            CornerRadius::same(9),
-            color::SELECTION.gamma_multiply(0.35),
-        );
-        p.text(
-            badge.center(),
-            Align2::CENTER_CENTER,
-            "vetor",
-            egui::FontId::proportional(10.5),
-            color::TEXT,
-        );
-    }
+    // Olho (mostrar/ocultar) e, à esquerda dele, a alça de arrastar.
     let eye_rect = egui::Rect::from_center_size(
-        Pos2::new(rect.max.x - 26.0, rect.center().y),
-        Vec2::splat(theme::TOUCH),
+        Pos2::new(rect.max.x - 20.0, rect.center().y),
+        Vec2::new(36.0, ROW_H),
     );
     let eye = ui.interact(
         eye_rect,
@@ -3379,215 +3961,56 @@ fn layer_row(
         } else {
             icon::EYE_OFF
         },
-        theme::icon_font(18.0),
+        theme::icon_font(17.0),
         eye_col,
     );
+    let grip_rect = egui::Rect::from_center_size(
+        Pos2::new(rect.max.x - 54.0, rect.center().y),
+        Vec2::new(32.0, ROW_H),
+    );
+    let grip = ui
+        .interact(
+            grip_rect,
+            Id::unique(("layer_grip", layer.id)),
+            Sense::drag(),
+        )
+        .on_hover_text("Arraste para mudar a ordem ou pôr numa pasta");
+    let grip_col = if st.moving || grip.dragged() {
+        color::ACCENT
+    } else if grip.hovered() {
+        color::TEXT
+    } else {
+        color::TEXT_MUTED
+    };
+    ui.painter().text(
+        grip_rect.center(),
+        Align2::CENTER_CENTER,
+        icon::MENU,
+        theme::icon_font(16.0),
+        grip_col,
+    );
+    if st.moving {
+        ui.painter().rect_filled(
+            rect,
+            CornerRadius::same(8),
+            color::PANEL.gamma_multiply(0.55),
+        );
+    }
     let on_icon = resp
         .interact_pointer_pos()
         .is_some_and(|p| thumb_rect.expand(6.0).contains(p));
-    let fold = layer.folder && resp.clicked() && on_icon;
-    (
-        resp.clicked() && !eye.clicked() && !fold,
-        eye.clicked(),
+    let fold = layer.folder && resp.clicked() && on_icon && !st.multi;
+    // Segurar a camada (ou o botão direito do mouse) liga o modo de várias e marca ela.
+    let long = resp.long_touched() || resp.secondary_clicked();
+    RowOut {
+        rect,
+        select: resp.clicked() && !eye.clicked() && !fold,
+        long,
+        eye: eye.clicked(),
         fold,
-    )
-}
-
-/// Opacidade, mesclagem e bloqueio da camada ativa. Devolve se algo mudou.
-fn active_layer_settings(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
-    let mut changed = false;
-    let mut checkpoint = false;
-    let mask_now = app.doc.active_has_mask();
-    let [mr, mg, mb, _] = crate::app::color_to_f32(app.color);
-    let Some(layer) = app.doc.layers.get_mut(app.doc.active) else {
-        return false;
-    };
-    ui.horizontal(|ui| {
-        ui.add(egui::TextEdit::singleline(&mut layer.name).desired_width(ui.available_width()));
-    });
-    let mut pct = layer.opacity * 100.0;
-    let r = ui.add(
-        egui::Slider::new(&mut pct, 0.0..=100.0)
-            .suffix("%")
-            .text("Opacidade"),
-    );
-    checkpoint |= r.drag_started();
-    if r.changed() {
-        layer.opacity = pct / 100.0;
-        changed = true;
+        drag_start: grip.drag_started(),
+        drag_end: grip.drag_stopped(),
     }
-    if layer.folder {
-        // Numa pasta só valem o nome, a opacidade e a visibilidade.
-        if checkpoint {
-            app.doc.checkpoint();
-        }
-        return changed;
-    }
-    let mut blend = layer.blend;
-    let mut lock = layer.lock_alpha;
-    ui.horizontal(|ui| {
-        egui::ComboBox::from_id_salt("blend")
-            .selected_text(blend.label())
-            .width(150.0)
-            .show_ui(ui, |ui| {
-                for m in BlendMode::layer_modes().filter(|m| *m != BlendMode::Dissolve) {
-                    ui.selectable_value(&mut blend, m, m.label());
-                }
-            });
-        let lock_icon = if lock { icon::LOCK } else { icon::UNLOCK };
-        if icon_button(ui, lock_icon, lock, "Bloquear transparência").clicked() {
-            lock = !lock;
-        }
-    });
-    // Os três recursos de camada do Clip Studio que mudam o jeito de pintar.
-    let (mut clip, mut reference, mut draft) = (layer.clip, layer.reference, layer.draft);
-    let (mut add_mask, mut apply_mask) = (false, false);
-    if layer.mask {
-        ui.label(
-            RichText::new("Pintando na máscara: preto esconde, branco ou borracha mostra.")
-                .size(12.0)
-                .color(color::TEXT_MUTED),
-        );
-    }
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        if icon_button(ui, icon::CLIP, clip, "Recortar na camada abaixo").clicked() {
-            clip = !clip;
-        }
-        if icon_button(
-            ui,
-            icon::CIRCLE_DASHED,
-            mask_now,
-            "Máscara de camada (pinte de preto para esconder)",
-        )
-        .clicked()
-        {
-            add_mask = true;
-        }
-        if mask_now && icon_button(ui, icon::CHECK, false, "Aplicar a máscara").clicked() {
-            apply_mask = true;
-        }
-        if icon_button(
-            ui,
-            icon::REFERENCE,
-            reference,
-            "Camada de referência (o balde olha só ela)",
-        )
-        .clicked()
-        {
-            reference = !reference;
-        }
-        if icon_button(
-            ui,
-            icon::DRAFT,
-            draft,
-            "Camada de rascunho (fica fora da exportação)",
-        )
-        .clicked()
-        {
-            draft = !draft;
-        }
-    });
-    // Borda da camada: liga com a cor principal; a espessura e a cor mudam ao vivo.
-    let mut border = layer.border;
-    if !layer.mask {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            if icon_button(ui, icon::HEXAGON, border.is_some(), "Borda da camada").clicked() {
-                border = match border {
-                    Some(_) => None,
-                    None => Some(artapp_core::border::Border {
-                        width: 4.0,
-                        color: [mr, mg, mb],
-                    }),
-                };
-                checkpoint = true;
-            }
-            if let Some(b) = &mut border {
-                let r = ui.add(
-                    egui::Slider::new(&mut b.width, 1.0..=artapp_core::border::MAX_WIDTH)
-                        .integer()
-                        .suffix(" px"),
-                );
-                checkpoint |= r.drag_started();
-                ui.color_edit_button_rgb(&mut b.color);
-            } else {
-                ui.label(RichText::new("Borda").size(12.0).color(color::TEXT_MUTED));
-            }
-        });
-    }
-    // Retícula de quadrinho: a tinta vira pontos.
-    let mut tone = layer.tone;
-    if !layer.mask {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            if icon_button(ui, icon::GRID_3X3, tone.is_some(), "Retícula (quadrinho)").clicked() {
-                tone = match tone {
-                    Some(_) => None,
-                    None => Some(artapp_core::tone::Tone::default()),
-                };
-                checkpoint = true;
-            }
-            if let Some(t) = &mut tone {
-                let r = ui.add(
-                    egui::Slider::new(
-                        &mut t.period,
-                        artapp_core::tone::MIN_PERIOD..=artapp_core::tone::MAX_PERIOD,
-                    )
-                    .integer()
-                    .suffix(" px"),
-                );
-                checkpoint |= r.drag_started();
-                let r = ui.add(
-                    egui::DragValue::new(&mut t.angle)
-                        .range(0.0..=90.0)
-                        .suffix("°"),
-                );
-                checkpoint |= r.drag_started();
-            } else {
-                ui.label(
-                    RichText::new("Retícula")
-                        .size(12.0)
-                        .color(color::TEXT_MUTED),
-                );
-            }
-        });
-    }
-    if border != layer.border || tone != layer.tone {
-        changed = true;
-        if !checkpoint {
-            layer.border = border;
-            layer.tone = tone;
-        }
-    }
-    if add_mask {
-        app.doc.add_mask();
-        return true;
-    }
-    if apply_mask {
-        app.doc.apply_mask();
-        return true;
-    }
-    if blend != layer.blend
-        || lock != layer.lock_alpha
-        || (clip, reference, draft) != (layer.clip, layer.reference, layer.draft)
-    {
-        checkpoint = true;
-    }
-    if checkpoint {
-        app.doc.checkpoint();
-        if let Some(layer) = app.doc.active_layer_mut() {
-            layer.blend = blend;
-            layer.lock_alpha = lock;
-            layer.clip = clip;
-            layer.reference = reference;
-            layer.draft = draft;
-            layer.border = border;
-            layer.tone = tone;
-        }
-        changed = true;
-    }
-    changed
 }
 
 // ---------- Cor, avisos e diálogos ----------
@@ -3663,6 +4086,7 @@ pub fn floating_color(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect,
         .unwrap_or_else(|| Pos2::new(bounds.max.x - width - 16.0, bounds.min.y));
     let mut save = false;
     let mut close = false;
+    let mut drop_at: Option<Pos2> = None;
     let resp = egui::Area::new(Id::unique("color_float"))
         .order(Order::Foreground)
         .sense(Sense::drag())
@@ -3675,14 +4099,36 @@ pub fn floating_color(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect,
                     ui.set_width(width);
                     ui.spacing_mut().item_spacing.x = 0.0;
                     ui.horizontal(|ui| {
-                        // A cor atual (a barra serve para arrastar).
-                        let (r, _) = ui.allocate_exact_size(Vec2::splat(HEADER), Sense::hover());
+                        // A cor atual: puxe a bolinha até a tela para preencher ali (ColorDrop,
+                        // como no Procreate). A barra em volta serve para mover a roda.
+                        let (r, chip) = ui.allocate_exact_size(Vec2::splat(HEADER), Sense::drag());
+                        let chip = chip.on_hover_text("Arraste a cor até a tela para preencher");
+                        let ring = if chip.dragged() {
+                            color::ACCENT
+                        } else {
+                            color::BORDER
+                        };
                         ui.painter().circle_filled(r.center(), 11.0, app.color);
-                        ui.painter().circle_stroke(
-                            r.center(),
-                            11.0,
-                            Stroke::new(1.5, color::BORDER),
-                        );
+                        ui.painter()
+                            .circle_stroke(r.center(), 11.0, Stroke::new(1.5, ring));
+                        if chip.dragged()
+                            && let Some(at) = chip.interact_pointer_pos()
+                        {
+                            let p = ctx.layer_painter(egui::LayerId::new(
+                                Order::Tooltip,
+                                Id::unique("float-color-drop"),
+                            ));
+                            // A bolinha fica um pouco acima do dedo, para ver onde cai.
+                            let c = at - Vec2::new(0.0, 28.0);
+                            p.circle_filled(c, 17.0, Color32::WHITE);
+                            p.circle_filled(c, 15.0, app.color);
+                            p.circle_stroke(at, 4.0, Stroke::new(1.5, Color32::WHITE));
+                        }
+                        if chip.drag_stopped() {
+                            drop_at = chip
+                                .interact_pointer_pos()
+                                .or_else(|| ctx.input(|i| i.pointer.latest_pos()));
+                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             close = theme::icon_button_sized(
                                 ui,
@@ -3765,6 +4211,15 @@ pub fn floating_color(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect,
     if close {
         app.color_float = false;
         save = true;
+    }
+    // Soltou a cor: preenche na tela, se caiu nela (não em cima de um painel nem da roda).
+    if let Some(at) = drop_at.filter(|p| !resp.response.rect.contains(*p)) {
+        let over_panel = ctx
+            .layer_id_at(at)
+            .is_some_and(|l| l.order != Order::Background);
+        if !over_panel {
+            crate::canvas::color_drop(app, at);
+        }
     }
     if save || resp.response.drag_stopped() {
         app.color_float_pos = app.color_float_pos.map(|_| resp.response.rect.min);

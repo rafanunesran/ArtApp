@@ -461,6 +461,14 @@ pub struct ArtApp {
     pub finger_mode: FingerMode,
     pub show_tools_panel: bool,
     pub show_layers_panel: bool,
+    /// Seleção múltipla do painel de camadas (ids, além da ativa) e se o modo de selecionar
+    /// várias está ligado (toque marca/desmarca).
+    pub layer_sel: Vec<u64>,
+    pub layer_multi: bool,
+    /// Camadas sendo arrastadas na lista (ids).
+    pub layer_drag: Option<Vec<u64>>,
+    /// Painel de camadas: ajustes extras (nome, borda, retícula…) abertos.
+    pub layers_more: bool,
     /// Painel do pincel, camadas e cor no quadro anterior, para saber qual acabou de abrir.
     panels_before: [bool; 3],
     pub show_new_dialog: bool,
@@ -674,6 +682,10 @@ impl ArtApp {
             finger_mode: FingerMode::Auto,
             show_tools_panel: wide,
             show_layers_panel: wide,
+            layer_sel: Vec::new(),
+            layer_multi: false,
+            layer_drag: None,
+            layers_more: false,
             panels_before: [false; 3],
             show_new_dialog: false,
             new_size: (2480, 3508, 300.0, crate::units::Unit::Mm),

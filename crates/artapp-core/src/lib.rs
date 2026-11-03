@@ -27,6 +27,7 @@ pub mod folders;
 pub mod frames;
 pub mod heal;
 pub mod history;
+pub mod layer_batch;
 pub mod layer_mask;
 pub mod line_fix;
 pub mod line_width;
