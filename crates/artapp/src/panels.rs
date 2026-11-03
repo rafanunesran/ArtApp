@@ -481,6 +481,10 @@ fn file_group(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.import_image_dialog();
         ui.close();
     }
+    if item(ui, icon::BRUSH, "Instalar pincéis (Clip, Photoshop)…").clicked() {
+        app.pick_image_for(crate::projects::ImageUse::Brushes);
+        ui.close();
+    }
     if item(ui, icon::PALETTE, "Paleta de uma imagem…").clicked() {
         app.pick_image_for(crate::projects::ImageUse::Palette);
         ui.close();
@@ -2945,8 +2949,8 @@ fn brush_save_row(app: &mut ArtApp, ui: &mut egui::Ui) {
             app.reset_brush();
         }
         if ui
-            .button(format!("{}  Importar pincéis…", icon::FOLDER_OPEN))
-            .on_hover_text("Pincéis do Photoshop (.abr), pacote do ArtApp (.artbrushes) ou uma imagem, que vira a ponta.")
+            .button(format!("{}  Instalar pincéis…", icon::FOLDER_OPEN))
+            .on_hover_text("Pincéis baixados: Clip Studio (.sut), Photoshop (.abr), pacotes .zip com eles, o pacote do ArtApp (.artbrushes) ou uma imagem, que vira a ponta. Começa na pasta Downloads.")
             .clicked()
         {
             app.pick_image_for(crate::projects::ImageUse::Brushes);
@@ -3607,7 +3611,42 @@ struct RowHit {
     rect: egui::Rect,
     id: u64,
     folder: bool,
+    index: usize,
+    thumb: egui::Rect,
+    grip: egui::Rect,
 }
+
+/// Um toque (ou clique) na lista de camadas, do encostar ao soltar.
+#[derive(Clone, Copy, PartialEq)]
+enum PressMode {
+    /// Ainda não se mexeu: pode virar toque, segurar, rolar ou arrastar.
+    Pending,
+    /// Segurou parado (marcou a camada); mexer agora arrasta.
+    Held,
+    /// Deslizou logo: rola a lista.
+    Scroll,
+    /// Arrastando camadas.
+    Drag,
+}
+
+#[derive(Clone, Copy)]
+struct LayerPress {
+    index: usize,
+    at: Pos2,
+    time: f64,
+    mode: PressMode,
+    on_grip: bool,
+    on_thumb: bool,
+    folder: bool,
+    touch: bool,
+}
+
+/// Segurar parado este tempo marca a camada (modo de várias) e deixa arrastar.
+const LAYER_HOLD: f64 = 0.45;
+/// Antes disso, deslizar rola a lista; depois (ou pela alça, ou com o mouse), arrasta.
+const LAYER_DRAG_AFTER: f64 = 0.25;
+/// Quanto o dedo anda antes de contar como movimento.
+const LAYER_SLOP: f32 = 8.0;
 
 /// Onde as camadas arrastadas cairiam com o dedo/ponteiro em `p`, e a marca a desenhar (uma
 /// linha, ou o contorno da pasta quando entram nela).
@@ -3645,27 +3684,43 @@ fn drop_target(
     })
 }
 
-/// A lista: toque escolhe (com o modo "várias", Ctrl/Shift ou segurando, marca várias); a alça à
-/// direita arrasta a camada (ou todas as marcadas) para outra posição ou para dentro de uma pasta.
+/// A lista. Tocar escolhe a camada (no modo de várias, Ctrl ou Shift, marca). Para mudar a
+/// ordem: segurar a camada um instante e arrastar (ou arrastar direto pela alça ≡, ou com o
+/// mouse). Deslizar rápido rola a lista. Segurar parado sem arrastar marca a camada (várias).
 fn layer_list(app: &mut ArtApp, ui: &mut egui::Ui, list_h: f32) -> bool {
     let mut changed = false;
     if !app.layer_sel.is_empty() {
         let ids: Vec<u64> = app.doc.layers.iter().map(|l| l.id).collect();
         app.layer_sel.retain(|id| ids.contains(id));
     }
-    let mods = ui.input(|i| i.modifiers);
-    let dragging = app.layer_drag.take();
+    let press_id = Id::unique("layer_press");
+    let mut press: Option<LayerPress> = ui.ctx().data(|d| d.get_temp(press_id));
+    let (pressed, down, pos, delta, now, touch, mods) = ui.input(|i| {
+        (
+            i.pointer.primary_pressed(),
+            i.pointer.primary_down(),
+            i.pointer.interact_pos(),
+            i.pointer.delta(),
+            i.time,
+            i.any_touches(),
+            i.modifiers,
+        )
+    });
     let mut rows: Vec<RowHit> = Vec::new();
-    let mut clicked: Option<(usize, bool)> = None;
-    let (mut toggle, mut fold) = (None, None);
-    let (mut drag_begin, mut drag_end) = (None, false);
-    let pointer = ui.ctx().pointer_latest_pos();
+    let mut toggle = None;
+    let mut clip = egui::Rect::NOTHING;
+    let moving_now = app.layer_drag.clone();
     egui::ScrollArea::vertical()
         .id_salt("layer_list")
         .max_height(list_h)
         .auto_shrink([false, true])
+        // Rolar com o dedo é feito aqui embaixo (para não brigar com segurar e arrastar).
+        .scroll_source(egui::containers::scroll_area::ScrollSource {
+            drag: egui::containers::scroll_area::DragScroll::Never,
+            ..Default::default()
+        })
         .show(ui, |ui| {
-            let clip = ui.clip_rect();
+            clip = ui.clip_rect();
             let thumbs = app.layer_thumbnails(ui.ctx());
             let active = app.doc.active;
             let closed: Vec<u64> = app
@@ -3687,34 +3742,88 @@ fn layer_list(app: &mut ArtApp, ui: &mut egui::Ui, list_h: f32) -> bool {
                     active: i == active,
                     picked: app.layer_sel.contains(&layer.id),
                     multi: app.layer_multi,
-                    moving: dragging.as_ref().is_some_and(|d| d.contains(&layer.id)),
+                    moving: moving_now.as_ref().is_some_and(|d| d.contains(&layer.id)),
                 };
                 let out = layer_row(ui, layer, thumbs.get(&layer.id), state);
+                if out.eye {
+                    toggle = Some(i);
+                }
                 rows.push(RowHit {
                     rect: out.rect,
                     id: layer.id,
                     folder: layer.folder,
+                    index: i,
+                    thumb: out.thumb,
+                    grip: out.grip,
                 });
-                if out.select {
-                    clicked = Some((i, false));
+            }
+            // Encostou numa camada (não no olho, nem por baixo de outro painel).
+            if pressed
+                && let Some(p) = pos
+                && clip.contains(p)
+                && ui.ctx().layer_id_at(p) == Some(ui.layer_id())
+                && let Some(r) = rows.iter().find(|r| r.rect.contains(p))
+                && toggle.is_none()
+                && !egui::Rect::from_center_size(
+                    Pos2::new(r.rect.max.x - 20.0, r.rect.center().y),
+                    Vec2::new(36.0, ROW_H),
+                )
+                .contains(p)
+            {
+                press = Some(LayerPress {
+                    index: r.index,
+                    at: p,
+                    time: now,
+                    mode: PressMode::Pending,
+                    on_grip: r.grip.contains(p),
+                    on_thumb: r.thumb.contains(p),
+                    folder: r.folder,
+                    touch,
+                });
+            }
+            let Some(pr) = press.as_mut() else {
+                return;
+            };
+            if !down {
+                return;
+            }
+            let moved = pos.is_some_and(|p| p.distance(pr.at) > LAYER_SLOP);
+            let held = now - pr.time;
+            match pr.mode {
+                PressMode::Pending if moved => {
+                    pr.mode = if pr.on_grip || !pr.touch || held >= LAYER_DRAG_AFTER {
+                        PressMode::Drag
+                    } else {
+                        PressMode::Scroll
+                    };
                 }
-                if out.long {
-                    clicked = Some((i, true));
+                PressMode::Pending if pr.touch && held >= LAYER_HOLD => {
+                    // Segurou parado: marca a camada; arrastar agora leva as marcadas.
+                    pr.mode = PressMode::Held;
+                    pick_layer(app, pr.index, true, mods);
                 }
-                if out.eye {
-                    toggle = Some(i);
+                PressMode::Held if moved => pr.mode = PressMode::Drag,
+                PressMode::Scroll => {
+                    ui.scroll_with_delta(Vec2::new(0.0, delta.y));
                 }
-                if out.fold {
-                    fold = Some(i);
+                _ => {}
+            }
+            if pr.mode == PressMode::Drag && app.layer_drag.is_none() {
+                let id = app.doc.layers.get(pr.index).map(|l| l.id);
+                let mut set = chosen_layers(app);
+                if !id.is_some_and(|id| set.contains(&id)) {
+                    set = id.into_iter().collect();
                 }
-                if out.drag_start {
-                    drag_begin = Some(layer.id);
-                }
-                drag_end |= out.drag_end;
+                app.layer_drag = Some(set);
+            }
+            if pr.mode == PressMode::Pending {
+                // Para notar o "segurou" mesmo sem o dedo se mexer.
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(50));
             }
             // Arrastando perto da beira: a lista rola sozinha.
-            if dragging.is_some()
-                && let Some(p) = pointer
+            if pr.mode == PressMode::Drag
+                && let Some(p) = pos
             {
                 let edge = 32.0;
                 let step = if p.y < clip.top() + edge {
@@ -3730,10 +3839,6 @@ fn layer_list(app: &mut ArtApp, ui: &mut egui::Ui, list_h: f32) -> bool {
                 }
             }
         });
-    app.layer_drag = dragging;
-    if let Some(l) = fold.and_then(|i| app.doc.layers.get_mut(i)) {
-        l.collapsed = !l.collapsed;
-    }
     if let Some(i) = toggle {
         app.doc.checkpoint();
         if let Some(l) = app.doc.layers.get_mut(i) {
@@ -3741,20 +3846,43 @@ fn layer_list(app: &mut ArtApp, ui: &mut egui::Ui, list_h: f32) -> bool {
         }
         changed = true;
     }
-    if let Some((i, long)) = clicked {
-        pick_layer(app, i, long, mods);
-    }
-    if let Some(id) = drag_begin {
-        let mut set = chosen_layers(app);
-        if !set.contains(&id) {
-            set = vec![id];
+    // Soltou.
+    let released = press.is_some() && !down;
+    let target = match (&app.layer_drag, pos) {
+        (Some(moving), Some(p)) => drop_target(&rows, moving, p),
+        _ => None,
+    };
+    if released && let Some(pr) = press.take() {
+        match pr.mode {
+            PressMode::Pending if pr.folder && pr.on_thumb && !app.layer_multi => {
+                if let Some(l) = app.doc.layers.get_mut(pr.index) {
+                    l.collapsed = !l.collapsed;
+                }
+            }
+            PressMode::Pending => pick_layer(app, pr.index, false, mods),
+            PressMode::Drag => {
+                if let (Some(moving), Some((at, _))) = (app.layer_drag.take(), target) {
+                    changed |= app.doc.move_layers(&moving, at);
+                }
+            }
+            _ => {}
         }
-        app.layer_drag = Some(set);
+        app.layer_drag = None;
     }
+    if press.is_none() {
+        app.layer_drag = None;
+    }
+    ui.ctx().data_mut(|d| {
+        if let Some(p) = press {
+            d.insert_temp(press_id, p);
+        } else {
+            d.remove::<LayerPress>(press_id);
+        }
+    });
+    // Desenha onde vai cair e a etiqueta do que está sendo arrastado.
     let Some(moving) = app.layer_drag.clone() else {
         return changed;
     };
-    let target = pointer.and_then(|p| drop_target(&rows, &moving, p));
     let painter = ui.ctx().layer_painter(egui::LayerId::new(
         Order::Tooltip,
         Id::unique("layer_drop_mark"),
@@ -3771,7 +3899,7 @@ fn layer_list(app: &mut ArtApp, ui: &mut egui::Ui, list_h: f32) -> bool {
             painter.rect_filled(mark, CornerRadius::same(2), color::ACCENT);
         }
     }
-    if let Some(p) = pointer {
+    if let Some(p) = pos {
         let label = match moving.as_slice() {
             [one] => app
                 .doc
@@ -3781,8 +3909,9 @@ fn layer_list(app: &mut ArtApp, ui: &mut egui::Ui, list_h: f32) -> bool {
             many => format!("{} camadas", many.len()),
         };
         let galley = painter.layout_no_wrap(label, egui::FontId::proportional(13.0), color::TEXT);
+        // Acima e à esquerda do dedo, para não ficar escondida embaixo dele.
         let r = egui::Rect::from_min_size(
-            p + Vec2::new(-galley.size().x - 24.0, -galley.size().y - 18.0),
+            p + Vec2::new(-galley.size().x - 24.0, -galley.size().y - 30.0),
             galley.size() + Vec2::new(16.0, 8.0),
         );
         painter.rect_filled(r, CornerRadius::same(6), color::PANEL);
@@ -3795,13 +3924,6 @@ fn layer_list(app: &mut ArtApp, ui: &mut egui::Ui, list_h: f32) -> bool {
         painter.galley(r.min + Vec2::new(8.0, 4.0), galley, color::TEXT);
     }
     ui.ctx().request_repaint();
-    let released = !ui.input(|i| i.pointer.any_down());
-    if drag_end || released {
-        app.layer_drag = None;
-        if let Some((at, _)) = target {
-            changed |= app.doc.move_layers(&moving, at);
-        }
-    }
     changed
 }
 
@@ -3862,12 +3984,10 @@ struct RowState {
 
 struct RowOut {
     rect: egui::Rect,
-    select: bool,
-    long: bool,
+    /// Miniatura (numa pasta, abre e fecha) e alça de arrastar.
+    thumb: egui::Rect,
+    grip: egui::Rect,
     eye: bool,
-    fold: bool,
-    drag_start: bool,
-    drag_end: bool,
 }
 
 /// Uma linha da lista de camadas.
@@ -3878,7 +3998,9 @@ fn layer_row(
     st: RowState,
 ) -> RowOut {
     let w = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, ROW_H), Sense::click());
+    // Toques e arrastes da linha são tratados pela lista (`layer_list`), não pelo egui: assim
+    // segurar e arrastar, rolar com o dedo e tocar não brigam entre si.
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, ROW_H), Sense::hover());
     let p = ui.painter();
     let bg = if st.active {
         color::SELECTION.gamma_multiply(0.25)
@@ -4053,16 +4175,10 @@ fn layer_row(
         Pos2::new(rect.max.x - 54.0, rect.center().y),
         Vec2::new(32.0, ROW_H),
     );
-    let grip = ui
-        .interact(
-            grip_rect,
-            Id::unique(("layer_grip", layer.id)),
-            Sense::drag(),
-        )
-        .on_hover_text("Arraste para mudar a ordem ou pôr numa pasta");
-    let grip_col = if st.moving || grip.dragged() {
+    let grip_hover = resp.hover_pos().is_some_and(|p| grip_rect.contains(p));
+    let grip_col = if st.moving {
         color::ACCENT
-    } else if grip.hovered() {
+    } else if grip_hover {
         color::TEXT
     } else {
         color::TEXT_MUTED
@@ -4081,20 +4197,11 @@ fn layer_row(
             color::PANEL.gamma_multiply(0.55),
         );
     }
-    let on_icon = resp
-        .interact_pointer_pos()
-        .is_some_and(|p| thumb_rect.expand(6.0).contains(p));
-    let fold = layer.folder && resp.clicked() && on_icon && !st.multi;
-    // Segurar a camada (ou o botão direito do mouse) liga o modo de várias e marca ela.
-    let long = resp.long_touched() || resp.secondary_clicked();
     RowOut {
         rect,
-        select: resp.clicked() && !eye.clicked() && !fold,
-        long,
+        thumb: thumb_rect.expand(6.0),
+        grip: grip_rect,
         eye: eye.clicked(),
-        fold,
-        drag_start: grip.drag_started(),
-        drag_end: grip.drag_stopped(),
     }
 }
 

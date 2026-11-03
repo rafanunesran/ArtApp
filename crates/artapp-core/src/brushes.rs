@@ -1023,12 +1023,72 @@ const MAX_TIP_SIDE: u32 = 512;
 /// Importa pincéis de um arquivo: `.abr` (Photoshop) ou uma imagem, que vira a ponta de um
 /// pincel (escuro ou opaco = tinta). Os pincéis entram em "Meus pincéis".
 pub fn import(file_name: &str, bytes: &[u8]) -> Result<Vec<BrushEntry>, String> {
+    import_in(file_name, bytes, None)
+}
+
+/// Extensões de pincel que dá para instalar (fora imagens para ponta).
+pub const IMPORT_EXTS: [&str; 4] = ["abr", "sut", "zip", PACK_EXT];
+
+/// Importa `file_name`; `folder` é a pasta em Meus pincéis (de um .zip, o nome do pacote). Sem
+/// ela, os pincéis de um .abr ou .sut ficam numa pasta com o nome do arquivo.
+fn import_in(
+    file_name: &str,
+    bytes: &[u8],
+    folder: Option<&str>,
+) -> Result<Vec<BrushEntry>, String> {
     let lower = file_name.to_ascii_lowercase();
     let stem = std::path::Path::new(file_name)
         .file_stem()
         .map_or_else(|| "Pincel".into(), |s| s.to_string_lossy().into_owned());
+    let folder = folder.unwrap_or(&stem).to_string();
+    let entry = |name: String, settings: BrushSettings| BrushEntry {
+        name,
+        group: CUSTOM_GROUP.into(),
+        settings,
+        mixes: false,
+        folder: folder.clone(),
+    };
     if lower.ends_with(&format!(".{PACK_EXT}")) {
         return import_pack(bytes);
+    }
+    // Pelo conteúdo também: arquivos baixados às vezes chegam com outro nome.
+    if lower.ends_with(".zip") || crate::zip_lite::is_zip(bytes) {
+        if lower.ends_with(".brushset") || lower.ends_with(".brush") {
+            return Err(
+                "pincéis do Procreate (.brushset) ainda não dá para instalar; use .abr ou .sut"
+                    .into(),
+            );
+        }
+        let files = crate::zip_lite::extract(bytes, |n| {
+            let n = n.to_ascii_lowercase();
+            // Pastas escondidas do Mac (__MACOSX) só têm lixo.
+            !n.contains("__macosx")
+                && IMPORT_EXTS
+                    .iter()
+                    .any(|e| *e != "zip" && n.ends_with(&format!(".{e}")))
+        });
+        if files.is_empty() {
+            return Err("o .zip não tem pincéis (.abr, .sut)".into());
+        }
+        let mut out = Vec::new();
+        let mut errors = Vec::new();
+        for (name, data) in files {
+            let base = name.rsplit('/').next().unwrap_or(&name).to_string();
+            match import_in(&base, &data, Some(&stem)) {
+                Ok(list) => out.extend(list),
+                Err(e) => errors.push(format!("{base}: {e}")),
+            }
+        }
+        if out.is_empty() {
+            return Err(errors.join("; "));
+        }
+        return Ok(out);
+    }
+    if lower.ends_with(".sut") || bytes.starts_with(b"SQLite format 3\0") {
+        return Ok(crate::sut::read_sut(bytes, &stem)?
+            .into_iter()
+            .map(|b| entry(b.name, b.settings))
+            .collect());
     }
     if lower.ends_with(".abr") {
         let imp = crate::abr::read_abr(bytes, &stem)?;
@@ -1038,13 +1098,7 @@ pub fn import(file_name: &str, bytes: &[u8]) -> Result<Vec<BrushEntry>, String> 
         return Ok(imp
             .presets
             .into_iter()
-            .map(|p| BrushEntry {
-                name: p.name,
-                group: CUSTOM_GROUP.into(),
-                settings: p.brush,
-                mixes: false,
-                folder: String::new(),
-            })
+            .map(|p| entry(p.name, p.brush))
             .collect());
     }
     let (w, h, px) = crate::edit::decode_image(bytes)?;
@@ -1124,7 +1178,7 @@ pub fn stamp(name: &str) -> Option<photocraft_paint::GrayTile> {
 
 /// A ponta em tons de cinza de uma imagem RGBA: tinta = opaco e escuro. Reduzida até
 /// [`MAX_TIP_SIDE`]. `None` se não sobra tinta nenhuma.
-fn tip_from_rgba(w: u32, h: u32, px: &[u8]) -> Option<photocraft_paint::GrayTile> {
+pub(crate) fn tip_from_rgba(w: u32, h: u32, px: &[u8]) -> Option<photocraft_paint::GrayTile> {
     if w == 0 || h == 0 || px.len() < (w * h * 4) as usize {
         return None;
     }

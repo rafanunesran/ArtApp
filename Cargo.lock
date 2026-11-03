@@ -176,6 +176,7 @@ dependencies = [
  "image",
  "kurbo",
  "log",
+ "miniz_oxide 0.8.9",
  "pdf-writer",
  "photocraft-algo",
  "photocraft-color",
