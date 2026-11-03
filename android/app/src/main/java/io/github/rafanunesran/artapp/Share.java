@@ -31,6 +31,18 @@ public final class Share extends ContentProvider {
         return new File(c.getCacheDir(), "share");
     }
 
+    /** Abre um link no navegador. Devolve o erro, ou null quando deu certo. */
+    public static String openUrl(Context c, String url) {
+        try {
+            Intent view = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            view.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            c.startActivity(view);
+            return null;
+        } catch (Exception e) {
+            return String.valueOf(e.getMessage());
+        }
+    }
+
     /** Abre o seletor "Compartilhar" do Android. Devolve o erro, ou null quando deu certo. */
     public static String share(Context c, String path, String mime, String title) {
         try {

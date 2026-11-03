@@ -900,3 +900,69 @@ pub mod share {
         Err("só no Android".into())
     }
 }
+
+/// Abre um link no navegador (Android: `Share.openUrl`; desktop: o programa padrão do sistema).
+pub fn open_url(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        use jni::objects::{JClassLoader, JString, JValue};
+        use jni::refs::LoaderContext;
+        use jni::{jni_sig, jni_str};
+
+        let r = android_files::with_activity(|env, act| {
+            let loader = env
+                .call_method(
+                    act,
+                    jni_str!("getClassLoader"),
+                    jni_sig!(() -> java.lang.ClassLoader),
+                    &[],
+                )?
+                .l()?;
+            let loader = env.cast_local::<JClassLoader>(loader)?;
+            let cls = LoaderContext::Loader(&loader).load_class(
+                env,
+                jni_str!("io.github.rafanunesran.artapp.Share"),
+                true,
+            )?;
+            let url = env.new_string(url)?;
+            let r = env
+                .call_static_method(
+                    &cls,
+                    jni_str!("openUrl"),
+                    jni_sig!((c: android.content.Context, u: java.lang.String) -> java.lang.String),
+                    &[JValue::Object(act), JValue::Object(&url)],
+                )?
+                .l()?;
+            if r.is_null() {
+                return Ok(None);
+            }
+            let s = JString::cast_local(env, r)?;
+            Ok(Some(s.try_to_string(env)?))
+        })?;
+        match r {
+            None => Ok(()),
+            Some(e) => Err(e),
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let mut cmd = if cfg!(target_os = "windows") {
+            let mut c = std::process::Command::new("cmd");
+            c.args(["/C", "start", ""]);
+            c
+        } else if cfg!(target_os = "macos") {
+            std::process::Command::new("open")
+        } else {
+            std::process::Command::new("xdg-open")
+        };
+        cmd.arg(url).spawn().map(|_| ()).map_err(|e| e.to_string())
+    }
+}
+
+/// Pasta onde o navegador põe os arquivos baixados.
+pub fn downloads_dir() -> Option<PathBuf> {
+    browse_roots()
+        .into_iter()
+        .find(|(label, _)| *label == "Downloads")
+        .map(|(_, d)| d)
+}

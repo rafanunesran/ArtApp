@@ -1,14 +1,13 @@
 import { useEffect, useState } from "react";
 import {
   Brush, Layers, PenTool, PaintBucket, Undo2, ImageDown, Download,
-  Github, Smartphone, FolderOpen, ShieldCheck, Sparkles, Terminal, Info, Maximize2,
+  Smartphone, FolderOpen, ShieldCheck, Sparkles, Terminal, Info, Maximize2,
   Waves, Blend, SquareDashed, SlidersHorizontal, Monitor, Laptop, Images,
 } from "lucide-react";
+import { Header, Footer, DownloadButton, REPO, base } from "./Layout";
 
-const REPO = "https://github.com/rafanunesran/ArtApp";
 const LATEST = `${REPO}/releases/latest/download`;
 const APK = `${LATEST}/ArtApp.apk`;
-const base = import.meta.env.BASE_URL;
 
 type Rel = { name: string; date: string; size?: number };
 
@@ -64,20 +63,7 @@ export default function App() {
   const rel = useRelease();
   return (
     <div className="min-h-screen font-sans">
-      <header className="fixed inset-x-0 top-0 z-50 border-b border-border bg-background/80 backdrop-blur-lg">
-        <nav className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5">
-          <a href="#" className="flex items-center gap-2 font-display text-lg font-bold">
-            <span className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground"><Brush size={18} /></span>
-            ArtApp
-          </a>
-          <div className="flex items-center gap-5 text-sm text-muted-foreground">
-            <a href="#recursos" className="hidden hover:text-foreground sm:inline">Recursos</a>
-            <a href="#exemplos" className="hidden hover:text-foreground sm:inline">Exemplos</a>
-            <a href="#instalar" className="hover:text-foreground">Instalar</a>
-            <a href={REPO} className="flex items-center gap-1.5 hover:text-foreground"><Github size={16} />Código</a>
-          </div>
-        </nav>
-      </header>
+      <Header />
 
       <section className="bg-glow relative overflow-hidden px-5 pt-32 pb-20">
         <div className="mx-auto max-w-3xl text-center">
@@ -91,9 +77,7 @@ export default function App() {
             Pincéis com pressão, camadas, vetor, liquefazer e simetria numa tela limpa, feita para a caneta e para os dedos.
           </p>
           <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
-            <a href={APK} className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3.5 font-semibold text-primary-foreground transition hover:brightness-110">
-              <Download size={20} /> Baixar APK
-            </a>
+            <DownloadButton href={APK}>Baixar APK</DownloadButton>
             <a href="#computador" className="inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-card px-6 py-3.5 font-semibold transition hover:bg-secondary">
               <Monitor size={20} /> Windows, Linux e macOS
             </a>
@@ -191,9 +175,7 @@ export default function App() {
               <li key={file} className="flex flex-col rounded-2xl border border-border bg-card p-5">
                 <h3 className="flex items-center gap-2 font-semibold"><I size={18} className="text-primary" />{t}</h3>
                 <p className="mt-1 flex-1 text-sm text-muted-foreground">{d}</p>
-                <a href={`${LATEST}/${file}`} className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition hover:brightness-110">
-                  <Download size={16} /> {file}
-                </a>
+                <DownloadButton href={`${LATEST}/${file}`} size="sm" className="mt-4">{file}</DownloadButton>
               </li>
             ))}
           </ul>
@@ -213,12 +195,7 @@ export default function App() {
         </div>
       </section>
 
-      <footer className="border-t border-border px-5 py-8 text-center text-sm text-muted-foreground">
-        ArtApp · MIT ou Apache-2.0 · motores do{" "}
-        <a href="https://github.com/storytold/photocraft" className="text-foreground hover:text-primary">PhotoCraft</a> e do{" "}
-        <a href="https://github.com/storytold/vectorcraft" className="text-foreground hover:text-primary">VectorCraft</a>
-        {" · "}<a href={REPO} className="text-foreground hover:text-primary">código</a>
-      </footer>
+      <Footer />
     </div>
   );
 }

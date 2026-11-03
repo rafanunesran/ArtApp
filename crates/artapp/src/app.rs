@@ -428,6 +428,8 @@ pub struct ArtApp {
     pub timelapse: crate::timelapse_view::TimelapseState,
     /// Biblioteca de materiais.
     pub materials: crate::materials_view::MaterialsState,
+    /// "Mais pincéis": página do site aberta, instalando o que for baixado.
+    pub brush_watch: crate::brush_store::Watch,
     pub pose: crate::pose_view::PoseState,
     /// Área de trabalho atual, as guardadas pelo usuário e o nome digitado para guardar.
     pub workspace: crate::workspace::Workspace,
@@ -674,6 +676,7 @@ impl ArtApp {
             anim_settings_open: false,
             timelapse: Default::default(),
             materials: Default::default(),
+            brush_watch: Default::default(),
             pose: Default::default(),
             workspace: Default::default(),
             workspaces: Vec::new(),
@@ -2268,6 +2271,7 @@ impl eframe::App for ArtApp {
         self.projects_tick(&ctx);
         self.backup_tick(&ctx);
         self.updater_tick(&ctx);
+        self.brush_store_tick(&ctx);
         if self.status != self.last_status {
             self.last_status.clone_from(&self.status);
             self.status_since = ctx.input(|i| i.time);

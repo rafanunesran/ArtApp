@@ -6,6 +6,7 @@ mod anim_bar;
 mod app;
 mod backup;
 mod brush_editor;
+mod brush_store;
 mod canvas;
 mod color_panel;
 mod dialogs;

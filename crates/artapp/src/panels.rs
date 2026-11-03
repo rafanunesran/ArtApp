@@ -485,6 +485,10 @@ fn file_group(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.pick_image_for(crate::projects::ImageUse::Brushes);
         ui.close();
     }
+    if item(ui, icon::SPARKLES, "Mais pincéis na internet…").clicked() {
+        app.open_brush_store();
+        ui.close();
+    }
     if item(ui, icon::PALETTE, "Paleta de uma imagem…").clicked() {
         app.pick_image_for(crate::projects::ImageUse::Palette);
         ui.close();
@@ -590,6 +594,10 @@ fn layer_group(app: &mut ArtApp, ui: &mut egui::Ui) {
     let item = menu_item;
     if item(ui, icon::FOLDER_PLUS, "Materiais…").clicked() {
         app.materials.open = true;
+        ui.close();
+    }
+    if item(ui, icon::SPARKLES, "Mais materiais (pincéis)…").clicked() {
+        app.open_brush_store();
         ui.close();
     }
     let editing = app.doc.active_layer().is_some_and(|l| l.pose.is_some());
@@ -2954,6 +2962,13 @@ fn brush_save_row(app: &mut ArtApp, ui: &mut egui::Ui) {
             .clicked()
         {
             app.pick_image_for(crate::projects::ImageUse::Brushes);
+        }
+        if ui
+            .button(format!("{}  Mais pincéis…", icon::SPARKLES))
+            .on_hover_text("Abre a página de pincéis compatíveis do site. O que você baixar lá é instalado sozinho quando voltar ao ArtApp.")
+            .clicked()
+        {
+            app.open_brush_store();
         }
         if ui
             .button("Exportar meus pincéis")

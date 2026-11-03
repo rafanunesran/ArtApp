@@ -161,6 +161,7 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
     let mut place = None;
     let mut save = false;
     let mut import = false;
+    let mut store = false;
     let mut delete = None;
     let max_h = ctx.content_rect().height() * 0.7;
     egui::Window::new("Materiais")
@@ -186,6 +187,13 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
                 }
                 if ui.button("Importar imagem…").clicked() {
                     import = true;
+                }
+                if ui
+                    .button("Mais materiais…")
+                    .on_hover_text("Página de pincéis compatíveis do site; o que baixar lá é instalado sozinho")
+                    .clicked()
+                {
+                    store = true;
                 }
             });
             ui.separator();
@@ -270,6 +278,9 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
     }
     if import {
         app.pick_image_for(crate::projects::ImageUse::Material);
+    }
+    if store {
+        app.open_brush_store();
     }
     if let Some(p) = place {
         app.place_material(&p);
