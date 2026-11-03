@@ -196,6 +196,8 @@ impl Job<'_> {
         let mut clip_alpha = vec![0.0f32; n];
         let mut clip_on = false;
         let mut mask_row = Vec::new();
+        let mut pieces = Vec::new();
+        let w = r.width() as usize;
         for i in from..to.min(doc.layers.len()) {
             let layer = &doc.layers[i];
             // A máscara entra junto com a camada de baixo, não sozinha. Pastas não têm tinta:
@@ -219,45 +221,74 @@ impl Job<'_> {
             if layer.clip && !clip_on {
                 continue;
             }
-            match &layer.border {
-                Some(b) => {
-                    crate::border::read_with_border(&layer.surface, b, r, doc.bounds(), &mut row)
-                }
-                None => layer.surface.read_rgba_into(r, &mut row),
+            // Só os pedaços onde a camada tem tiles: o resto é transparente e não muda nada
+            // (camadas de traço costumam cobrir uma parte pequena da tela). A borda passa da
+            // tinta, então essas camadas vão inteiras.
+            pieces.clear();
+            if layer.border.is_some() {
+                pieces.push(r);
+            } else {
+                pieces.extend(
+                    r.tiles()
+                        .filter(|c| layer.surface.tile(*c).is_some())
+                        .map(|c| c.rect().intersect(&r)),
+                );
             }
-            if let Some(t) = &layer.tone {
-                crate::tone::apply(t, r, &mut row);
-            }
-            if let Some(c) = tint {
-                // Pele de cebola colorida: a tinta vira a cor do lado (mantendo o alfa).
-                for p in row.iter_mut() {
-                    p[0] = c[0];
-                    p[1] = c[1];
-                    p[2] = c[2];
-                }
-            }
-            if let Some(m) = doc.mask_above(i) {
-                mask_row.resize(n, [0.0f32; 4]);
-                m.surface.read_rgba_into(r, &mut mask_row);
-                for (p, k) in row.iter_mut().zip(&mask_row) {
-                    p[3] *= mask_visibility(*k);
+            if !layer.clip {
+                clip_on = true;
+                if pieces.len() != 1 || pieces[0] != r {
+                    clip_alpha.fill(0.0);
                 }
             }
-            let mode = layer.blend;
-            if layer.clip {
-                for ((dst, src), m) in acc.iter_mut().zip(&row).zip(&clip_alpha) {
-                    let a = src[3] * m;
-                    if a > 0.0 {
-                        *dst = mix(mode, *dst, [src[0], src[1], src[2], a], opacity);
+            for &p in &pieces {
+                let pn = p.width() as usize * p.height() as usize;
+                let row = &mut row[..pn];
+                match &layer.border {
+                    Some(b) => {
+                        crate::border::read_with_border(&layer.surface, b, p, doc.bounds(), row)
+                    }
+                    None => layer.surface.read_rgba_into(p, row),
+                }
+                if let Some(t) = &layer.tone {
+                    crate::tone::apply(t, p, row);
+                }
+                if let Some(c) = tint {
+                    // Pele de cebola colorida: a tinta vira a cor do lado (mantendo o alfa).
+                    for px in row.iter_mut() {
+                        px[0] = c[0];
+                        px[1] = c[1];
+                        px[2] = c[2];
                     }
                 }
-                continue;
-            }
-            clip_on = true;
-            for ((dst, src), m) in acc.iter_mut().zip(&row).zip(clip_alpha.iter_mut()) {
-                *m = src[3];
-                if src[3] > 0.0 {
-                    *dst = mix(mode, *dst, *src, opacity);
+                if let Some(m) = doc.mask_above(i) {
+                    mask_row.resize(pn, [0.0f32; 4]);
+                    m.surface.read_rgba_into(p, &mut mask_row[..pn]);
+                    for (px, k) in row.iter_mut().zip(&mask_row) {
+                        px[3] *= mask_visibility(*k);
+                    }
+                }
+                let mode = layer.blend;
+                let pw = p.width() as usize;
+                for y in p.y0..p.y1 {
+                    let o = ((y - r.y0) as usize) * w + (p.x0 - r.x0) as usize;
+                    let src = &row[((y - p.y0) as usize) * pw..][..pw];
+                    let dst = &mut acc[o..o + pw];
+                    let ca = &mut clip_alpha[o..o + pw];
+                    if layer.clip {
+                        for ((d, s), m) in dst.iter_mut().zip(src).zip(ca.iter()) {
+                            let a = s[3] * m;
+                            if a > 0.0 {
+                                *d = mix(mode, *d, [s[0], s[1], s[2], a], opacity);
+                            }
+                        }
+                    } else {
+                        for ((d, s), m) in dst.iter_mut().zip(src).zip(ca.iter_mut()) {
+                            *m = s[3];
+                            if s[3] > 0.0 {
+                                *d = mix(mode, *d, *s, opacity);
+                            }
+                        }
+                    }
                 }
             }
         }

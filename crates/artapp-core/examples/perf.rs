@@ -43,6 +43,23 @@ fn painted_doc() -> Document {
     doc
 }
 
+/// Muitas camadas com pouca tinta cada (linhas, sombras, detalhes), como num desenho real.
+fn sparse_doc() -> Document {
+    let mut doc = Document::new(W, H);
+    let b = doc.bounds();
+    doc.layers[0].surface.fill_rect(b, &[0.9, 0.9, 0.85, 1.0]);
+    for i in 1..24 {
+        doc.add_layer();
+        let l = doc.layers.len() - 1;
+        let x = (i * 331) % (W as i32 - 600);
+        let y = (i * 577) % (H as i32 - 600);
+        doc.layers[l]
+            .surface
+            .fill_rect(Rect::new(x, y, x + 500, y + 400), &[0.2, 0.1, 0.6, 0.8]);
+    }
+    doc
+}
+
 fn stroke_points(n: usize) -> Vec<StrokePoint> {
     (0..n)
         .map(|i| {
@@ -113,6 +130,10 @@ fn main() {
     let mut cache = composite::DisplayCache::default();
     time("Compor a tela inteira (abrir/desfazer)", 3, || {
         composite::composite_rgba8(&doc, doc.bounds(), true)
+    });
+    let sparse = sparse_doc();
+    time("Compor a tela inteira, 24 camadas esparsas", 3, || {
+        composite::composite_rgba8(&sparse, sparse.bounds(), true)
     });
     for size in [12.0, 60.0, 200.0] {
         let t = stroke(&mut doc, &mut cache, size);
