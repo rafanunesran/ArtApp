@@ -16,7 +16,7 @@ photocraft-geom = { git = "https://github.com/storytold/photocraft", rev = "6fdd
 photocraft-color = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
 photocraft-raster = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
 photocraft-algo = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
-photocraft-paint = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
+photocraft-paint = { path = "third_party/photocraft-paint" } # cópia com bordas queimadas, vidrado e pontas múltiplas (ver third_party/photocraft-paint/ARTAPP-PATCH.md)
 # Leitor/gravador de PSD (abrir e exportar com camadas).
 photocraft-psd = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
 # Motores do VectorCraft (modelo de documento vetorial, geometria, renderização).

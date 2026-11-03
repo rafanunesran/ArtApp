@@ -19,6 +19,8 @@ pub mod decoration;
 pub mod document;
 pub mod edit;
 pub mod effects;
+#[cfg(test)]
+mod engine_tests;
 pub mod export;
 pub mod fill;
 pub mod folders;

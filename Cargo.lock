@@ -2388,13 +2388,14 @@ dependencies = [
 [[package]]
 name = "photocraft-paint"
 version = "0.17.0"
-source = "git+https://github.com/storytold/photocraft?rev=6fdd6bb1b7de381c58c15a61aa1352f0a7061745#6fdd6bb1b7de381c58c15a61aa1352f0a7061745"
 dependencies = [
+ "photocraft-cms",
  "photocraft-color",
  "photocraft-geom",
  "photocraft-raster",
  "rayon",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

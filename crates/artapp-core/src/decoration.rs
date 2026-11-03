@@ -152,7 +152,7 @@ fn follow(jitter: f32) -> ShapeDynamics {
 }
 
 /// Tamanho e ângulo variando ao acaso (carimbos soltos).
-fn loose(size_jitter: f32, angle_jitter: f32) -> ShapeDynamics {
+pub(crate) fn loose(size_jitter: f32, angle_jitter: f32) -> ShapeDynamics {
     ShapeDynamics {
         enabled: true,
         size: Dynamic {
@@ -168,7 +168,7 @@ fn loose(size_jitter: f32, angle_jitter: f32) -> ShapeDynamics {
     }
 }
 
-fn scatter(amount: f32) -> Scattering {
+pub(crate) fn scatter(amount: f32) -> Scattering {
     Scattering {
         enabled: true,
         scatter: Dynamic {

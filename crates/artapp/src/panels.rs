@@ -2372,6 +2372,14 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             }
         }
     }
+    let pick = Id::unique(brush_editor::PICK_EXTRA_TIP);
+    if ui
+        .ctx()
+        .data_mut(|d| d.remove_temp::<bool>(pick))
+        .unwrap_or(false)
+    {
+        app.pick_image_for(crate::projects::ImageUse::ExtraTip);
+    }
     if !eraser && tab != BrushTab::Library {
         ui.add_space(6.0);
         brush_save_row(app, ui);
