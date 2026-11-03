@@ -761,9 +761,16 @@ fn update_menu_item(app: &mut ArtApp, ui: &mut egui::Ui) {
         ui.close();
     }
     ui.label(
-        RichText::new(format!("Build instalado: {}", app.updater.installed()))
-            .size(12.0)
-            .color(crate::theme::color::TEXT_MUTED),
+        RichText::new(if app.updater.is_fast() {
+            format!(
+                "Build em uso: {} (atualização rápida)",
+                app.updater.installed()
+            )
+        } else {
+            format!("Build instalado: {}", app.updater.installed())
+        })
+        .size(12.0)
+        .color(crate::theme::color::TEXT_MUTED),
     );
 }
 

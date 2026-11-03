@@ -29,8 +29,16 @@ jobs:
   apk:
     name: APK Android
     runs-on: ubuntu-latest
+    env:
+      # O build entra na libartapp.so (atualização rápida) e no versionCode do APK.
+      ARTAPP_VERSION_CODE: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
+      # Identidade da "casca" do APK (Java, manifesto, recursos e o carregador artapp-boot). A
+      # atualização rápida (só a libartapp.so) só é oferecida a quem tem a mesma casca; se algo
+      # disso mudar, o app atualiza pelo APK.
+      - name: Identidade da casca
+        run: echo "ARTAPP_SHELL_ID=$(git ls-files -s android crates/artapp-boot | sha256sum | cut -c1-16)" >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -52,12 +60,11 @@ jobs:
       - name: Compilar libartapp.so
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION" ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/$NDK_VERSION"
-          cargo ndk -t arm64-v8a -t x86_64 -P 26 -o android/app/src/main/jniLibs build --release -p artapp --lib
+          cargo ndk -t arm64-v8a -t x86_64 -P 26 -o android/app/src/main/jniLibs build --release -p artapp -p artapp-boot --lib
       - uses: gradle/actions/setup-gradle@v4
       - name: Empacotar APK
         working-directory: android
         env:
-          ARTAPP_VERSION_CODE: ${{ github.run_number }}
           ARTAPP_KEYSTORE_BASE64: ${{ secrets.ARTAPP_KEYSTORE_BASE64 }}
           ARTAPP_KEYSTORE_PASSWORD: ${{ secrets.ARTAPP_KEYSTORE_PASSWORD }}
         run: |
@@ -74,6 +81,30 @@ jobs:
         with:
           name: artapp-apk
           path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+      # Atualização rápida: a libartapp.so de cada arquitetura (sem símbolos, em .gz) e o
+      # update.json que o app lê (crates/artapp/src/hotswap.rs).
+      - name: Atualização rápida (.so e update.json)
+        run: |
+          STRIP="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          VERSION=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' android/app/build.gradle.kts)
+          mkdir -p hot
+          LIBS=""
+          for ABI in arm64-v8a x86_64; do
+            "$STRIP" --strip-unneeded -o "hot/libartapp-$ABI.so" "android/app/src/main/jniLibs/$ABI/libartapp.so"
+            SHA=$(sha256sum "hot/libartapp-$ABI.so" | cut -d' ' -f1)
+            SIZE=$(stat -c %s "hot/libartapp-$ABI.so")
+            gzip -9 "hot/libartapp-$ABI.so"
+            GZ=$(stat -c %s "hot/libartapp-$ABI.so.gz")
+            LIBS="$LIBS${LIBS:+,}\"$ABI\":{\"file\":\"libartapp-$ABI.so.gz\",\"sha256\":\"$SHA\",\"size\":$SIZE,\"gz_size\":$GZ}"
+          done
+          echo "{\"build\":$ARTAPP_VERSION_CODE,\"version\":\"$VERSION\",\"shell\":\"$ARTAPP_SHELL_ID\",\"libs\":{$LIBS}}" > hot/update.json
+          python3 -m json.tool hot/update.json
+          ls -l hot
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artapp-hot
+          path: hot/*
           if-no-files-found: error
 
   # Versões para computador: Windows (.zip com o .exe), Linux (.tar.gz com instalador) e macOS
@@ -164,6 +195,10 @@ jobs:
           name: artapp-apk
           path: apk
       - uses: actions/download-artifact@v4
+        with:
+          name: artapp-hot
+          path: hot
+      - uses: actions/download-artifact@v4
         continue-on-error: true
         with:
           pattern: desktop-*
@@ -177,7 +212,7 @@ jobs:
           TAG="v${VERSION}-build.${GITHUB_RUN_NUMBER}"
           cp apk/*.apk ArtApp.apk
           shopt -s nullglob
-          gh release create "$TAG" ArtApp.apk desktop/* \
+          gh release create "$TAG" ArtApp.apk hot/* desktop/* \
             --target "$GITHUB_SHA" \
             --title "ArtApp ${VERSION} (build ${GITHUB_RUN_NUMBER})" \
             --notes "APK e versões para Windows, Linux e macOS gerados automaticamente a partir de ${GITHUB_SHA::7}: $(git log -1 --format=%s)" \
