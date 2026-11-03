@@ -909,11 +909,7 @@ pub fn drop_fill_at(app: &mut ArtApp, x: f64, y: f64) {
         let [r, g, b, _] = color_to_f32(app.color);
         app.doc.vector_fill_at(x, y, [r, g, b])
     } else {
-        let opts = fill::FillOptions {
-            tolerance: app.fill_tolerance,
-            close_gap: app.fill_close_gap,
-            expand: app.fill_expand,
-        };
+        let opts = app.fill_options();
         fill::flood_fill_with(
             &mut app.doc,
             x.floor() as i32,
@@ -1405,11 +1401,7 @@ fn tool_down(
                 app.doc
                     .recolor(x, y, app.fill_tolerance, app.wand_contiguous, [r, g, b])
             } else {
-                let opts = fill::FillOptions {
-                    tolerance: app.fill_tolerance,
-                    close_gap: app.fill_close_gap,
-                    expand: app.fill_expand,
-                };
+                let opts = app.fill_options();
                 fill::flood_fill_with(&mut app.doc, x, y, color_to_f32(app.color), &opts)
             };
             app.invalidate(r);
@@ -2581,6 +2573,7 @@ pub fn drop_fill_bar(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) 
         return;
     }
     let mut tolerance = app.fill_tolerance;
+    let mut gap = app.fill_close_gap;
     let mut continuing = d.continuing;
     let mut done = false;
     egui::Area::new(egui::Id::unique("drop_fill_bar"))
@@ -2591,6 +2584,11 @@ pub fn drop_fill_bar(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) 
             crate::theme::panel_frame().show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.add(egui::Slider::new(&mut tolerance, 0.0..=1.0).text("Limite"));
+                    ui.add(
+                        egui::Slider::new(&mut gap, 0.0..=40.0)
+                            .suffix(" px")
+                            .text("Fechar lacunas"),
+                    );
                     ui.toggle_value(&mut continuing, "Continuar preenchendo");
                     done = ui.button("Pronto").clicked();
                 });
@@ -2601,8 +2599,12 @@ pub fn drop_fill_bar(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) 
     }
     if done {
         app.drop_fill = None;
-    } else if (tolerance - app.fill_tolerance).abs() > f32::EPSILON {
+    } else if (tolerance - app.fill_tolerance).abs() > f32::EPSILON
+        || (gap - app.fill_close_gap).abs() > f32::EPSILON
+    {
+        // Arrastar o controle refaz o preenchimento: continua um passo só no desfazer.
         app.fill_tolerance = tolerance;
+        app.fill_close_gap = gap;
         redo_drop_fill(app);
     }
 }

@@ -5,33 +5,56 @@
 /// Distância ao quadrado de cada pixel até o pixel ligado mais próximo (`f32::INFINITY` se não há
 /// nenhum). Transformada de Felzenszwalb–Huttenlocher, separável: linhas e depois colunas.
 pub fn distance_sq(on: &[bool], w: usize, h: usize) -> Vec<f32> {
+    use rayon::prelude::*;
     const INF: f32 = 1e20;
-    let mut d: Vec<f32> = on.iter().map(|&b| if b { 0.0 } else { INF }).collect();
-    let n = w.max(h);
-    let mut f = vec![0.0f32; n];
-    let mut out = vec![0.0f32; n];
-    let mut v = vec![0usize; n];
-    let mut z = vec![0.0f32; n + 1];
-    for y in 0..h {
-        f[..w].copy_from_slice(&d[y * w..y * w + w]);
-        edt_1d(&f[..w], &mut out[..w], &mut v, &mut z);
-        d[y * w..y * w + w].copy_from_slice(&out[..w]);
+    if w == 0 || h == 0 {
+        return Vec::new();
     }
-    for x in 0..w {
-        for y in 0..h {
-            f[y] = d[y * w + x];
-        }
-        edt_1d(&f[..h], &mut out[..h], &mut v, &mut z);
-        for y in 0..h {
-            d[y * w + x] = out[y];
-        }
-    }
-    for v in &mut d {
+    let mut d: Vec<f32> = on.par_iter().map(|&b| if b { 0.0 } else { INF }).collect();
+    // Cada linha (e depois cada coluna, transposta) é independente: em paralelo, com um
+    // rascunho por thread.
+    let pass = |buf: &mut [f32], len: usize| {
+        buf.par_chunks_mut(len).for_each_init(
+            || (vec![0.0f32; len], vec![0usize; len], vec![0.0f32; len + 1]),
+            |(out, v, z), row| {
+                edt_1d(row, out, v, z);
+                row.copy_from_slice(out);
+            },
+        );
+    };
+    pass(&mut d, w);
+    let mut t = transpose(&d, w, h);
+    pass(&mut t, h);
+    let mut d = transpose(&t, h, w);
+    d.par_iter_mut().for_each(|v| {
         if *v >= INF * 0.5 {
             *v = f32::INFINITY;
         }
-    }
+    });
     d
+}
+
+/// Transpõe uma imagem `w`×`h` (linha a linha) em blocos, em paralelo.
+fn transpose(src: &[f32], w: usize, h: usize) -> Vec<f32> {
+    use rayon::prelude::*;
+    const B: usize = 64;
+    let mut dst = vec![0.0f32; w * h];
+    // Cada faixa de B linhas do destino (= B colunas da origem) é de uma thread.
+    dst.par_chunks_mut(h * B)
+        .enumerate()
+        .for_each(|(bx, band)| {
+            let x0 = bx * B;
+            let xs = band.len() / h;
+            for y0 in (0..h).step_by(B) {
+                for y in y0..(y0 + B).min(h) {
+                    let row = &src[y * w + x0..y * w + x0 + xs];
+                    for (dx, v) in row.iter().enumerate() {
+                        band[dx * h + y] = *v;
+                    }
+                }
+            }
+        });
+    dst
 }
 
 /// Transformada de distância 1D (envelope inferior de parábolas).
@@ -75,16 +98,20 @@ fn edt_1d(f: &[f32], d: &mut [f32], v: &mut [usize], z: &mut [f32]) {
 
 /// Cresce (`r > 0`) ou encolhe (`r < 0`) a máscara `r` pixels, com borda redonda.
 pub fn grow(on: &[bool], w: usize, h: usize, r: f32) -> Vec<bool> {
+    use rayon::prelude::*;
     if r == 0.0 {
         return on.to_vec();
     }
     let r2 = r * r;
     if r > 0.0 {
-        distance_sq(on, w, h).into_iter().map(|d| d <= r2).collect()
+        distance_sq(on, w, h)
+            .into_par_iter()
+            .map(|d| d <= r2)
+            .collect()
     } else {
-        let off: Vec<bool> = on.iter().map(|b| !b).collect();
+        let off: Vec<bool> = on.par_iter().map(|b| !b).collect();
         distance_sq(&off, w, h)
-            .into_iter()
+            .into_par_iter()
             .map(|d| d > r2)
             .collect()
     }

@@ -1237,18 +1237,41 @@ pub fn brush_panel(app: &mut ArtApp, place: Place<'_>) {
                 if app.fill_recolor {
                     theme::switch(ui, &mut app.wand_contiguous, "Só a área ligada ao toque");
                 }
-                ui.add(egui::Slider::new(&mut app.fill_tolerance, 0.0..=1.0).text("Tolerância"));
-                ui.add(
-                    egui::Slider::new(&mut app.fill_close_gap, 0.0..=40.0)
-                        .suffix(" px")
-                        .text("Fechar lacunas"),
+                // Grava ao soltar o controle (não a cada quadro do arrasto).
+                let done = |r: egui::Response| r.drag_stopped() || (r.changed() && !r.dragged());
+                let mut save = false;
+                save |=
+                    done(ui.add(
+                        egui::Slider::new(&mut app.fill_tolerance, 0.0..=1.0).text("Tolerância"),
+                    ));
+                save |= done(
+                    ui.add(
+                        egui::Slider::new(&mut app.fill_close_gap, 0.0..=40.0)
+                            .suffix(" px")
+                            .text("Fechar lacunas"),
+                    ),
                 );
-                ui.add(
-                    egui::Slider::new(&mut app.fill_expand, -10.0..=10.0)
-                        .suffix(" px")
-                        .text("Expandir área"),
+                save |= done(
+                    ui.add(
+                        egui::Slider::new(&mut app.fill_expand, -10.0..=10.0)
+                            .suffix(" px")
+                            .text("Expandir / contrair"),
+                    ),
                 );
-                ui.label(RichText::new("Pinta a área de cor parecida, olhando todas as camadas. Em camada vetorial, pinta o preenchimento da forma tocada.").size(12.0).color(color::TEXT_MUTED));
+                let aa = app.fill_antialias;
+                theme::switch(ui, &mut app.fill_antialias, "Borda suave (antisserrilhado)");
+                let reference = app.fill_ref;
+                egui::ComboBox::from_label("Olhar")
+                    .selected_text(app.fill_ref.label())
+                    .show_ui(ui, |ui| {
+                        for r in artapp_core::fill::FillRef::ALL {
+                            ui.selectable_value(&mut app.fill_ref, r, r.label());
+                        }
+                    });
+                ui.label(RichText::new("Pinta a área de cor parecida. \"Fechar lacunas\" impede a tinta de escorrer por falhas do traço até esse tamanho; vale também para soltar a cor da roda. Em camada vetorial, pinta o preenchimento da forma tocada.").size(12.0).color(color::TEXT_MUTED));
+                if save || aa != app.fill_antialias || reference != app.fill_ref {
+                    app.save_prefs();
+                }
             } else if app.tool == Tool::Blend {
                 mix_settings(app, ui);
             } else if app.tool == Tool::Liquify {

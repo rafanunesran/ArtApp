@@ -174,6 +174,24 @@ fn main() {
         doc.undo();
         r
     });
+    time("Balde fechando lacunas de 8 px", 2, || {
+        let opts = artapp_core::fill::FillOptions {
+            close_gap: 8.0,
+            ..Default::default()
+        };
+        let r = artapp_core::fill::flood_fill_with(&mut doc, 5, 5, [1.0, 0.0, 0.0, 1.0], &opts);
+        doc.undo();
+        r
+    });
+    time("Balde só na camada atual", 2, || {
+        let opts = artapp_core::fill::FillOptions {
+            reference: artapp_core::fill::FillRef::Layer,
+            ..Default::default()
+        };
+        let r = artapp_core::fill::flood_fill_with(&mut doc, 5, 5, [1.0, 0.0, 0.0, 1.0], &opts);
+        doc.undo();
+        r
+    });
     time("Mesclar camada com a de baixo", 2, || {
         let mut d = painted_doc();
         d.active = 4;

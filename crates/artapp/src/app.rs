@@ -456,6 +456,10 @@ pub struct ArtApp {
     /// Balde: fechar lacunas e expandir área, em pixels.
     pub fill_close_gap: f32,
     pub fill_expand: f32,
+    /// Balde: borda suave sob o antisserrilhado da linha.
+    pub fill_antialias: bool,
+    /// Balde: onde procurar as bordas (referência, todas as camadas ou só a atual).
+    pub fill_ref: artapp_core::fill::FillRef,
     /// Como uma seleção nova se junta à atual.
     pub select_mode: artapp_core::selection::SelectMode,
     /// Quanto expandir/contrair/suavizar a seleção (px).
@@ -696,8 +700,11 @@ impl ArtApp {
             ],
             fill_tolerance: 0.15,
             fill_recolor: false,
-            fill_close_gap: 0.0,
+            // Fecha de saída as falhas pequenas, para o balde não escorrer pelo traço.
+            fill_close_gap: 4.0,
             fill_expand: 0.0,
+            fill_antialias: true,
+            fill_ref: artapp_core::fill::FillRef::Auto,
             select_mode: artapp_core::selection::SelectMode::New,
             select_amount: 4.0,
             clipboard: None,
@@ -989,6 +996,25 @@ impl ArtApp {
         if let Some(b) = v.get("backup") {
             self.backup.load_json(b);
         }
+        if let Some(f) = num("fill_tolerance") {
+            self.fill_tolerance = f.clamp(0.0, 1.0);
+        }
+        if let Some(f) = num("fill_close_gap") {
+            self.fill_close_gap = f.clamp(0.0, 40.0);
+        }
+        if let Some(f) = num("fill_expand") {
+            self.fill_expand = f.clamp(-10.0, 10.0);
+        }
+        if let Some(b) = flag("fill_antialias") {
+            self.fill_antialias = b;
+        }
+        if let Some(r) = v
+            .get("fill_ref")
+            .and_then(serde_json::Value::as_str)
+            .and_then(artapp_core::fill::FillRef::from_name)
+        {
+            self.fill_ref = r;
+        }
         if let Some(name) = v.get("finger_mode").and_then(serde_json::Value::as_str) {
             self.finger_mode = FingerMode::ALL
                 .into_iter()
@@ -1004,7 +1030,7 @@ impl ArtApp {
 
     /// Grava os ajustes de caneta e gestos.
     pub fn save_prefs(&mut self) {
-        let v = serde_json::json!({
+        let mut v = serde_json::json!({
             "use_pressure": self.use_pressure,
             "speed_pressure": self.speed_pressure,
             "tour_done": self.tour_done,
@@ -1046,6 +1072,14 @@ impl ArtApp {
             "paper_color": self.paper_color,
             "backup": self.backup.to_json(),
         });
+        // Fora do json!: a macro tem limite de recursão.
+        if let Some(m) = v.as_object_mut() {
+            m.insert("fill_tolerance".into(), self.fill_tolerance.into());
+            m.insert("fill_close_gap".into(), self.fill_close_gap.into());
+            m.insert("fill_expand".into(), self.fill_expand.into());
+            m.insert("fill_antialias".into(), self.fill_antialias.into());
+            m.insert("fill_ref".into(), self.fill_ref.name().into());
+        }
         let path = prefs_path();
         let result = path
             .parent()
@@ -1053,6 +1087,17 @@ impl ArtApp {
             .and_then(|()| std::fs::write(&path, v.to_string()));
         if let Err(e) = result {
             self.status = format!("Não foi possível gravar os ajustes: {e}");
+        }
+    }
+
+    /// Opções do balde (e do ColorDrop) como estão nos ajustes.
+    pub fn fill_options(&self) -> artapp_core::fill::FillOptions {
+        artapp_core::fill::FillOptions {
+            tolerance: self.fill_tolerance,
+            close_gap: self.fill_close_gap,
+            expand: self.fill_expand,
+            antialias: self.fill_antialias,
+            reference: self.fill_ref,
         }
     }
 
