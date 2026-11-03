@@ -97,6 +97,8 @@ pub struct Document {
     pub colors: Vec<[u8; 4]>,
     pub(crate) history: History,
     next_id: u64,
+    /// O que os desfazer/refazer ainda não lidos mudaram (`Some(None)` = a tela toda).
+    history_dirty: Option<Option<Rect>>,
 }
 
 /// Resolução de uma tela nova.
@@ -119,6 +121,7 @@ impl Document {
             colors: Vec::new(),
             history: History::default(),
             next_id: 1,
+            history_dirty: None,
         };
         let layer = doc.make_layer();
         doc.layers.push(layer);
@@ -157,6 +160,7 @@ impl Document {
             colors: Vec::new(),
             history: History::default(),
             next_id,
+            history_dirty: None,
         };
         if doc.layers.is_empty() {
             let layer = doc.make_layer();
@@ -401,6 +405,7 @@ impl Document {
         let Some((layers, active, (w, h))) = self.history.undo(current) else {
             return false;
         };
+        self.note_history_change(&layers, (w, h));
         self.layers = layers;
         self.active = active;
         if (w, h) != (self.width, self.height) {
@@ -417,6 +422,7 @@ impl Document {
         let Some((layers, active, (w, h))) = self.history.redo(current) else {
             return false;
         };
+        self.note_history_change(&layers, (w, h));
         self.layers = layers;
         self.active = active;
         if (w, h) != (self.width, self.height) {
@@ -425,6 +431,29 @@ impl Document {
             self.selection = None;
         }
         true
+    }
+
+    /// Junta em `history_dirty` o que muda ao trocar as camadas por `next`.
+    fn note_history_change(&mut self, next: &[Layer], size: (u32, u32)) {
+        let r = if size == (self.width, self.height) {
+            changed_region(&self.layers, next)
+        } else {
+            None
+        };
+        self.history_dirty = Some(match (self.history_dirty, r) {
+            (None, r) => r,
+            (Some(Some(a)), Some(b)) => Some(a.union(&b)),
+            _ => None,
+        });
+    }
+
+    /// O retângulo que o último desfazer/refazer (ou salto no histórico) mudou, para recompor
+    /// só ele. Esvazia o registro: a próxima mudança começa do zero.
+    pub fn take_history_dirty(&mut self) -> Rect {
+        match self.history_dirty.take() {
+            Some(Some(r)) => r.intersect(&self.bounds()),
+            _ => self.bounds(),
+        }
     }
 
     /// Quantos passos de desfazer guardar (preferência).
@@ -528,6 +557,51 @@ impl Document {
         }
         changed
     }
+}
+
+/// Onde a tela muda ao trocar a pilha `a` por `b`: os tiles trocados (as superfícies são
+/// copy-on-write, então um tile igual é o mesmo ponteiro). `None` se a pilha ou alguma
+/// propriedade que muda a aparência for diferente (aí recompõe tudo).
+pub fn changed_region(a: &[Layer], b: &[Layer]) -> Option<Rect> {
+    if a.len() != b.len() {
+        return None;
+    }
+    let mut r = Rect::EMPTY;
+    for (x, y) in a.iter().zip(b) {
+        let same = x.id == y.id
+            && x.visible == y.visible
+            && x.opacity == y.opacity
+            && x.blend == y.blend
+            && x.clip == y.clip
+            && x.mask == y.mask
+            && x.folder == y.folder
+            && x.draft == y.draft
+            && x.reference == y.reference
+            && x.parent == y.parent
+            && x.border == y.border
+            && x.tone == y.tone;
+        if !same {
+            return None;
+        }
+        let pad = x.border.map_or(0, |b| b.pad());
+        let mut add = |c: &photocraft_geom::TileCoord| {
+            r = r.union(&c.rect().inflate(pad));
+        };
+        for (c, t) in x.surface.tiles() {
+            if y.surface
+                .tile(*c)
+                .is_none_or(|u| !std::sync::Arc::ptr_eq(t, u))
+            {
+                add(c);
+            }
+        }
+        for (c, _) in y.surface.tiles() {
+            if x.surface.tile(*c).is_none() {
+                add(c);
+            }
+        }
+    }
+    Some(r)
 }
 
 #[cfg(test)]

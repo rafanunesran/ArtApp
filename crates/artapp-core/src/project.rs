@@ -179,25 +179,36 @@ fn blend_from_name(s: &str) -> BlendMode {
 }
 
 /// Codifica o documento como projeto `.artapp`.
+/// O retângulo pintado de uma camada e o PNG dele.
+type EncodedLayer = (Rect, Vec<u8>);
+
 pub fn save(doc: &Document) -> Result<Vec<u8>, String> {
     let mut blobs = Blobs::default();
     let preview = preview_png(doc).ok().map(|png| blobs.push(&png));
     let mut layers = Vec::with_capacity(doc.layers.len());
-    for l in &doc.layers {
-        let r = l.surface.content_bounds();
-        let pixels = if r.is_empty() {
-            None
-        } else {
-            let bytes = l.surface.to_interleaved(r);
-            let png = encode_rgba(r.width(), r.height(), &bytes)?;
-            Some(Pixels {
-                x: r.x0,
-                y: r.y0,
-                w: r.width(),
-                h: r.height(),
-                png: blobs.push(&png),
+    // As camadas viram PNG ao mesmo tempo, uma por núcleo (é a parte lenta de salvar).
+    let encoded: Vec<Result<Option<EncodedLayer>, String>> = {
+        use rayon::prelude::*;
+        doc.layers
+            .par_iter()
+            .map(|l| {
+                let r = l.surface.content_bounds();
+                if r.is_empty() {
+                    return Ok(None);
+                }
+                let bytes = l.surface.to_interleaved(r);
+                Ok(Some((r, encode_rgba(r.width(), r.height(), &bytes)?)))
             })
-        };
+            .collect()
+    };
+    for (l, enc) in doc.layers.iter().zip(encoded) {
+        let pixels = enc?.map(|(r, png)| Pixels {
+            x: r.x0,
+            y: r.y0,
+            w: r.width(),
+            h: r.height(),
+            png: blobs.push(&png),
+        });
         let vector = l
             .vector
             .as_ref()
@@ -298,10 +309,30 @@ pub fn load(bytes: &[u8]) -> Result<Document, String> {
     let m: Manifest =
         serde_json::from_slice(json).map_err(|e| format!("projeto corrompido: {e}"))?;
     let data = bytes.get(HEADER_LEN + len..).unwrap_or_default();
+    // Os PNG das camadas são lidos ao mesmo tempo, um por núcleo.
+    let decoded: Vec<Result<Option<Surface>, String>> = {
+        use rayon::prelude::*;
+        m.layers
+            .par_iter()
+            .map(|e| {
+                let Some(p) = &e.pixels else {
+                    return Ok(None);
+                };
+                let (w, h, px) = decode_rgba(slice(data, &p.png)?)?;
+                if (w, h) != (p.w, p.h) {
+                    return Err("projeto corrompido (pixels de tamanho errado)".into());
+                }
+                let r = Rect::new(p.x, p.y, p.x + w as i32, p.y + h as i32);
+                let mut s = Surface::from_interleaved(PixelFormat::RGBA8, r, &px);
+                s.prune();
+                Ok(Some(s))
+            })
+            .collect()
+    };
     let mut layers = Vec::with_capacity(m.layers.len());
     let mut seen = std::collections::HashSet::new();
     let mut next_free = m.layers.iter().map(|l| l.id).max().unwrap_or(0) + 1;
-    for e in m.layers {
+    for (e, surface) in m.layers.into_iter().zip(decoded) {
         // Ids repetidos (arquivo mexido à mão) confundiriam as miniaturas e o kit vetorial.
         let id = if seen.insert(e.id) {
             e.id
@@ -332,14 +363,8 @@ pub fn load(bytes: &[u8]) -> Result<Document, String> {
             width: e.border_width.min(crate::border::MAX_WIDTH),
             color: e.border_color.map(|c| c.clamp(0.0, 1.0)),
         });
-        if let Some(p) = &e.pixels {
-            let (w, h, px) = decode_rgba(slice(data, &p.png)?)?;
-            if (w, h) != (p.w, p.h) {
-                return Err("projeto corrompido (pixels de tamanho errado)".into());
-            }
-            let r = Rect::new(p.x, p.y, p.x + w as i32, p.y + h as i32);
-            layer.surface = Surface::from_interleaved(PixelFormat::RGBA8, r, &px);
-            layer.surface.prune();
+        if let Some(s) = surface? {
+            layer.surface = s;
         }
         if let Some(b) = &e.vector {
             let vdoc = vectorcraft_format::load(slice(data, b)?)
@@ -394,20 +419,20 @@ pub fn read_preview(path: &Path) -> Option<Vec<u8>> {
 
 /// PNG pequeno da imagem final (com o papel), para a lista de projetos.
 fn preview_png(doc: &Document) -> Result<Vec<u8>, String> {
-    let (r, px) = composite_pass(doc, doc.bounds(), true, Pass::Final);
-    let (w, h) = (r.width().max(1), r.height().max(1));
+    let (w, h) = (doc.width.max(1), doc.height.max(1));
     let s = (PREVIEW_MAX as f32 / w.max(h) as f32).min(1.0);
     let (tw, th) = (
         ((w as f32 * s) as u32).max(1),
         ((h as f32 * s) as u32).max(1),
     );
+    // Só as linhas que a miniatura usa (uma em cada ~14 numa tela A4), não a tela toda.
     let mut out = Vec::with_capacity((tw * th * 4) as usize);
     for y in 0..th {
+        let sy = ((y as f32 + 0.5) * h as f32 / th as f32) as i32;
+        let (_, px) = composite_pass(doc, Rect::new(0, sy, w as i32, sy + 1), true, Pass::Final);
         for x in 0..tw {
             let sx = ((x as f32 + 0.5) * w as f32 / tw as f32) as usize;
-            let sy = ((y as f32 + 0.5) * h as f32 / th as f32) as usize;
-            let p = px.get(sy * w as usize + sx).copied().unwrap_or_default();
-            out.extend_from_slice(&p);
+            out.extend_from_slice(&px.get(sx).copied().unwrap_or_default());
         }
     }
     encode_rgba(tw, th, &out)

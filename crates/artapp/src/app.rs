@@ -279,6 +279,9 @@ pub struct ArtApp {
     pub show_perf: bool,
     /// Modo simples: menos ferramentas e só as abas Pincéis, Rápido e Geral no pincel.
     pub simple_mode: bool,
+    /// Modo econômico: menos trabalho por quadro em aparelhos fracos (a tela do traço atualiza
+    /// a 30 quadros por segundo, guarda menos memória e as miniaturas demoram mais).
+    pub low_power: bool,
     /// Duração dos últimos quadros, em segundos (o mais novo no fim).
     pub frame_times: std::collections::VecDeque<f32>,
     /// Hora de cada amostra da caneta/dedo no último segundo de traço (diagnóstico).
@@ -512,6 +515,8 @@ pub struct ArtApp {
     pub canvas_rect: egui::Rect,
     pub(crate) brush_previews: Vec<TextureHandle>,
     thumbs: HashMap<u64, TextureHandle>,
+    /// Os tiles de cada camada quando a miniatura foi feita (refaz só as que mudaram).
+    thumb_keys: HashMap<u64, u64>,
     thumbs_stale: bool,
     thumbs_at: f64,
     /// Retângulo da tela que precisa ser recomposto no próximo quadro.
@@ -648,6 +653,7 @@ impl ArtApp {
             tour_step: None,
             show_perf: false,
             simple_mode: false,
+            low_power: false,
             frame_times: Default::default(),
             input_samples: Default::default(),
             input_rate: 0.0,
@@ -700,6 +706,7 @@ impl ArtApp {
             canvas_rect: egui::Rect::NOTHING,
             brush_previews: Vec::new(),
             thumbs: HashMap::new(),
+            thumb_keys: HashMap::new(),
             thumbs_stale: true,
             thumbs_at: 0.0,
             pending: Rect::EMPTY,
@@ -733,6 +740,9 @@ impl ArtApp {
         }
         if let Some(b) = flag("simple_mode") {
             self.simple_mode = b;
+        }
+        if let Some(b) = flag("low_power") {
+            self.low_power = b;
         }
         if let Some(b) = flag("speed_pressure") {
             self.speed_pressure = b;
@@ -889,6 +899,7 @@ impl ArtApp {
             "tour_done": self.tour_done,
             "show_perf": self.show_perf,
             "simple_mode": self.simple_mode,
+            "low_power": self.low_power,
             "pressure_curve": self.pressure_curve,
             "brush_curves": self.brush_curves,
             "vector_pen_size": self.vector_pen.size,
@@ -1000,10 +1011,21 @@ impl ArtApp {
         let now = ctx.input(|i| i.time);
         let ids: Vec<u64> = self.doc.layers.iter().map(|l| l.id).collect();
         let missing = ids.iter().any(|id| !self.thumbs.contains_key(id));
-        if missing || (self.thumbs_stale && now - self.thumbs_at > 0.5) {
+        let every = if self.low_power { 1.5 } else { 0.5 };
+        if missing || (self.thumbs_stale && now - self.thumbs_at > every) {
             self.thumbs.retain(|id, _| ids.contains(id));
+            self.thumb_keys.retain(|id, _| ids.contains(id));
             let (tw, th) = thumb_size(self.doc.width, self.doc.height);
             for layer in &self.doc.layers {
+                // Só refaz as camadas cuja tinta mudou (pintando, é só a ativa).
+                let key = artapp_core::composite::surface_key(&layer.surface)
+                    ^ (u64::from(self.doc.width) << 32 | u64::from(self.doc.height));
+                if self.thumbs.contains_key(&layer.id)
+                    && self.thumb_keys.get(&layer.id) == Some(&key)
+                {
+                    continue;
+                }
+                self.thumb_keys.insert(layer.id, key);
                 let px = thumbnail(layer, self.doc.width, self.doc.height, tw, th);
                 let img = egui::ColorImage::from_rgba_unmultiplied([tw, th], px.as_flattened());
                 match self.thumbs.get_mut(&layer.id) {
@@ -1527,7 +1549,9 @@ impl ArtApp {
             if size != (self.doc.width, self.doc.height) {
                 self.view.request_fit();
             }
-            self.invalidate_all();
+            // Só os tiles que o passo trocou (um traço desfeito recompõe só onde ele passou).
+            let r = self.doc.take_history_dirty();
+            self.invalidate(r);
         }
     }
 
@@ -1540,7 +1564,9 @@ impl ArtApp {
             if size != (self.doc.width, self.doc.height) {
                 self.view.request_fit();
             }
-            self.invalidate_all();
+            // Só os tiles que o passo trocou (um traço desfeito recompõe só onde ele passou).
+            let r = self.doc.take_history_dirty();
+            self.invalidate(r);
         }
     }
 
@@ -1554,7 +1580,9 @@ impl ArtApp {
             if size != (self.doc.width, self.doc.height) {
                 self.view.request_fit();
             }
-            self.invalidate_all();
+            // Só os tiles que o passo trocou (um traço desfeito recompõe só onde ele passou).
+            let r = self.doc.take_history_dirty();
+            self.invalidate(r);
         }
     }
 

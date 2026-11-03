@@ -1,6 +1,6 @@
 //! Composição das camadas para exibição e exportação, com os modos de mesclagem do PhotoCraft.
 
-use photocraft_color::blend;
+use photocraft_color::{BlendMode, blend};
 use photocraft_geom::Rect;
 use photocraft_raster::Surface;
 
@@ -66,105 +66,375 @@ pub(crate) fn composite_view(
     pass: Pass,
     view: Option<(usize, bool)>,
 ) -> (Rect, Vec<[u8; 4]>) {
-    use crate::animation::FrameLook;
     let r = r.intersect(&doc.bounds());
     if r.is_empty() {
         return (r, Vec::new());
     }
-    let n = r.width() as usize * r.height() as usize;
     let base = if with_paper { doc.paper } else { [0.0; 4] };
-    let mut acc = vec![base; n];
-    let mut row = vec![[0.0f32; 4]; n];
-    // Alfa da camada base do grupo de recorte atual (`None` = a base não aparece).
-    let mut clip_base: Option<Vec<f32>> = None;
-    let mut mask_row = Vec::new();
-    for (i, layer) in doc.layers.iter().enumerate() {
-        // A máscara entra junto com a camada de baixo, não sozinha.
-        if layer.mask {
-            continue;
-        }
-        let included = match pass {
+    let job = Job { doc, pass, view };
+    let px = in_bands(r, |band, acc| {
+        acc.fill(base);
+        job.run(band, 0, acc);
+    });
+    (r, px)
+}
+
+/// Linhas por faixa na composição em paralelo (cada faixa vai para um núcleo).
+const BAND_ROWS: i32 = 64;
+/// Abaixo disso (em pixels) compõe num núcleo só: dividir custaria mais que ganharia.
+const PARALLEL_MIN: usize = 96 * 1024;
+
+/// Compõe `r` em faixas de linhas, em paralelo quando a área é grande. `fill` deixa em `acc` os
+/// pixels compostos (não pré-multiplicados) da faixa, e cada faixa vira RGBA 8 bits.
+fn in_bands(r: Rect, fill: impl Fn(Rect, &mut [[f32; 4]]) + Sync) -> Vec<[u8; 4]> {
+    let w = r.width() as usize;
+    let n = w * r.height() as usize;
+    let mut out = vec![[0u8; 4]; n];
+    let one = |band: Rect, chunk: &mut [[u8; 4]]| {
+        let mut acc = vec![[0.0f32; 4]; chunk.len()];
+        fill(band, &mut acc);
+        quantize(&acc, chunk);
+    };
+    if n < PARALLEL_MIN {
+        one(r, &mut out);
+    } else {
+        use rayon::prelude::*;
+        out.par_chunks_mut(w * BAND_ROWS as usize)
+            .enumerate()
+            .for_each(|(k, chunk)| {
+                let y0 = r.y0 + k as i32 * BAND_ROWS;
+                let band = Rect::new(r.x0, y0, r.x1, y0 + (chunk.len() / w) as i32);
+                one(band, chunk);
+            });
+    }
+    out
+}
+
+fn quantize(acc: &[[f32; 4]], out: &mut [[u8; 4]]) {
+    let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    for (o, p) in out.iter_mut().zip(acc) {
+        *o = [q(p[0]), q(p[1]), q(p[2]), q(p[3])];
+    }
+}
+
+/// Mesclagem normal ("por cima"), a mais comum, sem passar pela tabela de modos.
+#[inline]
+fn over(dst: [f32; 4], src: [f32; 4], opacity: f32) -> [f32; 4] {
+    let a = src[3] * opacity;
+    if a >= 1.0 {
+        return [src[0], src[1], src[2], 1.0];
+    }
+    let keep = dst[3] * (1.0 - a);
+    let ao = a + keep;
+    if ao <= 0.0 {
+        return [0.0; 4];
+    }
+    let inv = 1.0 / ao;
+    [
+        (keep * dst[0] + a * src[0]) * inv,
+        (keep * dst[1] + a * src[1]) * inv,
+        (keep * dst[2] + a * src[2]) * inv,
+        ao,
+    ]
+}
+
+#[inline]
+fn mix(mode: BlendMode, dst: [f32; 4], src: [f32; 4], opacity: f32) -> [f32; 4] {
+    if mode == BlendMode::Normal {
+        over(dst, src, opacity)
+    } else {
+        blend::composite(mode, dst, src, opacity)
+    }
+}
+
+/// Como a camada `i` aparece: opacidade final (com pasta e quadro) e a cor da pele de cebola.
+fn layer_look(doc: &Document, i: usize, view: Option<(usize, bool)>) -> (f32, Option<[f32; 3]>) {
+    use crate::animation::FrameLook;
+    let layer = &doc.layers[i];
+    let fold = doc.folder_mix(i);
+    let look = view.map_or(FrameLook::Shown, |(k, onion)| doc.frame_look(i, k, onion));
+    let (look_k, tint) = match look {
+        FrameLook::Shown => (1.0, None),
+        FrameLook::Onion(o, t) => (o, t),
+        FrameLook::Hidden => (0.0, None),
+    };
+    (layer.opacity * fold.unwrap_or(0.0) * look_k, tint)
+}
+
+/// O que compor: o documento, as camadas que entram e o quadro da animação.
+struct Job<'a> {
+    doc: &'a Document,
+    pass: Pass,
+    view: Option<(usize, bool)>,
+}
+
+impl Job<'_> {
+    fn included(&self, i: usize) -> bool {
+        let layer = &self.doc.layers[i];
+        match self.pass {
             Pass::Display => true,
             Pass::Final => !layer.draft,
             Pass::Reference => layer.reference,
             Pass::NoReference => !layer.reference,
             Pass::Only(k) => i == k,
-        };
-        // Pastas não têm tinta: só escondem e esmaecem o que está dentro.
-        if layer.folder {
-            continue;
         }
-        let fold = doc.folder_mix(i);
-        let look = view.map_or(FrameLook::Shown, |(k, onion)| doc.frame_look(i, k, onion));
-        let (look_k, tint) = match look {
-            FrameLook::Shown => (1.0, None),
-            FrameLook::Onion(o, t) => (o, t),
-            FrameLook::Hidden => (0.0, None),
-        };
-        let opacity = layer.opacity * fold.unwrap_or(0.0) * look_k;
-        let shown = included && layer.visible && opacity > 0.0;
-        if !layer.clip {
-            clip_base = None;
-        }
-        let reach = layer.border.map_or(r, |b| r.inflate(b.pad()));
-        if !shown || !layer.surface.has_tiles_in(reach) {
-            if !layer.clip && shown {
-                // Base vazia neste trecho: as camadas recortadas nela também somem aqui.
-                clip_base = Some(vec![0.0; n]);
-            }
-            continue;
-        }
-        match &layer.border {
-            Some(b) => {
-                crate::border::read_with_border(&layer.surface, b, r, doc.bounds(), &mut row)
-            }
-            None => layer.surface.read_rgba_into(r, &mut row),
-        }
-        if let Some(t) = &layer.tone {
-            crate::tone::apply(t, r, &mut row);
-        }
-        if let Some(c) = tint {
-            // Pele de cebola colorida: a tinta vira a cor do lado (mantendo o alfa).
-            for p in row.iter_mut() {
-                p[0] = c[0];
-                p[1] = c[1];
-                p[2] = c[2];
-            }
-        }
-        if let Some(m) = doc.mask_above(i) {
-            mask_row.resize(n, [0.0f32; 4]);
-            m.surface.read_rgba_into(r, &mut mask_row);
-            for (p, k) in row.iter_mut().zip(&mask_row) {
-                p[3] *= mask_visibility(*k);
-            }
-        }
-        if layer.clip {
-            let Some(mask) = &clip_base else {
+    }
+
+    /// Compõe as camadas de `from` para cima sobre `acc` (o retângulo `r`). `from` tem que ser 0
+    /// ou uma camada comum (sem recorte, máscara ou pasta), onde o grupo de recorte recomeça.
+    fn run(&self, r: Rect, from: usize, acc: &mut [[f32; 4]]) {
+        self.run_range(r, from, self.doc.layers.len(), acc);
+    }
+
+    /// Como [`Self::run`], parando antes da camada `to`.
+    fn run_range(&self, r: Rect, from: usize, to: usize, acc: &mut [[f32; 4]]) {
+        let doc = self.doc;
+        let n = acc.len();
+        let mut row = vec![[0.0f32; 4]; n];
+        // Alfa da camada base do grupo de recorte atual (`false` = a base não aparece aqui, e
+        // as camadas recortadas nela somem).
+        let mut clip_alpha = vec![0.0f32; n];
+        let mut clip_on = false;
+        let mut mask_row = Vec::new();
+        for i in from..to.min(doc.layers.len()) {
+            let layer = &doc.layers[i];
+            // A máscara entra junto com a camada de baixo, não sozinha. Pastas não têm tinta:
+            // só escondem e esmaecem o que está dentro.
+            if layer.mask || layer.folder {
                 continue;
-            };
-            for ((dst, src), m) in acc.iter_mut().zip(&row).zip(mask) {
-                let a = src[3] * m;
-                if a > 0.0 {
-                    *dst =
-                        blend::composite(layer.blend, *dst, [src[0], src[1], src[2], a], opacity);
+            }
+            let (opacity, tint) = layer_look(doc, i, self.view);
+            let shown = self.included(i) && layer.visible && opacity > 0.0;
+            if !layer.clip {
+                clip_on = false;
+            }
+            if !shown {
+                continue;
+            }
+            let reach = layer.border.map_or(r, |b| r.inflate(b.pad()));
+            if !layer.surface.has_tiles_in(reach) {
+                // Base vazia neste trecho: as camadas recortadas nela também somem aqui.
+                continue;
+            }
+            if layer.clip && !clip_on {
+                continue;
+            }
+            match &layer.border {
+                Some(b) => {
+                    crate::border::read_with_border(&layer.surface, b, r, doc.bounds(), &mut row)
+                }
+                None => layer.surface.read_rgba_into(r, &mut row),
+            }
+            if let Some(t) = &layer.tone {
+                crate::tone::apply(t, r, &mut row);
+            }
+            if let Some(c) = tint {
+                // Pele de cebola colorida: a tinta vira a cor do lado (mantendo o alfa).
+                for p in row.iter_mut() {
+                    p[0] = c[0];
+                    p[1] = c[1];
+                    p[2] = c[2];
                 }
             }
-            continue;
-        }
-        clip_base = Some(row.iter().map(|p| p[3]).collect());
-        for (dst, src) in acc.iter_mut().zip(&row) {
-            if src[3] > 0.0 {
-                *dst = blend::composite(layer.blend, *dst, *src, opacity);
+            if let Some(m) = doc.mask_above(i) {
+                mask_row.resize(n, [0.0f32; 4]);
+                m.surface.read_rgba_into(r, &mut mask_row);
+                for (p, k) in row.iter_mut().zip(&mask_row) {
+                    p[3] *= mask_visibility(*k);
+                }
+            }
+            let mode = layer.blend;
+            if layer.clip {
+                for ((dst, src), m) in acc.iter_mut().zip(&row).zip(&clip_alpha) {
+                    let a = src[3] * m;
+                    if a > 0.0 {
+                        *dst = mix(mode, *dst, [src[0], src[1], src[2], a], opacity);
+                    }
+                }
+                continue;
+            }
+            clip_on = true;
+            for ((dst, src), m) in acc.iter_mut().zip(&row).zip(clip_alpha.iter_mut()) {
+                *m = src[3];
+                if src[3] > 0.0 {
+                    *dst = mix(mode, *dst, *src, opacity);
+                }
             }
         }
     }
-    let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
-    (
-        r,
-        acc.into_iter()
-            .map(|p| [q(p[0]), q(p[1]), q(p[2]), q(p[3])])
-            .collect(),
-    )
+}
+
+/// Onde a tela pode ser dividida para guardar o que fica abaixo da camada ativa: a camada comum
+/// mais alta até a ativa (se a ativa está recortada, a base do grupo dela).
+fn split_index(doc: &Document) -> usize {
+    let mut s = doc.active.min(doc.layers.len().saturating_sub(1));
+    while s > 0 {
+        let l = &doc.layers[s];
+        if !(l.clip || l.mask || l.folder) {
+            break;
+        }
+        s -= 1;
+    }
+    s
+}
+
+/// Identifica os tiles de uma superfície (os ponteiros, que são copy-on-write: mudar a tinta
+/// troca o tile). Barato: uma tela A4 tem algumas dezenas de tiles por camada.
+pub fn surface_key(s: &photocraft_raster::Surface) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.tile_count().hash(&mut h);
+    for (c, t) in s.tiles() {
+        (c.tx, c.ty, std::sync::Arc::as_ptr(t) as usize).hash(&mut h);
+    }
+    h.finish()
+}
+
+/// Lado dos blocos guardados pelo [`DisplayCache`].
+const BLOCK: i32 = 64;
+const BLOCK_BYTES: usize = (BLOCK * BLOCK) as usize * 16;
+
+/// Guarda a composição das camadas abaixo da ativa enquanto se pinta nela, para que cada quadro
+/// do traço só misture a camada ativa e as de cima. Com muitas camadas é a maior parte do
+/// trabalho da tela. Os blocos (64 × 64) são feitos na hora em que o traço passa e jogados fora
+/// quando qualquer coisa abaixo muda (camadas, propriedades, histórico, papel ou quadro).
+pub struct DisplayCache {
+    key: u64,
+    split: usize,
+    blocks: std::collections::HashMap<(i32, i32), Box<[[f32; 4]]>>,
+    /// Memória máxima dos blocos, em bytes. Passou disso, recomeça do zero.
+    pub budget: usize,
+}
+
+impl Default for DisplayCache {
+    fn default() -> Self {
+        Self {
+            key: 0,
+            split: 0,
+            blocks: Default::default(),
+            budget: 64 << 20,
+        }
+    }
+}
+
+impl DisplayCache {
+    /// Libera a memória dos blocos (ex.: no fim do traço).
+    pub fn clear(&mut self) {
+        self.blocks = Default::default();
+        self.key = 0;
+    }
+
+    /// Bytes ocupados agora.
+    pub fn bytes(&self) -> usize {
+        self.blocks.len() * BLOCK_BYTES
+    }
+
+    fn key_for(doc: &Document, split: usize, view: Option<(usize, bool)>) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (doc.history_version(), split, doc.width, doc.height, view).hash(&mut h);
+        doc.paper.map(f32::to_bits).hash(&mut h);
+        for i in 0..split {
+            let l = &doc.layers[i];
+            let (opacity, tint) = layer_look(doc, i, view);
+            (l.id, l.visible, l.blend, l.clip, l.mask, l.folder, l.draft).hash(&mut h);
+            opacity.to_bits().hash(&mut h);
+            tint.map(|c| c.map(f32::to_bits)).hash(&mut h);
+            l.border
+                .map(|b| (b.width.to_bits(), b.color.map(f32::to_bits)))
+                .hash(&mut h);
+            l.tone
+                .map(|t| (t.period.to_bits(), t.angle.to_bits()))
+                .hash(&mut h);
+            surface_key(&l.surface).hash(&mut h);
+        }
+        h.finish()
+    }
+
+    /// Como [`composite_rgba8`] com papel (a tela), reaproveitando o que já foi composto abaixo
+    /// da camada ativa. Áreas grandes (abrir, desfazer tudo) vão direto, sem guardar nada.
+    pub fn composite(&mut self, doc: &Document, r: Rect) -> (Rect, Vec<[u8; 4]>) {
+        let r = r.intersect(&doc.bounds());
+        if r.is_empty() {
+            return (r, Vec::new());
+        }
+        let a = &doc.animation;
+        let view = a.enabled.then_some((a.current, !a.pages));
+        let split = split_index(doc);
+        let area = r.width() as usize * r.height() as usize * 16;
+        if split == 0 || area * 4 > self.budget {
+            return composite_view(doc, r, true, Pass::Display, view);
+        }
+        let key = Self::key_for(doc, split, view);
+        if key != self.key || split != self.split {
+            self.blocks.clear();
+            self.key = key;
+            self.split = split;
+        }
+        let (bx0, by0) = (r.x0.div_euclid(BLOCK), r.y0.div_euclid(BLOCK));
+        let (bx1, by1) = ((r.x1 - 1).div_euclid(BLOCK), (r.y1 - 1).div_euclid(BLOCK));
+        let missing: Vec<(i32, i32)> = (by0..=by1)
+            .flat_map(|by| (bx0..=bx1).map(move |bx| (bx, by)))
+            .filter(|b| !self.blocks.contains_key(b))
+            .collect();
+        if (self.blocks.len() + missing.len()) * BLOCK_BYTES > self.budget {
+            // Cheio: recomeça (o traço segue em outro canto da tela).
+            self.blocks.clear();
+            return self.composite(doc, r);
+        }
+        let job = Job {
+            doc,
+            pass: Pass::Display,
+            view,
+        };
+        let bounds = doc.bounds();
+        let make = |&(bx, by): &(i32, i32)| {
+            let br = Rect::new(bx * BLOCK, by * BLOCK, (bx + 1) * BLOCK, (by + 1) * BLOCK)
+                .intersect(&bounds);
+            let mut acc = vec![doc.paper; (BLOCK * BLOCK) as usize];
+            let n = br.width() as usize * br.height() as usize;
+            job.run_range(br, 0, split, &mut acc[..n]);
+            ((bx, by), acc.into_boxed_slice())
+        };
+        let made: Vec<_> = if missing.len() > 2 {
+            use rayon::prelude::*;
+            missing.par_iter().map(make).collect()
+        } else {
+            missing.iter().map(make).collect()
+        };
+        self.blocks.extend(made);
+        let blocks = &self.blocks;
+        let px = in_bands(r, |band, acc| {
+            let w = band.width() as usize;
+            for (bk, block) in blocks.iter().filter(|(k, _)| {
+                k.1 >= band.y0.div_euclid(BLOCK)
+                    && k.1 <= (band.y1 - 1).div_euclid(BLOCK)
+                    && k.0 >= bx0
+                    && k.0 <= bx1
+            }) {
+                let br = Rect::new(
+                    bk.0 * BLOCK,
+                    bk.1 * BLOCK,
+                    (bk.0 + 1) * BLOCK,
+                    (bk.1 + 1) * BLOCK,
+                )
+                .intersect(&bounds);
+                let bw = br.width() as usize;
+                let part = br.intersect(&band);
+                if part.is_empty() {
+                    continue;
+                }
+                let span = part.width() as usize;
+                for y in part.y0..part.y1 {
+                    let src = ((y - br.y0) as usize) * bw + (part.x0 - br.x0) as usize;
+                    let dst = ((y - band.y0) as usize) * w + (part.x0 - band.x0) as usize;
+                    acc[dst..dst + span].copy_from_slice(&block[src..src + span]);
+                }
+            }
+            job.run(band, split, acc);
+        });
+        (r, px)
+    }
 }
 
 /// Quanto um pixel da máscara deixa ver: o cinza dele sobre branco (sem tinta = tudo aparece,
@@ -358,5 +628,81 @@ mod tests {
                 assert!((a[c] as i32 - b[c] as i32).abs() <= 1, "{a:?} {b:?}");
             }
         }
+    }
+
+    /// A tela com e sem o guardado das camadas de baixo tem que ser a mesma, com recorte,
+    /// máscara, pasta e modos de mesclagem no meio.
+    #[test]
+    fn display_cache_matches_direct_composite() {
+        let mut doc = Document::new(300, 200);
+        let b = doc.bounds();
+        paint(&mut doc, 0, b, [0.3, 0.6, 0.9, 1.0]);
+        doc.add_layer();
+        paint(
+            &mut doc,
+            1,
+            Rect::new(10, 10, 200, 150),
+            [1.0, 0.0, 0.0, 0.5],
+        );
+        doc.layers[1].blend = BlendMode::Multiply;
+        doc.add_layer();
+        paint(
+            &mut doc,
+            2,
+            Rect::new(50, 20, 250, 180),
+            [0.0, 1.0, 0.0, 0.7],
+        );
+        doc.add_layer();
+        paint(&mut doc, 3, Rect::new(0, 0, 300, 100), [0.0, 0.0, 1.0, 1.0]);
+        doc.layers[3].clip = true;
+        doc.add_layer();
+        paint(
+            &mut doc,
+            4,
+            Rect::new(100, 50, 280, 190),
+            [1.0, 1.0, 0.0, 0.8],
+        );
+        doc.layers[4].opacity = 0.6;
+        let mut cache = DisplayCache::default();
+        for active in 0..doc.layers.len() {
+            doc.active = active;
+            for r in [
+                Rect::new(0, 0, 300, 200),
+                Rect::new(37, 61, 140, 77),
+                Rect::new(250, 150, 300, 200),
+            ] {
+                let want = composite_rgba8(&doc, r, true);
+                assert_eq!(cache.composite(&doc, r), want, "ativa {active}, {r:?}");
+            }
+            // Mudar uma camada de baixo joga o guardado fora.
+            if active > 1 {
+                doc.checkpoint();
+                paint(&mut doc, 0, Rect::new(0, 0, 40, 40), [0.0, 0.0, 0.0, 1.0]);
+                let r = Rect::new(0, 0, 80, 80);
+                assert_eq!(cache.composite(&doc, r), composite_rgba8(&doc, r, true));
+            }
+        }
+    }
+
+    #[test]
+    fn undo_reports_only_the_changed_tiles() {
+        let mut doc = Document::new(2000, 2000);
+        doc.add_layer();
+        doc.checkpoint();
+        paint(
+            &mut doc,
+            1,
+            Rect::new(1500, 1500, 1510, 1510),
+            [1.0, 0.0, 0.0, 1.0],
+        );
+        assert!(doc.undo());
+        let r = doc.take_history_dirty();
+        assert!(r.contains(1505, 1505), "{r:?}");
+        assert!(r.width() <= 512 && r.height() <= 512, "{r:?}");
+        // Mudar a ordem das camadas recompõe tudo.
+        doc.checkpoint();
+        doc.move_layer(false);
+        assert!(doc.undo());
+        assert_eq!(doc.take_history_dirty(), doc.bounds());
     }
 }

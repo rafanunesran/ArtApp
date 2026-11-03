@@ -273,6 +273,11 @@ fn app_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
         .add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
             theme::switch(ui, &mut app.simple_mode, "Modo simples (menos ferramentas)")
         })
+        .changed();
+    changed |= ui
+        .add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
+            theme::switch(ui, &mut app.low_power, "Modo econômico (aparelhos mais fracos)")
+        })
         .on_hover_text("Mostra só pincel, borracha, mistura, balde, conta-gotas, mão, mover e laço, e as abas Pincéis, Rápido e Geral.")
         .changed();
     let r = artapp_core::history::UNDO_RANGE;

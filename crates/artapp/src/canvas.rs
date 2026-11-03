@@ -164,6 +164,10 @@ pub struct CanvasView {
     /// Tamanho do painel no último encaixe.
     fitted_for: Vec2,
     texture: Option<(TextureHandle, [usize; 2])>,
+    /// Quando a textura da tela foi atualizada pela última vez (modo econômico).
+    uploaded_at: f64,
+    /// O que está abaixo da camada ativa, já composto, enquanto se pinta.
+    pub display: composite::DisplayCache,
     stroke: Option<ActiveStroke>,
     touches: HashMap<u64, Pos2>,
     /// Dois ou mais dedos: zoom/pan até todos saírem da tela.
@@ -421,6 +425,14 @@ fn update_texture(app: &mut ArtApp, ctx: &egui::Context) {
     let size = [app.doc.width as usize, app.doc.height as usize];
     let options = TextureOptions::LINEAR;
     let fresh = app.view.texture.as_ref().is_none_or(|(_, s)| *s != size);
+    // Modo econômico: durante o traço a tela atualiza no máximo 30 vezes por segundo (o resto
+    // espera junto para o próximo quadro, então nada se perde).
+    let now = ctx.input(|i| i.time);
+    let wait = 1.0 / 30.0 - (now - app.view.uploaded_at);
+    if !fresh && app.low_power && app.view.stroke.is_some() && wait > 0.0 {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
+        return;
+    }
     let dirty = if fresh {
         app.doc.bounds()
     } else {
@@ -432,7 +444,14 @@ fn update_texture(app: &mut ArtApp, ctx: &egui::Context) {
     if dirty.is_empty() {
         return;
     }
-    let (r, px) = composite::composite_rgba8(&app.doc, dirty, true);
+    // Durante um traço só a camada ativa muda: o que está embaixo dela vem do guardado.
+    app.view.uploaded_at = now;
+    let (r, px) = if app.view.stroke.is_some() {
+        app.view.display.budget = if app.low_power { 24 << 20 } else { 64 << 20 };
+        app.view.display.composite(&app.doc, dirty)
+    } else {
+        composite::composite_rgba8(&app.doc, dirty, true)
+    };
     if r.is_empty() {
         return;
     }
@@ -845,7 +864,8 @@ pub fn redo_drop_fill(app: &mut ArtApp) {
     };
     let (x, y) = d.at;
     if app.doc.undo() {
-        app.invalidate_all();
+        let r = app.doc.take_history_dirty();
+        app.invalidate(r);
         drop_fill_at(app, x, y);
     }
 }
@@ -1474,6 +1494,8 @@ fn end_stroke(app: &mut ArtApp) {
     let Some(s) = app.view.stroke.take() else {
         return;
     };
+    // O guardado só vale durante o traço: devolve a memória.
+    app.view.display.clear();
     app.close_panels();
     let style = app.vector_style();
     let dirty = match s.kind {
@@ -1596,6 +1618,7 @@ fn cancel_stroke(app: &mut ArtApp) {
     let Some(s) = app.view.stroke.take() else {
         return;
     };
+    app.view.display.clear();
     match s.kind {
         ActiveKind::Paint(session) => {
             let dirty = session.cancel(&mut app.doc);
