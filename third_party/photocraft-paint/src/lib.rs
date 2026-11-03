@@ -20,6 +20,9 @@
     clippy::todo,
     clippy::unreachable
 )]
+// Os testes do PhotoCraft usam unwrap/expect/panic à vontade (no repositório de origem a
+// verificação é só do código de produção).
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 use photocraft_geom::{Point, Rect};
 use photocraft_raster::Surface;
