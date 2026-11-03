@@ -3845,13 +3845,14 @@ pub fn perf_overlay(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) {
         "\ncaneta: desenhe para medir".to_string()
     };
     let text = format!(
-        "{avg:.1} ms (pior {worst:.0} ms) · {:.0} qps\n{} camadas · {} × {} px{rate}",
+        "{avg:.1} ms (pior {worst:.0} ms) · {:.0} qps\n{} camadas · {} × {} px · {} MB{rate}",
         if avg > 0.0 { 1000.0 / avg } else { 0.0 },
         app.doc.layers.len(),
         app.doc.width,
-        app.doc.height
+        app.doc.height,
+        app.mem_bytes >> 20
     );
-    let warn = avg > 20.0;
+    let warn = avg > 20.0 || app.mem_bytes > crate::app::MEMORY_WARN_BYTES;
     egui::Area::new(Id::unique("perf"))
         .order(Order::Tooltip)
         .interactable(false)

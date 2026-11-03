@@ -445,6 +445,25 @@ impl Document {
         self.history.drop_last();
     }
 
+    /// Memória aproximada dos pixels: as camadas e o histórico de desfazer. Cada bloco (tile)
+    /// conta uma vez só, mesmo quando várias etapas do histórico o compartilham.
+    pub fn memory_bytes(&self) -> usize {
+        let (undo, redo) = self.history.states();
+        let mut seen = std::collections::HashSet::new();
+        let mut total = 0;
+        let stacks = std::iter::once(&self.layers).chain(undo.iter().chain(redo).map(|s| &s.0));
+        for layers in stacks {
+            for l in layers {
+                for (_, t) in l.surface.tiles() {
+                    if seen.insert(std::sync::Arc::as_ptr(t) as usize) {
+                        total += t.bytes().len();
+                    }
+                }
+            }
+        }
+        total
+    }
+
     /// Muda a cada passo guardado, desfeito ou refeito: diz se o desenho mudou desde que foi lido.
     pub fn history_version(&self) -> u64 {
         self.history.version()
@@ -508,5 +527,30 @@ impl Document {
             changed |= self.redo();
         }
         changed
+    }
+}
+
+#[cfg(test)]
+mod memory_tests {
+    use super::*;
+
+    #[test]
+    fn memory_counts_shared_history_tiles_once() {
+        let mut doc = Document::new(512, 512);
+        let empty = doc.memory_bytes();
+        doc.checkpoint();
+        doc.layers[0]
+            .surface
+            .write_pixel(3, 3, &[1.0, 0.0, 0.0, 1.0]);
+        let one = doc.memory_bytes();
+        assert!(one > empty, "um bloco pintado ocupa memória");
+        // Guardar no histórico sem mudar nada compartilha o mesmo bloco.
+        doc.checkpoint();
+        assert_eq!(doc.memory_bytes(), one);
+        // Mudar de novo copia o bloco: agora há dois (o do histórico e o atual).
+        doc.layers[0]
+            .surface
+            .write_pixel(4, 4, &[0.0, 1.0, 0.0, 1.0]);
+        assert!(doc.memory_bytes() > one);
     }
 }

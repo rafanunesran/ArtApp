@@ -285,6 +285,11 @@ pub struct ArtApp {
     pub input_samples: std::collections::VecDeque<f64>,
     /// Amostras por segundo do último traço.
     pub input_rate: f32,
+    /// Memória dos pixels (camadas + desfazer), medida quando o histórico muda.
+    pub mem_bytes: usize,
+    mem_version: Option<u64>,
+    mem_checked: f64,
+    mem_warned: bool,
     /// Passo do tour aberto (`None` = fechado).
     pub tour_step: Option<usize>,
     /// O tour da primeira abertura já foi visto ou pulado.
@@ -646,6 +651,10 @@ impl ArtApp {
             frame_times: Default::default(),
             input_samples: Default::default(),
             input_rate: 0.0,
+            mem_bytes: 0,
+            mem_version: None,
+            mem_checked: 0.0,
+            mem_warned: false,
             tour_done: false,
             spring: None,
             oneshot: None,
@@ -1854,6 +1863,28 @@ impl ArtApp {
 }
 
 impl ArtApp {
+    /// Mede a memória do desenho (no máximo a cada 2 s, e só se o histórico mudou) e avisa uma
+    /// vez quando passa de [`MEMORY_WARN_BYTES`], antes que o Android feche o app.
+    fn check_memory(&mut self, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        let version = self.doc.history_version();
+        if self.mem_version == Some(version) || now - self.mem_checked < 2.0 {
+            return;
+        }
+        self.mem_version = Some(version);
+        self.mem_checked = now;
+        self.mem_bytes = self.doc.memory_bytes();
+        if self.mem_bytes > MEMORY_WARN_BYTES && !self.mem_warned {
+            self.mem_warned = true;
+            self.status = format!(
+                "O desenho já usa uns {} MB de memória (camadas e desfazer). Se ficar lento, junte camadas ou diminua os passos de desfazer nas Preferências.",
+                self.mem_bytes >> 20
+            );
+        } else if self.mem_bytes < MEMORY_WARN_BYTES * 3 / 4 {
+            self.mem_warned = false;
+        }
+    }
+
     /// Usa `t` só no próximo traço e depois volta para a ferramenta atual.
     pub fn start_oneshot(&mut self, t: Tool) {
         if t == self.tool {
@@ -1965,6 +1996,10 @@ pub fn color_to_f32(c: Color32) -> [f32; 4] {
 }
 
 /// Segurar a tecla de uma ferramenta por mais que isto e soltar volta para a ferramenta de antes.
+/// A partir daqui avisa que o desenho está pesado (celulares de 4 a 6 GB costumam fechar apps
+/// que passam de 1,5 a 2 GB).
+pub const MEMORY_WARN_BYTES: usize = 1200 << 20;
+
 pub const SPRING_HOLD_SECS: f64 = 0.4;
 
 /// Quantos pincéis o grupo Recentes guarda (como no Procreate).
@@ -2104,6 +2139,7 @@ impl eframe::App for ArtApp {
         crate::backup::show(self, &ctx);
         crate::updater::show(self, &ctx);
         crate::tour::show(self, &ctx);
+        self.check_memory(&ctx);
         if self.show_perf {
             panels::perf_overlay(self, &ctx, canvas);
         }
