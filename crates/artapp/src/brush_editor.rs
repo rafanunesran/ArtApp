@@ -13,8 +13,11 @@
 use artapp_core::BlendMode;
 use artapp_core::Taper;
 use artapp_core::paint::{
-    BrushSettings, Control, Dynamic, MaskMode, Pattern, PatternStyle, TipShape,
+    BrushSettings, Control, Dynamic, Glaze, MaskMode, Pattern, PatternStyle, TipShape,
 };
+
+/// Pedido do botão "+ Imagem…" das pontas múltiplas (o painel abre o seletor de imagem).
+pub const PICK_EXTRA_TIP: &str = "brush-pick-extra-tip";
 use eframe::egui::{self, RichText};
 
 use crate::theme::color;
@@ -306,6 +309,38 @@ fn shape_tab(ui: &mut egui::Ui, b: &mut BrushSettings, taper: &mut Taper) {
         });
     });
 
+    section(ui, "Pontas múltiplas", None, |ui| {
+        hint(
+            ui,
+            "O traço alterna entre a ponta principal e estas, como um carimbo com vários desenhos (folhagem, confete, pelos).",
+        );
+        let n = b.extra_tips.len();
+        ui.label(if n == 0 {
+            "Só a ponta principal.".to_string()
+        } else {
+            format!("{} pontas no total.", n + 1)
+        });
+        ui.horizontal_wrapped(|ui| {
+            for name in artapp_core::brushes::STAMPS {
+                if ui.button(format!("+ {name}")).clicked()
+                    && let Some(t) = artapp_core::brushes::stamp(name)
+                {
+                    b.extra_tips.push(t);
+                }
+            }
+            if ui.button("+ Imagem…").clicked() {
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(egui::Id::unique(PICK_EXTRA_TIP), true));
+            }
+        });
+        if n > 0 {
+            ui.checkbox(&mut b.tip_random, "Ordem aleatória");
+            if ui.button("Tirar as pontas extras").clicked() {
+                b.extra_tips.clear();
+            }
+        }
+    });
+
     section(ui, "Início e fim", None, |ui| {
         hint(
             ui,
@@ -483,6 +518,27 @@ fn smoothing_tab(ui: &mut egui::Ui, b: &mut BrushSettings) {
 fn advanced_tab(ui: &mut egui::Ui, b: &mut BrushSettings) {
     section(ui, "Pintura úmida e aerógrafo", None, |ui| {
         ui.checkbox(&mut b.wet_edges, "Bordas molhadas (aquarela)");
+        pct(ui, &mut b.burnt_edges, "Bordas queimadas");
+        hint(
+            ui,
+            "A borda do traço multiplica com a tinta de baixo e escurece onde cruza outra cor.",
+        );
+        ui.horizontal(|ui| {
+            ui.label("Vidrado");
+            let name = |g: Glaze| match g {
+                Glaze::Normal => "Normal (acumula até a opacidade)",
+                Glaze::Uniform => "Uniforme (não escurece ao cruzar)",
+                Glaze::Intense => "Intenso (acumula até cobrir)",
+            };
+            egui::ComboBox::from_id_salt("brush-glaze")
+                .selected_text(name(b.glaze))
+                .width(220.0)
+                .show_ui(ui, |ui| {
+                    for g in [Glaze::Normal, Glaze::Uniform, Glaze::Intense] {
+                        ui.selectable_value(&mut b.glaze, g, name(g));
+                    }
+                });
+        });
         ui.checkbox(&mut b.build_up, "Acumular parado (aerógrafo)");
         if b.build_up {
             slider(ui, &mut b.build_up_rate, 1.0..=100.0, "Marcas por segundo");

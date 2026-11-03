@@ -208,6 +208,13 @@ pub fn describe(name: &str) -> Option<&'static str> {
         "Borracha macia" => "Apaga suave, para clarear áreas.",
         "Borracha de lápis" => "Apaga como borracha de papel, pela pressão.",
         "Borracha de textura" => "Apaga deixando o grão do papel.",
+        "Aquarela queimada" => {
+            "Aguada com a borda escura onde cruza outra tinta, como pigmento que seca na beirada."
+        }
+        "Marcador uniforme" => "Camada lisa: passar de novo no mesmo traço não escurece.",
+        "Guache intenso" => "Começa leve e cobre de vez se você insistir no mesmo lugar.",
+        "Folhas variadas" => "Folhas soltas que alternam formatos e tons, para árvores e arbustos.",
+        "Confete de formas" => "Estrelas, gotas e pontinhos coloridos espalhados.",
         _ => return crate::decoration::describe(name),
     })
 }
@@ -363,7 +370,7 @@ pub fn extra() -> Vec<BrushEntry> {
         depth: 0.7,
         ..Default::default()
     };
-    vec![
+    let mut v = vec![
         // Esboço
         ours(
             "Lapiseira",
@@ -606,9 +613,109 @@ pub fn extra() -> Vec<BrushEntry> {
                 0.4,
                 BrushSettings {
                     texture: paper,
-                    ..base
+                    ..base.clone()
                 },
             ),
+        ),
+    ];
+    v.extend(engine_brushes(&base));
+    v
+}
+
+/// Pincéis que usam as mudanças do ArtApp no motor: bordas queimadas, vidrado e pontas múltiplas.
+fn engine_brushes(base: &BrushSettings) -> Vec<BrushEntry> {
+    use crate::decoration::{loose, scatter};
+    use photocraft_paint::{ColorDynamics, Glaze, TipShape};
+    let tips = |names: &[&str]| -> (TipShape, Vec<GrayTile>) {
+        let mut t: Vec<GrayTile> = names.iter().filter_map(|n| stamp(n)).collect();
+        if t.is_empty() {
+            return (TipShape::Round, t);
+        }
+        let first = t.remove(0);
+        (TipShape::Sampled(first), t)
+    };
+    let (leaf, leaves) = tips(&["Folha", "Gota", "Folha"]);
+    let (star, confetti) = tips(&["Estrela", "Gota", "Grão"]);
+    vec![
+        ours(
+            "Aquarela queimada",
+            "Aquarela",
+            BrushSettings {
+                size: 40.0,
+                hardness: 0.45,
+                flow: 0.35,
+                opacity: 0.75,
+                spacing: 0.08,
+                wet_edges: true,
+                burnt_edges: 0.8,
+                shape_dynamics: pressure_size(0.5),
+                ..base.clone()
+            },
+        ),
+        ours(
+            "Marcador uniforme",
+            "Marcadores",
+            BrushSettings {
+                size: 18.0,
+                hardness: 0.9,
+                opacity: 0.6,
+                spacing: 0.05,
+                glaze: Glaze::Uniform,
+                ..base.clone()
+            },
+        ),
+        ours(
+            "Guache intenso",
+            "Pintura",
+            BrushSettings {
+                size: 26.0,
+                hardness: 0.7,
+                flow: 0.25,
+                spacing: 0.06,
+                glaze: Glaze::Intense,
+                shape_dynamics: pressure_size(0.4),
+                ..base.clone()
+            },
+        ),
+        ours(
+            "Folhas variadas",
+            "Decoração",
+            BrushSettings {
+                size: 30.0,
+                spacing: 0.6,
+                tip: leaf,
+                extra_tips: leaves,
+                tip_random: true,
+                shape_dynamics: loose(0.5, 1.0),
+                scattering: scatter(1.5),
+                color_dynamics: ColorDynamics {
+                    enabled: true,
+                    brightness_jitter: 0.15,
+                    per_tip: true,
+                    ..Default::default()
+                },
+                ..base.clone()
+            },
+        ),
+        ours(
+            "Confete de formas",
+            "Decoração",
+            BrushSettings {
+                size: 22.0,
+                spacing: 0.9,
+                tip: star,
+                extra_tips: confetti,
+                tip_random: true,
+                shape_dynamics: loose(0.6, 1.0),
+                scattering: scatter(2.5),
+                color_dynamics: ColorDynamics {
+                    enabled: true,
+                    hue_jitter: 0.5,
+                    per_tip: true,
+                    ..Default::default()
+                },
+                ..base.clone()
+            },
         ),
     ]
 }
@@ -954,6 +1061,64 @@ pub fn import(file_name: &str, bytes: &[u8]) -> Result<Vec<BrushEntry>, String> 
             ..BrushSettings::default()
         },
     }])
+}
+
+/// Ponta tirada de uma imagem (PNG/JPEG), para somar às pontas de um pincel de pontas múltiplas.
+pub fn tip_from_image(bytes: &[u8]) -> Result<photocraft_paint::GrayTile, String> {
+    let (w, h, px) = crate::edit::decode_image(bytes)?;
+    tip_from_rgba(w, h, &px).ok_or_else(|| "a imagem está vazia".to_string())
+}
+
+/// Carimbos prontos para pontas múltiplas (desenhados por fórmula, 64 × 64).
+pub const STAMPS: [&str; 4] = ["Folha", "Gota", "Estrela", "Grão"];
+
+/// O carimbo `name` de [`STAMPS`].
+pub fn stamp(name: &str) -> Option<photocraft_paint::GrayTile> {
+    const S: u32 = 64;
+    let c = |v: u32| (v as f32 + 0.5) / S as f32 * 2.0 - 1.0;
+    let soft = |d: f32| (1.0 - d).clamp(0.0, 0.08) / 0.08;
+    let f: Box<dyn Fn(f32, f32) -> f32> = match name {
+        // Folha: elipse fina com a nervura do meio mais clara.
+        "Folha" => Box::new(move |x, y| {
+            let d = (x / 0.35).powi(2) + (y / 0.95).powi(2);
+            soft(d.sqrt()) * if x.abs() < 0.04 { 0.55 } else { 1.0 }
+        }),
+        // Gota: redonda embaixo, pontuda em cima.
+        "Gota" => Box::new(move |x, y| {
+            let w = 0.6 * ((y + 1.0) / 2.0).clamp(0.0, 1.0).sqrt();
+            let d = if y > 0.2 {
+                ((x / 0.6).powi(2) + ((y - 0.2) / 0.75).powi(2)).sqrt()
+            } else if w > 0.0 {
+                (x.abs() / w).max(0.0)
+            } else {
+                2.0
+            };
+            soft(d)
+        }),
+        // Estrela de cinco pontas.
+        "Estrela" => Box::new(move |x, y| {
+            let a = y.atan2(x);
+            let r = (x * x + y * y).sqrt();
+            let k = (a * 2.5).cos().abs();
+            let edge = 0.42 + 0.53 * k.powf(6.0);
+            soft(r / edge)
+        }),
+        // Grão: pontinhos espalhados (ruído fixo), para texturas de folhagem e areia.
+        "Grão" => Box::new(move |x, y| {
+            let cell = |v: f32| ((v + 1.0) * 6.0).floor();
+            let h = (cell(x) * 12.9898 + cell(y) * 78.233).sin() * 43_758.547;
+            let r = (x * x + y * y).sqrt();
+            if h.fract().abs() > 0.6 && r < 1.0 {
+                1.0
+            } else {
+                0.0
+            }
+        }),
+        _ => return None,
+    };
+    Some(photocraft_paint::GrayTile::from_fn(S, S, |x, y| {
+        f(c(x), c(y))
+    }))
 }
 
 /// A ponta em tons de cinza de uma imagem RGBA: tinta = opaco e escuro. Reduzida até

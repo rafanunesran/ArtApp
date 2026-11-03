@@ -192,6 +192,8 @@ pub enum ImageUse {
     Model,
     /// Imagem para guardar nos materiais.
     Material,
+    /// Imagem que vira mais uma ponta do pincel atual (pontas múltiplas).
+    ExtraTip,
 }
 
 struct Entry {
@@ -449,6 +451,28 @@ impl ArtApp {
                 };
             }
             Err(e) => self.status = format!("Não foi possível importar: {e}"),
+        }
+    }
+
+    /// Soma uma imagem às pontas do pincel atual (escuro ou opaco = tinta).
+    pub fn add_extra_tip_image(&mut self, path: &Path) {
+        match std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|b| artapp_core::brushes::tip_from_image(&b))
+        {
+            Ok(tip) => {
+                let b = if self.tool == crate::app::Tool::Eraser {
+                    &mut self.eraser
+                } else {
+                    &mut self.brush
+                };
+                b.extra_tips.push(tip);
+                self.status = format!(
+                    "Ponta somada: o pincel agora alterna {} pontas.",
+                    b.extra_tips.len() + 1
+                );
+            }
+            Err(e) => self.status = format!("Não foi possível usar a imagem: {e}"),
         }
     }
 
@@ -946,6 +970,7 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
         (true, ImageUse::Brushes) => "Importar pincéis",
         (true, ImageUse::Model) => "Abrir modelo 3D",
         (true, ImageUse::Material) => "Imagem para os materiais",
+        (true, ImageUse::ExtraTip) => "Imagem para uma ponta",
     };
     window(title).open(&mut open).show(ctx, |ui| {
         ui.set_width(w);
@@ -1231,6 +1256,7 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
                 ImageUse::Brushes => app.import_brushes(&path),
                 ImageUse::Model => app.open_model(&path),
                 ImageUse::Material => app.import_material_image(&path),
+                ImageUse::ExtraTip => app.add_extra_tip_image(&path),
             }
         } else {
             app.open_path(path);
