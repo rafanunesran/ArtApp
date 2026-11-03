@@ -91,9 +91,15 @@ fn in_bands(r: Rect, fill: impl Fn(Rect, &mut [[f32; 4]]) + Sync) -> Vec<[u8; 4]
     let n = w * r.height() as usize;
     let mut out = vec![[0u8; 4]; n];
     let one = |band: Rect, chunk: &mut [[u8; 4]]| {
-        let mut acc = vec![[0.0f32; 4]; chunk.len()];
-        fill(band, &mut acc);
-        quantize(&acc, chunk);
+        ACC.with_borrow_mut(|acc| {
+            // Reaproveitado entre chamadas: `fill` escreve todos os pixels antes de ler.
+            if acc.len() < chunk.len() {
+                acc.resize(chunk.len(), [0.0; 4]);
+            }
+            let acc = &mut acc[..chunk.len()];
+            fill(band, acc);
+            quantize(acc, chunk);
+        });
     };
     if n < PARALLEL_MIN {
         one(r, &mut out);
@@ -108,6 +114,29 @@ fn in_bands(r: Rect, fill: impl Fn(Rect, &mut [[f32; 4]]) + Sync) -> Vec<[u8; 4]
             });
     }
     out
+}
+
+thread_local! {
+    /// Faixa composta (um por núcleo), reaproveitada entre quadros em vez de alocar e zerar.
+    static ACC: std::cell::RefCell<Vec<[f32; 4]>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Rascunhos de [`Job::run_range`]: a linha lida, o alfa da base do recorte e a máscara.
+    static SCRATCH: std::cell::RefCell<Scratch> = std::cell::RefCell::new(Scratch::default());
+}
+
+#[derive(Default)]
+struct Scratch {
+    row: Vec<[f32; 4]>,
+    clip_alpha: Vec<f32>,
+    mask_row: Vec<[f32; 4]>,
+    pieces: Vec<Rect>,
+}
+
+/// Garante `n` lugares sem zerar o que já existe (quem usa escreve antes de ler).
+fn grow<T: Copy + Default>(v: &mut Vec<T>, n: usize) -> &mut [T] {
+    if v.len() < n {
+        v.resize(n, T::default());
+    }
+    &mut v[..n]
 }
 
 fn quantize(acc: &[[f32; 4]], out: &mut [[u8; 4]]) {
@@ -188,15 +217,19 @@ impl Job<'_> {
 
     /// Como [`Self::run`], parando antes da camada `to`.
     fn run_range(&self, r: Rect, from: usize, to: usize, acc: &mut [[f32; 4]]) {
+        SCRATCH.with_borrow_mut(|s| self.run_with(r, from, to, acc, s));
+    }
+
+    fn run_with(&self, r: Rect, from: usize, to: usize, acc: &mut [[f32; 4]], s: &mut Scratch) {
         let doc = self.doc;
         let n = acc.len();
-        let mut row = vec![[0.0f32; 4]; n];
+        let row = grow(&mut s.row, n);
         // Alfa da camada base do grupo de recorte atual (`false` = a base não aparece aqui, e
         // as camadas recortadas nela somem).
-        let mut clip_alpha = vec![0.0f32; n];
+        let clip_alpha = grow(&mut s.clip_alpha, n);
         let mut clip_on = false;
-        let mut mask_row = Vec::new();
-        let mut pieces = Vec::new();
+        let mask_row = &mut s.mask_row;
+        let pieces = &mut s.pieces;
         let w = r.width() as usize;
         for i in from..to.min(doc.layers.len()) {
             let layer = &doc.layers[i];
@@ -240,7 +273,7 @@ impl Job<'_> {
                     clip_alpha.fill(0.0);
                 }
             }
-            for &p in &pieces {
+            for &p in pieces.iter() {
                 let pn = p.width() as usize * p.height() as usize;
                 let row = &mut row[..pn];
                 match &layer.border {
@@ -261,9 +294,9 @@ impl Job<'_> {
                     }
                 }
                 if let Some(m) = doc.mask_above(i) {
-                    mask_row.resize(pn, [0.0f32; 4]);
-                    m.surface.read_rgba_into(p, &mut mask_row[..pn]);
-                    for (px, k) in row.iter_mut().zip(&mask_row) {
+                    let mask_row = grow(mask_row, pn);
+                    m.surface.read_rgba_into(p, mask_row);
+                    for (px, k) in row.iter_mut().zip(mask_row.iter()) {
                         px[3] *= mask_visibility(*k);
                     }
                 }
@@ -422,9 +455,9 @@ impl DisplayCache {
         let make = |&(bx, by): &(i32, i32)| {
             let br = Rect::new(bx * BLOCK, by * BLOCK, (bx + 1) * BLOCK, (by + 1) * BLOCK)
                 .intersect(&bounds);
-            let mut acc = vec![doc.paper; (BLOCK * BLOCK) as usize];
             let n = br.width() as usize * br.height() as usize;
-            job.run_range(br, 0, split, &mut acc[..n]);
+            let mut acc = vec![doc.paper; n];
+            job.run_range(br, 0, split, &mut acc);
             ((bx, by), acc.into_boxed_slice())
         };
         let made: Vec<_> = if missing.len() > 2 {
@@ -437,12 +470,10 @@ impl DisplayCache {
         let blocks = &self.blocks;
         let px = in_bands(r, |band, acc| {
             let w = band.width() as usize;
-            for (bk, block) in blocks.iter().filter(|(k, _)| {
-                k.1 >= band.y0.div_euclid(BLOCK)
-                    && k.1 <= (band.y1 - 1).div_euclid(BLOCK)
-                    && k.0 >= bx0
-                    && k.0 <= bx1
-            }) {
+            // Só os blocos desta faixa (o guardado pode ter centenas).
+            let rows = band.y0.div_euclid(BLOCK)..=(band.y1 - 1).div_euclid(BLOCK);
+            let near = rows.flat_map(|by| (bx0..=bx1).map(move |bx| (bx, by)));
+            for (bk, block) in near.filter_map(|k| blocks.get(&k).map(|b| (k, b))) {
                 let br = Rect::new(
                     bk.0 * BLOCK,
                     bk.1 * BLOCK,

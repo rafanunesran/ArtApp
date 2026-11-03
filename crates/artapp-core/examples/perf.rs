@@ -128,6 +128,13 @@ fn main() {
     );
     let mut doc = painted_doc();
     let mut cache = composite::DisplayCache::default();
+    // `perf traço`: só os traços (para usar com um perfilador).
+    if std::env::args().any(|a| a == "traço") {
+        for size in [12.0, 60.0] {
+            stroke(&mut doc, &mut cache, size);
+        }
+        return;
+    }
     time("Compor a tela inteira (abrir/desfazer)", 3, || {
         composite::composite_rgba8(&doc, doc.bounds(), true)
     });
@@ -152,6 +159,26 @@ fn main() {
         doc.redo();
         let r = doc.take_history_dirty();
         (px, cache.composite(&doc, r))
+    });
+    time("Ajuste de matiz/saturação na camada", 2, || {
+        let r = doc.adjust(artapp_core::edit::Adjust::HueSatLight {
+            hue: 20.0,
+            sat: 0.1,
+            light: 0.0,
+        });
+        doc.undo();
+        r
+    });
+    time("Balde de tinta", 2, || {
+        let r = artapp_core::fill::flood_fill(&mut doc, 5, 5, [1.0, 0.0, 0.0, 1.0], 0.1);
+        doc.undo();
+        r
+    });
+    time("Mesclar camada com a de baixo", 2, || {
+        let mut d = painted_doc();
+        d.active = 4;
+        d.merge_down();
+        d
     });
     let bytes = project::save(&doc).unwrap();
     time("Salvar projeto", 2, || project::save(&doc).unwrap());

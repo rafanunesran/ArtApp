@@ -117,33 +117,46 @@ impl Document {
     pub(crate) fn map_pixels(
         &mut self,
         r: Rect,
-        f: impl Fn(i32, i32, [f32; 4]) -> [f32; 4],
+        f: impl Fn(i32, i32, [f32; 4]) -> [f32; 4] + Sync,
     ) -> Rect {
+        use rayon::prelude::*;
+        if r.is_empty() {
+            return Rect::EMPTY;
+        }
         let sel = self.selection.as_ref().map(|s| s.mask.read_region(r));
         self.checkpoint();
         let Some(layer) = self.active_layer_mut() else {
             return Rect::EMPTY;
         };
         let lock = layer.lock_alpha;
-        let mut px = vec![[0.0f32; 4]; r.width() as usize * r.height() as usize];
-        layer.surface.read_rgba_into(r, &mut px);
         let w = r.width() as usize;
-        let mut out = Vec::with_capacity(px.len() * 4);
-        for (i, p) in px.iter().enumerate() {
-            let k = sel
-                .as_ref()
-                .map_or(1.0, |m| m.get(i).copied().unwrap_or(0.0));
-            let (x, y) = (r.x0 + (i % w) as i32, r.y0 + (i / w) as i32);
-            let q = if k > 0.0 { f(x, y, *p) } else { *p };
-            let mut o = [0.0f32; 4];
-            for c in 0..4 {
-                o[c] = p[c] + (q[c] - p[c]) * k;
-            }
-            if lock {
-                o[3] = p[3];
-            }
-            out.extend_from_slice(&o);
-        }
+        let mut px = vec![[0.0f32; 4]; w * r.height() as usize];
+        layer.surface.read_rgba_into(r, &mut px);
+        let mut out = vec![0.0f32; px.len() * 4];
+        // Linha por linha em todos os núcleos (ajustes de cor e efeitos fazem conta por pixel).
+        out.par_chunks_mut(w * 4)
+            .zip(px.par_chunks(w))
+            .enumerate()
+            .for_each(|(row, (dst, src))| {
+                let y = r.y0 + row as i32;
+                for (j, (o, p)) in dst.as_chunks_mut::<4>().0.iter_mut().zip(src).enumerate() {
+                    let i = row * w + j;
+                    let k = sel
+                        .as_ref()
+                        .map_or(1.0, |m| m.get(i).copied().unwrap_or(0.0));
+                    let q = if k > 0.0 {
+                        f(r.x0 + j as i32, y, *p)
+                    } else {
+                        *p
+                    };
+                    for c in 0..4 {
+                        o[c] = p[c] + (q[c] - p[c]) * k;
+                    }
+                    if lock {
+                        o[3] = p[3];
+                    }
+                }
+            });
         layer.surface.write_region(r, &out);
         r
     }

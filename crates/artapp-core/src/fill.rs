@@ -66,23 +66,23 @@ pub fn flood_fill_with(
         return Rect::EMPTY;
     };
     let tol = (opts.tolerance.clamp(0.0, 1.0) * 255.0) as i32;
-    let similar: Vec<bool> = img
-        .iter()
-        .map(|p| (0..4).all(|c| (p[c] as i32 - seed[c] as i32).abs() <= tol))
-        .collect();
+    let similar: Vec<bool> = {
+        use rayon::prelude::*;
+        img.par_iter()
+            .map(|p| (0..4).all(|c| (p[c] as i32 - seed[c] as i32).abs() <= tol))
+            .collect()
+    };
+    drop(img);
     // Fechar lacunas: engrossa as linhas pela metade da abertura antes de preencher.
     let half = (opts.close_gap.max(0.0) / 2.0).ceil();
-    let allowed = if half > 0.0 {
+    let thick = (half > 0.0).then(|| {
         let barrier: Vec<bool> = similar.iter().map(|s| !s).collect();
         let thick = crate::mask::grow(&barrier, w, h, half);
-        let a: Vec<bool> = thick.iter().map(|b| !b).collect();
-        if a[idx(x as usize, y as usize)] {
-            a
-        } else {
-            similar.clone()
-        }
-    } else {
-        similar.clone()
+        thick.iter().map(|b| !b).collect::<Vec<bool>>()
+    });
+    let allowed: &[bool] = match &thick {
+        Some(a) if a[idx(x as usize, y as usize)] => a,
+        _ => &similar,
     };
 
     let mut mask = vec![false; w * h];
@@ -101,13 +101,20 @@ pub fn flood_fill_with(
         while r + 1 < w && row_ok(r + 1, &mask) {
             r += 1;
         }
-        for xx in l..=r {
-            mask[idx(xx, sy)] = true;
-            if sy > 0 && !mask[idx(xx, sy - 1)] {
-                stack.push((xx, sy - 1));
+        mask[idx(l, sy)..=idx(r, sy)].fill(true);
+        // Nas linhas de cima e de baixo, só o começo de cada trecho preenchível entra na pilha
+        // (antes entrava um ponto por pixel: milhões num balde que pega a tela toda).
+        for ny in [sy.wrapping_sub(1), sy + 1] {
+            if ny >= h {
+                continue;
             }
-            if sy + 1 < h && !mask[idx(xx, sy + 1)] {
-                stack.push((xx, sy + 1));
+            let mut inside = false;
+            for xx in l..=r {
+                let ok = !mask[idx(xx, ny)] && allowed[idx(xx, ny)];
+                if ok && !inside {
+                    stack.push((xx, ny));
+                }
+                inside = ok;
             }
         }
     }
@@ -122,21 +129,26 @@ pub fn flood_fill_with(
     let grown = if opts.expand != 0.0 {
         crate::mask::grow(&mask, w, h, opts.expand)
     } else {
-        (0..w * h)
-            .map(|i| {
-                let (px, py) = (i % w, i / w);
-                mask[i]
+        use rayon::prelude::*;
+        let mut g = vec![false; w * h];
+        g.par_chunks_mut(w).enumerate().for_each(|(py, row)| {
+            for (px, o) in row.iter_mut().enumerate() {
+                let i = py * w + px;
+                *o = mask[i]
                     || (px > 0 && mask[i - 1])
                     || (px + 1 < w && mask[i + 1])
                     || (py > 0 && mask[i - w])
-                    || (py + 1 < h && mask[i + w])
-            })
-            .collect()
+                    || (py + 1 < h && mask[i + w]);
+            }
+        });
+        g
     };
     let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0usize, 0usize);
-    for (i, _) in grown.iter().enumerate().filter(|(_, g)| **g) {
-        let (px, py) = (i % w, i / w);
-        (x0, x1, y0, y1) = (x0.min(px), x1.max(px), y0.min(py), y1.max(py));
+    for (py, row) in grown.chunks_exact(w).enumerate() {
+        let (Some(a), Some(b)) = (row.iter().position(|g| *g), row.iter().rposition(|g| *g)) else {
+            continue;
+        };
+        (x0, x1, y0, y1) = (x0.min(a), x1.max(b), y0.min(py), y1.max(py));
     }
     if x0 > x1 {
         return Rect::EMPTY;
@@ -152,29 +164,40 @@ pub fn flood_fill_with(
     let mut px = vec![[0.0f32; 4]; r.width() as usize * r.height() as usize];
     layer.surface.read_rgba_into(r, &mut px);
     let rw = r.width() as usize;
-    let mut out = Vec::with_capacity(px.len() * 4);
-    for (i, p) in px.iter().enumerate() {
-        let (gx, gy) = (r.x0 as usize + i % rw, r.y0 as usize + i / rw);
-        let hit = grown[idx(gx, gy)]
-            && sel
-                .as_ref()
-                .is_none_or(|m| m.get(i).is_some_and(|v| *v >= 0.5));
-        let keep = layer.lock_alpha && p[3] <= 0.0;
-        if hit && erase {
-            out.extend_from_slice(&[p[0], p[1], p[2], 0.0]);
-        } else if hit && !keep {
-            let a = if layer.lock_alpha { p[3] } else { 1.0 };
-            let src = [color[0], color[1], color[2], color[3]];
-            let o = photocraft_color::blend::composite(
-                photocraft_color::BlendMode::Normal,
-                *p,
-                src,
-                1.0,
-            );
-            out.extend_from_slice(&[o[0], o[1], o[2], if layer.lock_alpha { a } else { o[3] }]);
-        } else {
-            out.extend_from_slice(p);
-        }
+    let lock = layer.lock_alpha;
+    let mut out = vec![0.0f32; px.len() * 4];
+    {
+        use rayon::prelude::*;
+        out.par_chunks_mut(rw * 4)
+            .zip(px.par_chunks(rw))
+            .enumerate()
+            .for_each(|(ry, (dst, src))| {
+                let gy = r.y0 as usize + ry;
+                for (j, (o, p)) in dst.as_chunks_mut::<4>().0.iter_mut().zip(src).enumerate() {
+                    let i = ry * rw + j;
+                    let gx = r.x0 as usize + j;
+                    let hit = grown[idx(gx, gy)]
+                        && sel
+                            .as_ref()
+                            .is_none_or(|m| m.get(i).is_some_and(|v| *v >= 0.5));
+                    let keep = lock && p[3] <= 0.0;
+                    *o = if hit && erase {
+                        [p[0], p[1], p[2], 0.0]
+                    } else if hit && !keep {
+                        let a = if lock { p[3] } else { 1.0 };
+                        let src = [color[0], color[1], color[2], color[3]];
+                        let c = photocraft_color::blend::composite(
+                            photocraft_color::BlendMode::Normal,
+                            *p,
+                            src,
+                            1.0,
+                        );
+                        [c[0], c[1], c[2], if lock { a } else { c[3] }]
+                    } else {
+                        *p
+                    };
+                }
+            });
     }
     layer.surface.write_region(r, &out);
     r
