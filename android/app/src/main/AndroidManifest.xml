@@ -32,7 +32,9 @@
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|uiMode|density|smallestScreenSize"
             android:windowSoftInputMode="adjustResize">
-            <meta-data android:name="android.app.lib_name" android:value="artapp" />
+            <!-- O carregador (crates/artapp-boot) abre a libartapp.so do APK ou uma atualização
+                 rápida baixada para a pasta do app. -->
+            <meta-data android:name="android.app.lib_name" android:value="artapp_boot" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -45,6 +47,14 @@
             android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
+
+        <!-- Reabre o app depois de uma atualização rápida (Restart.java), num processo à parte. -->
+        <activity
+            android:name=".Restart"
+            android:exported="false"
+            android:process=":restart"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <!-- Resultado da instalação da atualização (Updater.java). -->
         <receiver

@@ -151,13 +151,22 @@ dependencies = [
  "artapp-core",
  "eframe",
  "env_logger",
+ "flate2",
  "jni",
  "kurbo",
  "log",
  "ndk-context",
  "serde",
  "serde_json",
+ "sha2",
  "winit",
+]
+
+[[package]]
+name = "artapp-boot"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

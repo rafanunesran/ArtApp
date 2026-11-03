@@ -126,7 +126,7 @@ Localmente, com o Android SDK e o NDK instalados:
 ```sh
 rustup target add aarch64-linux-android x86_64-linux-android
 cargo install cargo-ndk
-cargo ndk -t arm64-v8a -t x86_64 -P 26 -o android/app/src/main/jniLibs build --release -p artapp --lib
+cargo ndk -t arm64-v8a -t x86_64 -P 26 -o android/app/src/main/jniLibs build --release -p artapp -p artapp-boot --lib
 cd android && ./gradlew assembleRelease
 # APK em android/app/build/outputs/apk/release/
 ```
@@ -135,6 +135,16 @@ No CI o APK é assinado com uma chave fixa (PKCS12, alias `artapp`, mesma senha 
 arquivo) guardada nos segredos `ARTAPP_KEYSTORE_BASE64` (o `.p12` em base64) e
 `ARTAPP_KEYSTORE_PASSWORD` do repositório (Settings › Secrets and variables › Actions). Sem a
 senha (por exemplo num build local), o Gradle usa a chave de debug e o `versionCode` fica 1.
+
+### Atualização rápida (sem reinstalar o APK)
+
+O APK abre primeiro o carregador `libartapp_boot.so` (`crates/artapp-boot`), que escolhe entre a
+`libartapp.so` do APK e uma mais nova baixada para a pasta do app. Cada release publica, além do
+APK, `libartapp-<arquitetura>.so.gz` e um `update.json` (build, hash SHA-256 e a identidade da
+"casca": Java, manifesto, recursos e o carregador). Se a casca da release for a mesma do APK
+instalado, o app baixa só a biblioteca, confere o hash e reabre; senão, atualiza pelo APK como
+antes. Se a biblioteca nova não abrir (duas aberturas seguidas sem chegar a desenhar), o
+carregador volta sozinho para a do APK e não usa mais aquele build.
 
 ## Licença
 

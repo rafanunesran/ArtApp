@@ -1,6 +1,7 @@
-// A NativeActivity do Android carrega libartapp.so, compilada do Rust por `cargo ndk` (veja
-// README.md › Android) para dentro de src/main/jniLibs. O único Java é o de atualizar o app
-// (src/main/java), que o Rust chama por JNI.
+// A NativeActivity do Android abre libartapp_boot.so (crates/artapp-boot), que carrega a
+// libartapp.so do APK ou uma atualização rápida baixada. Ambas são compiladas do Rust por
+// `cargo ndk` (veja README.md › Android) para dentro de src/main/jniLibs. O Java (src/main/java)
+// é o que o Rust chama por JNI (atualizar, reabrir, backup).
 plugins {
     id("com.android.application")
 }

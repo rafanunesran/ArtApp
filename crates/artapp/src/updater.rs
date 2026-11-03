@@ -5,6 +5,9 @@
 //!
 //! O Android sempre exige que a pessoa libere "Instalar apps desconhecidos" para o ArtApp uma vez;
 //! depois disso, no Android 12 ou mais novo, a atualização costuma entrar sem outro diálogo.
+//!
+//! Atualização rápida: quando só o Rust mudou (a casca do APK é a mesma), baixa só a
+//! `libartapp.so` nova (veja `hotswap.rs`) e reabre o app, sem passar pelo instalador.
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -13,6 +16,7 @@ use std::time::Duration;
 use eframe::egui::{self, Align2, RichText, Vec2};
 
 use crate::app::ArtApp;
+use crate::hotswap::{self, Fast};
 use crate::platform::{self, update};
 use crate::theme::{color, panel_frame};
 
@@ -30,6 +34,24 @@ pub struct Release {
     pub name: String,
     pub url: String,
     pub size: u64,
+    /// Arquivos da release (nome, link).
+    pub assets: Vec<(String, String)>,
+    /// A biblioteca para atualização rápida, se servir para este aparelho.
+    pub fast: Option<Fast>,
+}
+
+impl Release {
+    pub fn asset_url(&self, name: &str) -> Option<String> {
+        self.assets
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, u)| u.clone())
+    }
+
+    /// Quanto vai baixar.
+    fn download_size(&self) -> u64 {
+        self.fast.as_ref().map_or(self.size, |f| f.gz_size)
+    }
 }
 
 /// Lê a resposta de `releases/latest`. A tag é `v<versão>-build.<número>`.
@@ -40,12 +62,23 @@ pub fn parse_release(json: &str) -> Result<Release, String> {
         .rsplit_once("build.")
         .and_then(|(_, n)| n.parse::<u64>().ok())
         .ok_or_else(|| format!("tag sem número de build: {tag:?}"))?;
-    let asset = v["assets"]
+    let all = v["assets"]
         .as_array()
-        .into_iter()
-        .flatten()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let asset = all
+        .iter()
         .find(|a| a["name"].as_str() == Some(APK_ASSET))
         .ok_or("a release não tem o APK")?;
+    let assets = all
+        .iter()
+        .filter_map(|a| {
+            Some((
+                a["name"].as_str()?.to_string(),
+                a["browser_download_url"].as_str()?.to_string(),
+            ))
+        })
+        .collect();
     let url = asset["browser_download_url"]
         .as_str()
         .ok_or("APK sem link")?
@@ -59,7 +92,37 @@ pub fn parse_release(json: &str) -> Result<Release, String> {
         name,
         url,
         size: asset["size"].as_u64().unwrap_or(0),
+        assets,
+        fast: None,
     })
+}
+
+/// Confere a última release e, se der, a biblioteca para atualização rápida.
+fn fetch(running: u64) -> Result<Release, String> {
+    let mut r = parse_release(&update::latest_release_json()?)?;
+    if r.build <= running {
+        return Ok(r);
+    }
+    let (Some((shell, dir)), Some(abi), Some(url)) = (
+        hotswap::available(r.build),
+        hotswap::abi(),
+        r.asset_url(hotswap::MANIFEST_ASSET),
+    ) else {
+        return Ok(r);
+    };
+    let path = dir.join(hotswap::MANIFEST_ASSET);
+    let fast = std::fs::create_dir_all(dir)
+        .map_err(|e| e.to_string())
+        .and_then(|()| update::download(&url, &path))
+        .and_then(|()| std::fs::read_to_string(&path).map_err(|e| e.to_string()))
+        .and_then(|j| hotswap::parse_manifest(&j, r.build, shell, abi, |f| r.asset_url(f)));
+    let _ = std::fs::remove_file(&path);
+    match fast {
+        Ok(f) => r.fast = f,
+        // Sem o manifesto, atualiza pelo APK.
+        Err(e) => log::warn!("Atualização rápida indisponível: {e}"),
+    }
+    Ok(r)
 }
 
 /// Onde fica o APK baixado de um build.
@@ -96,11 +159,14 @@ enum Step {
         release: Release,
         rx: Receiver<Result<(), String>>,
     },
+    /// Atualização rápida baixada: "Reiniciar agora" ou "Depois" (entra ao abrir de novo).
+    Ready(Release),
     /// Esperando a pessoa liberar "Instalar apps desconhecidos".
     Permission(PathBuf),
-    /// Gravando o desenho antes de o Android fechar o app. `flushed` = já pediu para gravar.
+    /// Gravando o desenho antes de o app fechar. `apk`: instalar esse APK; `None`: reabrir o
+    /// app (atualização rápida). `flushed` = já pediu para gravar.
     Saving {
-        apk: PathBuf,
+        apk: Option<PathBuf>,
         flushed: bool,
     },
     /// Entregue ao Android.
@@ -110,8 +176,11 @@ enum Step {
 
 pub struct Updater {
     step: Step,
-    /// Build instalado (`0` fora do Android).
+    /// Build em uso: o desta biblioteca (pode ser uma atualização rápida, mais nova que o APK).
+    /// `0` fora do Android.
     installed: u64,
+    /// Já confirmou ao carregador que a atualização rápida abriu direito.
+    confirmed: bool,
     /// Já conferiu ao abrir o app, e quando (tempo do egui).
     started: bool,
     checked_at: f64,
@@ -124,7 +193,12 @@ impl Default for Updater {
     fn default() -> Self {
         Self {
             step: Step::Idle,
-            installed: update::installed_build(),
+            installed: if update::SUPPORTED {
+                hotswap::compiled_build().unwrap_or_else(update::installed_build)
+            } else {
+                0
+            },
+            confirmed: false,
             started: false,
             checked_at: 0.0,
             was_focused: true,
@@ -138,18 +212,40 @@ impl Updater {
         self.installed
     }
 
+    /// A biblioteca em uso veio de uma atualização rápida (não do APK).
+    pub fn is_fast(&self) -> bool {
+        hotswap::boot().hot_build.is_some()
+    }
+
     fn check(&mut self, manual: bool) {
         if !matches!(self.step, Step::Idle | Step::Failed(_)) {
             return;
         }
         let (tx, rx) = channel();
+        let running = self.installed;
         std::thread::spawn(move || {
-            let _ = tx.send(update::latest_release_json().and_then(|j| parse_release(&j)));
+            let _ = tx.send(fetch(running));
         });
         self.step = Step::Checking { rx, manual };
     }
 
     fn download(&mut self, release: Release) {
+        if let (Some(fast), Some((shell, dir))) =
+            (release.fast.clone(), hotswap::available(release.build))
+        {
+            let (tx, rx) = channel();
+            let build = release.build;
+            std::thread::spawn(move || {
+                let gz = hotswap::download_path(dir, build);
+                let r = std::fs::create_dir_all(dir)
+                    .map_err(|e| e.to_string())
+                    .and_then(|()| update::download(&fast.url, &gz))
+                    .and_then(|()| hotswap::install(dir, &gz, build, shell, &fast));
+                let _ = tx.send(r);
+            });
+            self.step = Step::Downloading { release, rx };
+            return;
+        }
         let dest = apk_path(release.build);
         remove_old_apks(Some(release.build));
         // Já baixado (ex.: o Android fechou o app enquanto a pessoa liberava a permissão).
@@ -171,7 +267,7 @@ impl Updater {
     fn ready(&mut self, apk: PathBuf) {
         if update::can_install() {
             self.step = Step::Saving {
-                apk,
+                apk: Some(apk),
                 flushed: false,
             };
         } else {
@@ -212,6 +308,14 @@ impl ArtApp {
             self.updater.checked_at = now;
             self.updater.check(false);
         }
+        if !self.updater.confirmed && now > 3.0 {
+            // Abriu e está desenhando: a atualização rápida não é desfeita na próxima abertura.
+            self.updater.confirmed = true;
+            hotswap::confirm();
+            if let Some(note) = &hotswap::boot().note {
+                self.status = note.clone();
+            }
+        }
         let u = &mut self.updater;
         match std::mem::replace(&mut u.step, Step::Idle) {
             Step::Checking { rx, manual } => match rx.try_recv() {
@@ -227,7 +331,12 @@ impl ArtApp {
                     }
                 }
                 Ok(Ok(r)) if r.build > u.installed => {
-                    if manual {
+                    if hotswap::pending() == Some(r.build) {
+                        // Já baixada; falta reabrir.
+                        if manual || u.dismissed != Some(r.build) {
+                            u.step = Step::Ready(r);
+                        }
+                    } else if manual {
                         u.download(r);
                     } else if u.dismissed != Some(r.build) {
                         u.step = Step::Offer(r);
@@ -249,12 +358,13 @@ impl ArtApp {
                     self.status = "Atualização cancelada.".into();
                 }
                 Ok(Err(e)) => u.step = Step::Failed(format!("O download falhou: {e}")),
+                Ok(Ok(())) if release.fast.is_some() => u.step = Step::Ready(release),
                 Ok(Ok(())) => u.ready(apk_path(release.build)),
             },
             Step::Permission(apk) => {
                 if update::can_install() {
                     u.step = Step::Saving {
-                        apk,
+                        apk: Some(apk),
                         flushed: false,
                     };
                 } else {
@@ -269,11 +379,16 @@ impl ArtApp {
                 } else if !flushed {
                     u.step = Step::Saving { apk, flushed: true };
                     self.flush_autosave();
-                } else {
+                } else if let Some(apk) = apk {
                     match update::install(&apk) {
                         Ok(()) => u.step = Step::Installing,
                         Err(e) => u.step = Step::Failed(format!("A instalação falhou: {e}")),
                     }
+                } else if let Err(e) = update::restart() {
+                    u.step = Step::Failed(format!(
+                        "Não deu para reabrir sozinho ({e}). Feche e abra o ArtApp para usar a \
+                         versão nova."
+                    ));
                 }
             }
             Step::Installing => match update::install_state() {
@@ -325,6 +440,12 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
                     "Você está com o build {}. O desenho aberto é salvo antes de atualizar.",
                     u.installed
                 )));
+                if let Some(f) = &r.fast {
+                    ui.label(muted(format!(
+                        "Atualização rápida: baixa só {} MB e não precisa reinstalar.",
+                        mb(f.gz_size.max(1))
+                    )));
+                }
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     now = ui
@@ -342,7 +463,8 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
         }
         Step::Downloading { release, .. } => {
             let (done, total) = update::progress();
-            let total = total.or((release.size > 0).then_some(release.size));
+            let size = release.download_size();
+            let total = total.or((size > 0).then_some(size));
             let mut cancel = false;
             window("Atualizando o ArtApp").show(ctx, |ui| {
                 ui.set_width(width);
@@ -384,6 +506,46 @@ pub fn show(app: &mut ArtApp, ctx: &egui::Context) {
             } else if cancel {
                 u.step = Step::Idle;
             }
+        }
+        Step::Ready(r) => {
+            let r = r.clone();
+            let (mut now, mut later) = (false, false);
+            window("Versão nova pronta").show(ctx, |ui| {
+                ui.set_width(width);
+                ui.label(format!("{} foi baixada.", r.name));
+                ui.add(
+                    egui::Label::new(muted(
+                        "O ArtApp salva o desenho, fecha e abre de novo já na versão nova. Se \
+                         preferir, ela entra na próxima vez que você abrir o app.",
+                    ))
+                    .wrap(),
+                );
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    now = ui
+                        .button(RichText::new("Reiniciar agora").strong())
+                        .clicked();
+                    later = ui.button("Depois").clicked();
+                });
+            });
+            if now {
+                u.step = Step::Saving {
+                    apk: None,
+                    flushed: false,
+                };
+            } else if later {
+                u.dismissed = Some(r.build);
+                u.step = Step::Idle;
+            }
+        }
+        Step::Saving { apk: None, .. } => {
+            window("Atualizando o ArtApp").show(ctx, |ui| {
+                ui.set_width(width);
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Salvando e reabrindo…");
+                });
+            });
         }
         Step::Saving { .. } | Step::Installing => {
             window("Atualizando o ArtApp").show(ctx, |ui| {

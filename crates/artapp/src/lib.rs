@@ -11,6 +11,7 @@ mod color_panel;
 mod dialogs;
 mod gallery;
 mod history_panel;
+mod hotswap;
 mod materials_view;
 mod panels;
 pub mod platform;

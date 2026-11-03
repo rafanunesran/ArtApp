@@ -368,6 +368,9 @@ pub mod update {
         pub fn install_state() -> InstallState {
             InstallState::Idle
         }
+        pub fn restart() -> Result<(), String> {
+            Err(NO.into())
+        }
     }
     #[cfg(not(target_os = "android"))]
     pub use desktop::*;
@@ -532,6 +535,36 @@ mod android_update {
                     jni_str!("install"),
                     jni_sig!((c: android.content.Context, apk: java.lang.String) -> java.lang.String),
                     &[JValue::Object(act), JValue::Object(&apk)],
+                )?
+                .l()?;
+            opt_string(env, r)
+        }))
+    }
+
+    /// Reabre o app num processo novo (`Restart.java`), para a atualização rápida entrar. Se
+    /// der certo, não volta: o processo acaba.
+    pub fn restart() -> Result<(), String> {
+        result(with_activity(|env, act| {
+            let loader = env
+                .call_method(
+                    act,
+                    jni_str!("getClassLoader"),
+                    jni_sig!(() -> java.lang.ClassLoader),
+                    &[],
+                )?
+                .l()?;
+            let loader = env.cast_local::<JClassLoader>(loader)?;
+            let cls = LoaderContext::Loader(&loader).load_class(
+                env,
+                jni_str!("io.github.rafanunesran.artapp.Restart"),
+                true,
+            )?;
+            let r = env
+                .call_static_method(
+                    &cls,
+                    jni_str!("restart"),
+                    jni_sig!((a: android.app.Activity) -> java.lang.String),
+                    &[JValue::Object(act)],
                 )?
                 .l()?;
             opt_string(env, r)
