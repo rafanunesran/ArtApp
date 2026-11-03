@@ -123,41 +123,53 @@ impl Document {
         if r.is_empty() {
             return Rect::EMPTY;
         }
-        let sel = self.selection.as_ref().map(|s| s.mask.read_region(r));
+        // A máscara é copy-on-write: copiar só copia ponteiros.
+        let sel_mask = self.selection.as_ref().map(|s| s.mask.clone());
         self.checkpoint();
         let Some(layer) = self.active_layer_mut() else {
             return Rect::EMPTY;
         };
         let lock = layer.lock_alpha;
         let w = r.width() as usize;
-        let mut px = vec![[0.0f32; 4]; w * r.height() as usize];
-        layer.surface.read_rgba_into(r, &mut px);
-        let mut out = vec![0.0f32; px.len() * 4];
-        // Linha por linha em todos os núcleos (ajustes de cor e efeitos fazem conta por pixel).
-        out.par_chunks_mut(w * 4)
-            .zip(px.par_chunks(w))
-            .enumerate()
-            .for_each(|(row, (dst, src))| {
-                let y = r.y0 + row as i32;
-                for (j, (o, p)) in dst.as_chunks_mut::<4>().0.iter_mut().zip(src).enumerate() {
-                    let i = row * w + j;
-                    let k = sel
-                        .as_ref()
-                        .map_or(1.0, |m| m.get(i).copied().unwrap_or(0.0));
-                    let q = if k > 0.0 {
-                        f(r.x0 + j as i32, y, *p)
-                    } else {
-                        *p
-                    };
-                    for c in 0..4 {
-                        o[c] = p[c] + (q[c] - p[c]) * k;
+        // Em faixas de 256 linhas: numa tela A4 a camada inteira em f32 passaria de 250 MB de
+        // uma vez, o que derruba celulares com pouca memória.
+        let mut px = Vec::new();
+        let mut out = Vec::new();
+        let mut y0 = r.y0;
+        while y0 < r.y1 {
+            let band = Rect::new(r.x0, y0, r.x1, (y0 + 256).min(r.y1));
+            y0 = band.y1;
+            let n = w * band.height() as usize;
+            px.resize(n, [0.0f32; 4]);
+            layer.surface.read_rgba_into(band, &mut px);
+            out.resize(n * 4, 0.0f32);
+            let sel = sel_mask.as_ref().map(|m| m.read_region(band));
+            // Linha por linha em todos os núcleos (ajustes de cor e efeitos fazem conta por pixel).
+            out.par_chunks_mut(w * 4)
+                .zip(px.par_chunks(w))
+                .enumerate()
+                .for_each(|(row, (dst, src))| {
+                    let y = band.y0 + row as i32;
+                    for (j, (o, p)) in dst.as_chunks_mut::<4>().0.iter_mut().zip(src).enumerate() {
+                        let i = row * w + j;
+                        let k = sel
+                            .as_ref()
+                            .map_or(1.0, |m| m.get(i).copied().unwrap_or(0.0));
+                        let q = if k > 0.0 {
+                            f(r.x0 + j as i32, y, *p)
+                        } else {
+                            *p
+                        };
+                        for c in 0..4 {
+                            o[c] = p[c] + (q[c] - p[c]) * k;
+                        }
+                        if lock {
+                            o[3] = p[3];
+                        }
                     }
-                    if lock {
-                        o[3] = p[3];
-                    }
-                }
-            });
-        layer.surface.write_region(r, &out);
+                });
+            layer.surface.write_region(band, &out);
+        }
         r
     }
 

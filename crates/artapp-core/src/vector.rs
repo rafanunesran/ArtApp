@@ -312,6 +312,29 @@ pub fn rasterize(art: &VectorArt, width: u32, height: u32) -> Surface {
     s
 }
 
+/// Troca a tinta de uma camada vetorial pela nova rasterização, reaproveitando os tiles que não
+/// mudaram (o histórico continua compartilhando-os: editar um objeto pequeno não duplica a
+/// camada inteira na memória). Devolve só a área que mudou, para a tela recompor menos.
+pub fn replace_raster(old: &mut Surface, new: Surface) -> Rect {
+    let mut new = new;
+    let mut changed = Rect::EMPTY;
+    let mut same = Vec::new();
+    for (c, t) in new.tiles() {
+        match old.tile(*c) {
+            Some(o) if o.bytes() == t.bytes() => same.push((*c, o.clone())),
+            _ => changed = changed.union(&c.rect()),
+        }
+    }
+    for (c, _) in old.tiles() {
+        if new.tile(*c).is_none() {
+            changed = changed.union(&c.rect());
+        }
+    }
+    new.put_tiles(same);
+    *old = new;
+    changed
+}
+
 impl VectorArt {
     pub fn new(width: u32, height: u32) -> Self {
         Self {
@@ -370,8 +393,8 @@ impl Document {
             return Rect::EMPTY;
         }
         art.rev = next_rev();
-        layer.surface = rasterize(art, w, h);
-        bounds
+        let fresh = rasterize(art, w, h);
+        replace_raster(&mut layer.surface, fresh).intersect(&bounds)
     }
 
     /// Texto numa camada nova, com o começo da linha de base em `at`. Com `raster`, a camada

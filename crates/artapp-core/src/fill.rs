@@ -155,19 +155,26 @@ pub fn flood_fill_with(
     }
     let r = Rect::new(x0 as i32, y0 as i32, x1 as i32 + 1, y1 as i32 + 1).intersect(&bounds);
     // Cobertura da seleção dentro de `r` (1 = selecionado).
-    let sel: Option<Vec<f32>> = doc.selection.as_ref().map(|s| s.mask.read_region(r));
+    let sel_mask = doc.selection.as_ref().map(|s| s.mask.clone());
     let erase = color[3] <= 0.0;
     doc.checkpoint();
     let Some(layer) = doc.active_layer_mut() else {
         return Rect::EMPTY;
     };
-    let mut px = vec![[0.0f32; 4]; r.width() as usize * r.height() as usize];
-    layer.surface.read_rgba_into(r, &mut px);
     let rw = r.width() as usize;
     let lock = layer.lock_alpha;
-    let mut out = vec![0.0f32; px.len() * 4];
-    {
+    // Em faixas de 256 linhas, para não pedir centenas de MB de uma vez numa tela grande.
+    let (mut px, mut out) = (Vec::new(), Vec::new());
+    let mut y0 = r.y0;
+    while y0 < r.y1 {
         use rayon::prelude::*;
+        let r = Rect::new(r.x0, y0, r.x1, (y0 + 256).min(r.y1));
+        y0 = r.y1;
+        let n = rw * r.height() as usize;
+        px.resize(n, [0.0f32; 4]);
+        layer.surface.read_rgba_into(r, &mut px);
+        out.resize(n * 4, 0.0f32);
+        let sel = sel_mask.as_ref().map(|m| m.read_region(r));
         out.par_chunks_mut(rw * 4)
             .zip(px.par_chunks(rw))
             .enumerate()
@@ -198,8 +205,8 @@ pub fn flood_fill_with(
                     };
                 }
             });
+        layer.surface.write_region(r, &out);
     }
-    layer.surface.write_region(r, &out);
     r
 }
 

@@ -546,27 +546,39 @@ pub fn merge_into(dst: &mut Surface, top: &Layer, width: u32, height: u32) {
     if r.is_empty() {
         return;
     }
-    let n = r.width() as usize * r.height() as usize;
-    let mut a = vec![[0.0f32; 4]; n];
-    let mut b = vec![[0.0f32; 4]; n];
-    dst.read_rgba_into(r, &mut a);
-    top.surface.read_rgba_into(r, &mut b);
-    let mut out = Vec::with_capacity(n * 4);
-    for (d, s) in a.iter().zip(&b) {
-        // Uma camada recortada mesclada na base só fica onde a base tem tinta.
-        let s = if top.clip {
-            [s[0], s[1], s[2], s[3] * d[3]]
-        } else {
-            *s
-        };
-        let p = if s[3] > 0.0 {
-            blend::composite(top.blend, *d, s, top.opacity)
-        } else {
-            *d
-        };
-        out.extend_from_slice(&p);
+    // Em faixas de 256 linhas (pouca memória de uma vez) e cada faixa em todos os núcleos.
+    use rayon::prelude::*;
+    let w = r.width() as usize;
+    let (mut a, mut b, mut out) = (Vec::new(), Vec::new(), Vec::new());
+    let mut y0 = r.y0;
+    while y0 < r.y1 {
+        let band = Rect::new(r.x0, y0, r.x1, (y0 + 256).min(r.y1));
+        y0 = band.y1;
+        let n = w * band.height() as usize;
+        a.resize(n, [0.0f32; 4]);
+        b.resize(n, [0.0f32; 4]);
+        out.resize(n * 4, 0.0f32);
+        dst.read_rgba_into(band, &mut a);
+        top.surface.read_rgba_into(band, &mut b);
+        out.par_chunks_mut(w * 4)
+            .zip(a.par_chunks(w).zip(b.par_chunks(w)))
+            .for_each(|(o, (da, sb))| {
+                for (o, (d, s)) in o.as_chunks_mut::<4>().0.iter_mut().zip(da.iter().zip(sb)) {
+                    // Uma camada recortada mesclada na base só fica onde a base tem tinta.
+                    let s = if top.clip {
+                        [s[0], s[1], s[2], s[3] * d[3]]
+                    } else {
+                        *s
+                    };
+                    *o = if s[3] > 0.0 {
+                        blend::composite(top.blend, *d, s, top.opacity)
+                    } else {
+                        *d
+                    };
+                }
+            });
+        dst.write_region(band, &out);
     }
-    dst.write_region(r, &out);
 }
 
 #[cfg(test)]

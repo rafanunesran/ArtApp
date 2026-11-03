@@ -180,6 +180,31 @@ fn main() {
         d.merge_down();
         d
     });
+    {
+        use artapp_core::vector::{Shape, VectorStyle};
+        use vectorcraft_geom::Point;
+        let mut v = painted_doc();
+        v.add_vector_layer();
+        let style = VectorStyle::default();
+        let ell = |i: usize| {
+            let (x, y) = ((i * 97 % 2200) as f64, (i * 211 % 3300) as f64);
+            Shape::Ellipse(Point::new(x, y), Point::new(x + 120.0, y + 90.0))
+        };
+        for i in 0..40 {
+            v.vector_add(&ell(i), &style);
+        }
+        let before = v.memory_bytes();
+        let mut k = 40;
+        time("Vetor: novo objeto + recompor a tela", 5, || {
+            k += 1;
+            let r = v.vector_add(&ell(k), &style);
+            composite::composite_rgba8(&v, r, true)
+        });
+        println!(
+            "Vetor: memória por objeto novo (camadas + desfazer) {:>9} KB",
+            ((v.memory_bytes() - before) / 5) >> 10
+        );
+    }
     let bytes = project::save(&doc).unwrap();
     time("Salvar projeto", 2, || project::save(&doc).unwrap());
     time("Abrir projeto", 2, || project::load(&bytes).unwrap());

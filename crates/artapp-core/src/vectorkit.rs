@@ -125,10 +125,11 @@ impl VectorKit {
         };
         art.doc = (*new).clone();
         art.rev = next_rev();
-        layer.surface = rasterize(art, w, h);
+        let fresh = rasterize(art, w, h);
+        let changed = crate::vector::replace_raster(&mut layer.surface, fresh);
         self.synced = Some((layer.id, art.rev));
         self.last = Some(new);
-        bounds
+        changed.intersect(&bounds)
     }
 
     fn handle(&mut self, reqs: vectorcraft_engine::Result<Vec<vectorcraft_engine::UiRequest>>) {
