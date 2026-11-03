@@ -269,6 +269,12 @@ fn app_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             theme::switch(ui, &mut app.show_perf, "Mostrar desempenho (ms por quadro)")
         })
         .changed();
+    changed |= ui
+        .add_sized([210.0, 36.0], |ui: &mut egui::Ui| {
+            theme::switch(ui, &mut app.simple_mode, "Modo simples (menos ferramentas)")
+        })
+        .on_hover_text("Mostra só pincel, borracha, mistura, balde, conta-gotas, mão, mover e laço, e as abas Pincéis, Rápido e Geral.")
+        .changed();
     let r = artapp_core::history::UNDO_RANGE;
     let resp = ui.add(
         egui::Slider::new(&mut app.undo_steps, *r.start()..=*r.end())
@@ -784,10 +790,7 @@ fn tool_buttons(app: &mut ArtApp, ui: &mut egui::Ui, vertical: bool, cols: usize
             ui.add(egui::Separator::default().vertical().spacing(6.0));
         }
     };
-    for (i, group) in [&Tool::RASTER[..], &Tool::SELECTION[..], &Tool::VECTOR[..]]
-        .into_iter()
-        .enumerate()
-    {
+    for (i, group) in Tool::groups(app.simple_mode).into_iter().enumerate() {
         if i > 0 {
             separator(ui);
         }
@@ -849,15 +852,9 @@ fn color_button(app: &mut ArtApp, ui: &mut egui::Ui) {
 pub fn tool_rail(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) {
     let cols = rail_cols(canvas);
     // Fileiras de botões por grupo, mais as cores, os separadores e as margens.
-    let rows: usize = [
-        Tool::RASTER.len(),
-        Tool::SELECTION.len(),
-        Tool::VECTOR.len(),
-    ]
-    .iter()
-    .map(|n| n.div_ceil(cols))
-    .sum();
-    let rail_h = (rows + 1) as f32 * (theme::TOUCH + 2.0) + 3.0 * 16.0 + 16.0;
+    let groups = Tool::groups(app.simple_mode);
+    let rows: usize = groups.iter().map(|g| g.len().div_ceil(cols)).sum();
+    let rail_h = (rows + 1) as f32 * (theme::TOUCH + 2.0) + groups.len() as f32 * 16.0 + 16.0;
     let h = rail_h.min(canvas.height() - 2.0 * GAP);
     // Centralizado na altura, como no protótipo; encosta no topo se a tela for baixa.
     let y = (canvas.center().y - h / 2.0).max(canvas.min.y + GAP);
@@ -2310,6 +2307,7 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
         ];
         brush_editor::tab_bar(ui, "eraser", &TABS)
     } else {
+        const SIMPLE: [BrushTab; 3] = [BrushTab::Library, BrushTab::Quick, BrushTab::General];
         const TABS: [BrushTab; 8] = [
             BrushTab::Library,
             BrushTab::Quick,
@@ -2320,7 +2318,11 @@ fn brush_settings(app: &mut ArtApp, ui: &mut egui::Ui) {
             BrushTab::Smoothing,
             BrushTab::Advanced,
         ];
-        brush_editor::tab_bar(ui, "brush", &TABS)
+        if app.simple_mode {
+            brush_editor::tab_bar(ui, "brush-simple", &SIMPLE)
+        } else {
+            brush_editor::tab_bar(ui, "brush", &TABS)
+        }
     };
     if tab != BrushTab::Library {
         let b = if eraser { &app.eraser } else { &app.brush };

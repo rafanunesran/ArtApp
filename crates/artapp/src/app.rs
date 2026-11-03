@@ -108,6 +108,27 @@ impl Tool {
         Tool::FrameSplit,
     ];
 
+    /// Modo simples: só o essencial para desenhar e pintar, sem vetor nem seleções avançadas.
+    pub const SIMPLE: [Tool; 8] = [
+        Tool::Brush,
+        Tool::Eraser,
+        Tool::Blend,
+        Tool::Fill,
+        Tool::Eyedropper,
+        Tool::Hand,
+        Tool::MoveLayer,
+        Tool::Lasso,
+    ];
+
+    /// Grupos de botões da barra de ferramentas (um só no modo simples).
+    pub fn groups(simple: bool) -> Vec<&'static [Tool]> {
+        if simple {
+            vec![&Tool::SIMPLE[..]]
+        } else {
+            vec![&Tool::RASTER[..], &Tool::SELECTION[..], &Tool::VECTOR[..]]
+        }
+    }
+
     /// O que o botão lateral da caneta pode virar (ferramentas sem estado pela metade).
     pub const PEN_BUTTON: [Tool; 9] = [
         Tool::Eraser,
@@ -256,6 +277,8 @@ pub struct ArtApp {
     pub brush_recent: Vec<String>,
     /// Mostra no canto o tempo de cada quadro (diagnóstico de lentidão).
     pub show_perf: bool,
+    /// Modo simples: menos ferramentas e só as abas Pincéis, Rápido e Geral no pincel.
+    pub simple_mode: bool,
     /// Duração dos últimos quadros, em segundos (o mais novo no fim).
     pub frame_times: std::collections::VecDeque<f32>,
     /// Passo do tour aberto (`None` = fechado).
@@ -615,6 +638,7 @@ impl ArtApp {
             brush_recent: Vec::new(),
             tour_step: None,
             show_perf: false,
+            simple_mode: false,
             frame_times: Default::default(),
             tour_done: false,
             spring: None,
@@ -691,6 +715,9 @@ impl ArtApp {
         self.tour_done = flag("tour_done").unwrap_or(true);
         if let Some(b) = flag("show_perf") {
             self.show_perf = b;
+        }
+        if let Some(b) = flag("simple_mode") {
+            self.simple_mode = b;
         }
         if let Some(b) = flag("speed_pressure") {
             self.speed_pressure = b;
@@ -846,6 +873,7 @@ impl ArtApp {
             "speed_pressure": self.speed_pressure,
             "tour_done": self.tour_done,
             "show_perf": self.show_perf,
+            "simple_mode": self.simple_mode,
             "pressure_curve": self.pressure_curve,
             "brush_curves": self.brush_curves,
             "vector_pen_size": self.vector_pen.size,
