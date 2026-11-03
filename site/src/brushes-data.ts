@@ -18,6 +18,8 @@ export type BrushPack = {
   /** Onde fica o botão de download oficial. */
   download: string;
   host: Host;
+  /** Imagem de prévia oficial (a og:image da página do autor), mostrada direto do site dele. */
+  preview?: string;
 };
 
 export const hostHelp: Record<Host, { name: string; how: string }> = {
@@ -69,6 +71,7 @@ export const packs: BrushPack[] = [
     desc: "Cinco pincéis de pintura num .zip pequeno (3,9 MB).",
     license: "Uso pessoal e comercial, pode modificar; não pode redistribuir nem vender.",
     page: "https://ed-of-all.itch.io/5x-free-brushes-for-clip-studio-paint",
+    preview: "https://img.itch.zone/aW1nLzExMDUyMjc1LnBuZw==/508x254%23mb/suxReo.png",
     download: "https://ed-of-all.itch.io/5x-free-brushes-for-clip-studio-paint/purchase",
     host: "itch",
   },
@@ -81,6 +84,7 @@ export const packs: BrushPack[] = [
     desc: "Veios de madeira (2 versões) e três texturas de madeira queimada (yakisugi).",
     license: "Gratuito; a página não informa a licença.",
     page: "https://axeswing.itch.io/natural-wood-and-burned-brush-pack",
+    preview: "https://img.itch.zone/aW1nLzE1OTI5NjY3LmpwZw==/508x254%23mb/dEQknd.jpg",
     download: "https://axeswing.itch.io/natural-wood-and-burned-brush-pack/purchase",
     host: "itch",
   },
@@ -93,6 +97,7 @@ export const packs: BrushPack[] = [
     desc: "Pincéis básicos para esboço, arte-final e detalhes.",
     license: "Gratuito; confira os termos na página.",
     page: "https://lonelyshootingstar.gumroad.com/l/FREEBRUSHPACK",
+    preview: "https://public-files.gumroad.com/z5nlwl392j8cy49klklhugoeb1gf",
     download: "https://lonelyshootingstar.gumroad.com/l/FREEBRUSHPACK",
     host: "gumroad",
   },
@@ -105,6 +110,7 @@ export const packs: BrushPack[] = [
     desc: "Versões gratuitas dos pincéis eXpressure que não dependem da inclinação da caneta.",
     license: "Gratuito; confira os termos na página.",
     page: "https://zhillustrator.gumroad.com/l/expressureNTfree",
+    preview: "https://public-files.gumroad.com/w5bpaz8ladban1uryt1wax7hlk60",
     download: "https://zhillustrator.gumroad.com/l/expressureNTfree",
     host: "gumroad",
   },
@@ -117,6 +123,7 @@ export const packs: BrushPack[] = [
     desc: "Os pincéis que o artista usa nas aulas de pintura digital. Grátis: é só pôr 0 no preço.",
     license: "Gratuito; confira os termos na página.",
     page: "https://medders.gumroad.com/l/YUDSX",
+    preview: "https://public-files.gumroad.com/yrbyhgeurei4sptz5oll3tw1x0bl",
     download: "https://medders.gumroad.com/l/YUDSX",
     host: "gumroad",
   },
@@ -129,6 +136,7 @@ export const packs: BrushPack[] = [
     desc: "Pincéis de concept art feitos pelo próprio autor.",
     license: "Gratuito; confira os termos na página.",
     page: "https://velgatheobserver.gumroad.com/l/conceptartfree",
+    preview: "https://public-files.gumroad.com/hbwyrh96353qz7ld0he59an9k3is",
     download: "https://velgatheobserver.gumroad.com/l/conceptartfree",
     host: "gumroad",
   },
@@ -141,6 +149,7 @@ export const packs: BrushPack[] = [
     desc: "Sete pincéis com variações, em .abr e .png (o .png também vira ponta de pincel no ArtApp).",
     license: "Gratuito para uso pessoal; confira o uso comercial na página.",
     page: "https://vailf.gumroad.com/l/FreeBrushesvol1",
+    preview: "https://public-files.gumroad.com/3qiufatonw6lucvq5jt86gpv2pu0",
     download: "https://vailf.gumroad.com/l/FreeBrushesvol1",
     host: "gumroad",
   },
@@ -153,6 +162,7 @@ export const packs: BrushPack[] = [
     desc: "Respingos, escorridos e manchas de aquarela e nanquim. Arquivo grande (194 MB).",
     license: "Livre para uso comercial; não pode redistribuir os arquivos.",
     page: "https://myphotoshopbrushes.com/resources/4203/64-free-watercolor-splatter-brushes",
+    preview: "https://myphotoshopbrushes.com/i/w1200-h630-fitcover/images/64-free-watercolor-splatter-brushes/preview-1771961137300.jpg",
     download: "https://myphotoshopbrushes.com/resources/4203/64-free-watercolor-splatter-brushes",
     host: "mpb",
   },
@@ -165,6 +175,7 @@ export const packs: BrushPack[] = [
     desc: "Grafite e lápis para esboço.",
     license: "Gratuito; a licença de cada pacote está na página.",
     page: "https://myphotoshopbrushes.com/resources/4275/16-free-graphite-pencil-photoshop-brushes",
+    preview: "https://myphotoshopbrushes.com/i/w1200-h630-fitcover/images/16-free-graphite-pencil-photoshop-brushes/preview-20261013-143135.png",
     download: "https://myphotoshopbrushes.com/resources/4275/16-free-graphite-pencil-photoshop-brushes",
     host: "mpb",
   },
@@ -177,6 +188,7 @@ export const packs: BrushPack[] = [
     desc: "Texturas de guache para pintura.",
     license: "Gratuito; a licença de cada pacote está na página.",
     page: "https://myphotoshopbrushes.com/resources/4274/24-free-gouache-photoshop-brushes",
+    preview: "https://myphotoshopbrushes.com/i/w1200-h630-fitcover/images/24-free-gouache-photoshop-brushes/preview-20261011-005507.png",
     download: "https://myphotoshopbrushes.com/resources/4274/24-free-gouache-photoshop-brushes",
     host: "mpb",
   },
@@ -189,6 +201,7 @@ export const packs: BrushPack[] = [
     desc: "Retículas gastas para quadrinhos e pôsteres.",
     license: "Gratuito; a licença de cada pacote está na página.",
     page: "https://myphotoshopbrushes.com/resources/4278/12-free-distressed-halftone-photoshop-brushes",
+    preview: "https://myphotoshopbrushes.com/i/w1200-h630-fitcover/images/12-free-distressed-halftone-photoshop-brushes/preview-20261019-225822.png",
     download: "https://myphotoshopbrushes.com/resources/4278/12-free-distressed-halftone-photoshop-brushes",
     host: "mpb",
   },
