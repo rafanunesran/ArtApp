@@ -265,6 +265,9 @@ pub struct ArtApp {
     /// Troca temporária (desktop): tecla da ferramenta ainda apertada, a ferramenta de antes e
     /// quando a tecla desceu. Segurar e soltar volta para a de antes, como no Clip Studio.
     spring: Option<(egui::Key, Tool, f64)>,
+    /// Troca temporária pelo toque: segurar o botão de uma ferramenta usa ela num traço e volta
+    /// para esta (o "segurar para trocar" do teclado, sem teclado).
+    pub oneshot: Option<Tool>,
     /// Pincéis marcados com estrela (chave de [`brush_key`]).
     pub brush_favorites: Vec<String>,
     /// Pasta aberta em "Meus pincéis" (vazio = todas); pincel salvo ou duplicado entra nela.
@@ -615,6 +618,7 @@ impl ArtApp {
             frame_times: Default::default(),
             tour_done: false,
             spring: None,
+            oneshot: None,
             brush_favorites: Vec::new(),
             brush_folder: String::new(),
             brush_quick: crate::brush_editor::QUICK_DEFAULT
@@ -1816,6 +1820,28 @@ impl ArtApp {
 }
 
 impl ArtApp {
+    /// Usa `t` só no próximo traço e depois volta para a ferramenta atual.
+    pub fn start_oneshot(&mut self, t: Tool) {
+        if t == self.tool {
+            return;
+        }
+        let back = self.oneshot.unwrap_or(self.tool);
+        self.set_tool(t);
+        self.oneshot = Some(back);
+        self.status = format!(
+            "{} só neste traço; depois volta para {}.",
+            t.label(),
+            back.label()
+        );
+    }
+
+    /// Fim de um traço (ou toque) na tela: desfaz a troca temporária, se houver.
+    pub fn finish_oneshot(&mut self) {
+        if let Some(back) = self.oneshot.take() {
+            self.set_tool(back);
+        }
+    }
+
     /// Gesto/botão "voltar" do Android: fecha o que estiver aberto por cima, um de cada vez.
     fn back_gesture(&mut self, ctx: &egui::Context) {
         if !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::BrowserBack)) {

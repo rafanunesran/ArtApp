@@ -786,7 +786,12 @@ fn tool_buttons(app: &mut ArtApp, ui: &mut egui::Ui, vertical: bool, cols: usize
         }
         let mut buttons = |ui: &mut egui::Ui| {
             for &t in group {
-                if icon_button(ui, t.icon(), app.tool == t, t.label()).clicked() {
+                let r = icon_button(ui, t.icon(), app.tool == t, t.label());
+                // Segurar (ou botão direito): usa a ferramenta num traço só e volta.
+                if r.long_touched() || r.secondary_clicked() {
+                    app.start_oneshot(t);
+                } else if r.clicked() {
+                    app.oneshot = None;
                     if app.tool == t {
                         // Tocar de novo na ferramenta escolhida abre (ou fecha) os ajustes dela.
                         app.show_tools_panel = !app.show_tools_panel;

@@ -289,6 +289,9 @@ pub fn show(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.finish_balloon(None);
     }
     handle_input(app, ui, panel, response.hovered());
+    if app.oneshot.is_some() && (response.drag_stopped() || response.clicked()) {
+        app.finish_oneshot();
+    }
     check_holds(app, ui.ctx(), panel);
     update_texture(app, ui.ctx());
 
