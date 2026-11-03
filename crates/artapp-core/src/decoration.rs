@@ -186,6 +186,7 @@ fn entry(name: &str, settings: BrushSettings) -> BrushEntry {
         group: GROUP.into(),
         settings,
         mixes: false,
+        folder: String::new(),
     }
 }
 

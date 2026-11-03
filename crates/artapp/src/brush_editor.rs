@@ -155,6 +155,8 @@ fn section(
 pub enum BrushTab {
     /// Biblioteca de pincéis (só na ferramenta Pincel).
     Library,
+    /// Só os ajustes marcados com o olho (ver [`quick_tab`]).
+    Quick,
     #[default]
     General,
     Shape,
@@ -177,6 +179,7 @@ impl BrushTab {
     pub fn label(self) -> &'static str {
         match self {
             BrushTab::Library => "Pincéis",
+            BrushTab::Quick => "Rápido",
             BrushTab::General => "Geral",
             BrushTab::Shape => "Forma",
             BrushTab::Grain => "Granulado",
@@ -274,7 +277,7 @@ pub fn show_tab(
     let before = b.clone();
     let taper_before = *taper;
     match tab {
-        BrushTab::Library | BrushTab::General => {}
+        BrushTab::Library | BrushTab::Quick | BrushTab::General => {}
         BrushTab::Shape => shape_tab(ui, b, taper),
         BrushTab::Grain => grain_tab(ui, b),
         BrushTab::Dynamics => dynamics_tab(ui, b),
@@ -496,4 +499,179 @@ fn advanced_tab(ui: &mut egui::Ui, b: &mut BrushSettings) {
         pct(ui, &mut m.mix, "Mistura");
         pct(ui, &mut m.flow, "Fluxo");
     });
+}
+
+/// Ajustes que podem ir para a aba Rápido: chave (gravada nas preferências) e nome.
+pub const QUICK_ITEMS: [(&str, &str); 15] = [
+    ("size", "Tamanho"),
+    ("opacity", "Opacidade"),
+    ("flow", "Fluxo"),
+    ("hardness", "Dureza"),
+    ("smoothing", "Estabilizador"),
+    ("spacing", "Espaçamento"),
+    ("angle", "Ângulo"),
+    ("roundness", "Redondeza"),
+    ("taper_start", "Afinar no início"),
+    ("taper_end", "Afinar no fim"),
+    ("texture_depth", "Profundidade da textura"),
+    ("texture_scale", "Escala da textura"),
+    ("scatter", "Dispersão"),
+    ("hue", "Variação de matiz"),
+    ("wet", "Molhado (mistura)"),
+];
+
+/// O que a aba Rápido mostra numa instalação nova.
+pub const QUICK_DEFAULT: [&str; 4] = ["size", "opacity", "flow", "smoothing"];
+
+/// Um ajuste da aba Rápido.
+fn quick_item(ui: &mut egui::Ui, key: &str, b: &mut BrushSettings, taper: &mut Taper, max: f32) {
+    match key {
+        "size" => {
+            ui.add(
+                egui::Slider::new(&mut b.size, 1.0..=max)
+                    .logarithmic(true)
+                    .text("Tamanho"),
+            );
+        }
+        "opacity" => {
+            ui.add(egui::Slider::new(&mut b.opacity, 0.01..=1.0).text("Opacidade"));
+        }
+        "flow" => {
+            ui.add(egui::Slider::new(&mut b.flow, 0.01..=1.0).text("Fluxo"));
+        }
+        "hardness" => {
+            ui.add(egui::Slider::new(&mut b.hardness, 0.0..=1.0).text("Dureza"));
+        }
+        "smoothing" => {
+            let sm = &mut b.smoothing;
+            let mut p = sm.amount * 100.0;
+            if ui
+                .add(
+                    egui::Slider::new(&mut p, 0.0..=100.0)
+                        .suffix("%")
+                        .text("Estabilizador"),
+                )
+                .changed()
+            {
+                sm.amount = p / 100.0;
+                sm.enabled = sm.amount > 0.0;
+            }
+        }
+        "spacing" => pct(ui, &mut b.spacing, "Espaçamento"),
+        "angle" => slider(ui, &mut b.angle, -180.0..=180.0, "Ângulo (°)"),
+        "roundness" => pct(ui, &mut b.roundness, "Redondeza"),
+        "taper_start" => slider(ui, &mut taper.start, 0.0..=400.0, "Afinar no início (px)"),
+        "taper_end" => slider(ui, &mut taper.end, 0.0..=400.0, "Afinar no fim (px)"),
+        "texture_depth" => {
+            let before = b.texture.depth;
+            pct(ui, &mut b.texture.depth, "Profundidade da textura");
+            if b.texture.depth != before && b.texture.depth > 0.0 {
+                b.texture.enabled = true;
+            }
+        }
+        "texture_scale" => slider(ui, &mut b.texture.scale, 0.1..=4.0, "Escala da textura"),
+        "scatter" => {
+            let sc = &mut b.scattering;
+            let before = sc.scatter.jitter;
+            pct(ui, &mut sc.scatter.jitter, "Dispersão");
+            if sc.scatter.jitter != before && sc.scatter.jitter > 0.0 {
+                sc.enabled = true;
+            }
+        }
+        "hue" => {
+            let cd = &mut b.color_dynamics;
+            let before = cd.hue_jitter;
+            pct(ui, &mut cd.hue_jitter, "Variação de matiz");
+            if cd.hue_jitter != before && cd.hue_jitter > 0.0 {
+                cd.enabled = true;
+            }
+        }
+        "wet" => pct(ui, &mut b.mixer.wet, "Molhado (mistura)"),
+        _ => {}
+    }
+}
+
+/// Aba Rápido: só os ajustes que o usuário marcou com o olho, para não caçar o mesmo controle
+/// em seis abas. No modo de edição aparecem todos, cada um com o olho para ligar ou desligar.
+/// Devolve `true` se a lista mudou (para gravar as preferências).
+pub fn quick_tab(
+    ui: &mut egui::Ui,
+    b: &mut BrushSettings,
+    taper: &mut Taper,
+    max_size: f32,
+    shown: &mut Vec<String>,
+) -> bool {
+    let edit_key = egui::Id::unique("brush-quick-edit");
+    let mut editing: bool = ui.ctx().data_mut(|d| d.get_temp(edit_key)).unwrap_or(false);
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        let text = if editing {
+            "Pronto"
+        } else {
+            "Escolher ajustes"
+        };
+        if ui
+            .button(format!("{}  {text}", crate::theme::icon::EYE))
+            .on_hover_text("Marque com o olho os ajustes que você mais usa.")
+            .clicked()
+        {
+            editing = !editing;
+        }
+    });
+    if editing {
+        for (key, name) in QUICK_ITEMS {
+            let on = shown.iter().any(|k| k == key);
+            let glyph = if on {
+                crate::theme::icon::EYE
+            } else {
+                crate::theme::icon::EYE_OFF
+            };
+            let mut text = RichText::new(format!("{glyph}   {name}")).size(14.0);
+            if !on {
+                text = text.color(color::TEXT_MUTED);
+            }
+            if ui
+                .add(
+                    egui::Button::new(text)
+                        .frame(false)
+                        .min_size(egui::vec2(ui.available_width(), 34.0)),
+                )
+                .clicked()
+            {
+                if on {
+                    shown.retain(|k| k != key);
+                } else {
+                    shown.push(key.to_string());
+                }
+                changed = true;
+            }
+        }
+    } else if shown.is_empty() {
+        hint(ui, "Nenhum ajuste escolhido. Toque em Escolher ajustes.");
+    } else {
+        // Na ordem da lista completa, para não embaralhar ao ligar e desligar.
+        for (key, _) in QUICK_ITEMS {
+            if shown.iter().any(|k| k == key) {
+                quick_item(ui, key, b, taper, max_size);
+            }
+        }
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(edit_key, editing));
+    changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quick_defaults_exist_and_keys_are_unique() {
+        for k in QUICK_DEFAULT {
+            assert!(QUICK_ITEMS.iter().any(|(q, _)| *q == k), "{k}");
+        }
+        let mut keys: Vec<_> = QUICK_ITEMS.iter().map(|(k, _)| *k).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), QUICK_ITEMS.len());
+    }
 }
