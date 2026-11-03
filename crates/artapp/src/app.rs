@@ -281,6 +281,10 @@ pub struct ArtApp {
     pub simple_mode: bool,
     /// Duração dos últimos quadros, em segundos (o mais novo no fim).
     pub frame_times: std::collections::VecDeque<f32>,
+    /// Hora de cada amostra da caneta/dedo no último segundo de traço (diagnóstico).
+    pub input_samples: std::collections::VecDeque<f64>,
+    /// Amostras por segundo do último traço.
+    pub input_rate: f32,
     /// Passo do tour aberto (`None` = fechado).
     pub tour_step: Option<usize>,
     /// O tour da primeira abertura já foi visto ou pulado.
@@ -640,6 +644,8 @@ impl ArtApp {
             show_perf: false,
             simple_mode: false,
             frame_times: Default::default(),
+            input_samples: Default::default(),
+            input_rate: 0.0,
             tour_done: false,
             spring: None,
             oneshot: None,

@@ -3809,11 +3809,43 @@ pub fn perf_overlay(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) {
             app.frame_times.pop_front();
         }
     }
+    // Amostras da caneta/dedo por segundo enquanto desenha: mostra se o aparelho entrega a
+    // caneta a 60, 120 ou 240 Hz, e se o app está perdendo pontos (traço quebrado ou atrasado).
+    let (now, down, moves) = ctx.input(|i| {
+        let moves = i
+            .events
+            .iter()
+            .filter(|e| match e {
+                egui::Event::PointerMoved(_) => true,
+                egui::Event::Touch { phase, .. } => *phase == egui::TouchPhase::Move,
+                _ => false,
+            })
+            .count();
+        (i.time, i.pointer.any_down(), moves)
+    });
+    if down {
+        app.input_samples.extend(std::iter::repeat_n(now, moves));
+        while app.input_samples.front().is_some_and(|t| now - t > 1.0) {
+            app.input_samples.pop_front();
+        }
+        if let (Some(a), Some(b)) = (app.input_samples.front(), app.input_samples.back())
+            && b - a > 0.2
+        {
+            app.input_rate = (app.input_samples.len() - 1) as f32 / (b - a) as f32;
+        }
+    } else {
+        app.input_samples.clear();
+    }
     let n = app.frame_times.len().max(1) as f32;
     let avg = app.frame_times.iter().sum::<f32>() / n * 1000.0;
     let worst = app.frame_times.iter().copied().fold(0.0f32, f32::max) * 1000.0;
+    let rate = if app.input_rate > 0.0 {
+        format!("\ncaneta: {:.0} amostras/s", app.input_rate)
+    } else {
+        "\ncaneta: desenhe para medir".to_string()
+    };
     let text = format!(
-        "{avg:.1} ms (pior {worst:.0} ms) · {:.0} qps\n{} camadas · {} × {} px",
+        "{avg:.1} ms (pior {worst:.0} ms) · {:.0} qps\n{} camadas · {} × {} px{rate}",
         if avg > 0.0 { 1000.0 / avg } else { 0.0 },
         app.doc.layers.len(),
         app.doc.width,
