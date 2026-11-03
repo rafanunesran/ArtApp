@@ -142,6 +142,7 @@ fn localize(name: &str, group: &str) -> (String, &'static str) {
             ("Redondo duro (pressão na opacidade e fluxo)", "Pintura")
         }
         "Airbrush Soft" => ("Aerógrafo macio", "Aerógrafo"),
+        "Airbrush Pressure Flow" => ("Aerógrafo (pressão no fluxo)", "Aerógrafo"),
         "Calligraphy Flat" => ("Caligrafia chata", "Caligrafia"),
         "Hard Pencil" => ("Lápis duro", "Esboço"),
         "Soft Pencil" => ("Lápis macio", "Esboço"),

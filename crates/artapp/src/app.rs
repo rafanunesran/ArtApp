@@ -74,6 +74,94 @@ pub enum Tool {
     Ruler,
 }
 
+/// Ferramentas de desenho já prontas, como as do Clip Studio (Lápis, Caneta, Aerógrafo, Pincel,
+/// Decoração): todas pintam com a ferramenta Pincel, mas cada uma mostra só os pincéis do jeito
+/// dela na biblioteca e lembra o último escolhido.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BrushKit {
+    Pencil,
+    Pen,
+    Spray,
+    Paint,
+    Special,
+}
+
+impl BrushKit {
+    pub const ALL: [BrushKit; 5] = [
+        BrushKit::Pencil,
+        BrushKit::Pen,
+        BrushKit::Spray,
+        BrushKit::Paint,
+        BrushKit::Special,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BrushKit::Pencil => "Lápis",
+            BrushKit::Pen => "Caneta",
+            BrushKit::Spray => "Spray",
+            BrushKit::Paint => "Pincel",
+            BrushKit::Special => "Texturas e especiais",
+        }
+    }
+
+    /// Nome curto, para o título do painel.
+    pub fn title(self) -> &'static str {
+        match self {
+            BrushKit::Special => "Especiais",
+            k => k.label(),
+        }
+    }
+
+    pub fn icon(self) -> char {
+        use crate::theme::icon;
+        match self {
+            BrushKit::Pencil => icon::PENCIL,
+            BrushKit::Pen => icon::PEN_TOOL,
+            BrushKit::Spray => icon::SPRAY,
+            BrushKit::Paint => icon::BRUSH,
+            BrushKit::Special => icon::SPARKLES,
+        }
+    }
+
+    /// As categorias da biblioteca ([`artapp_core::brushes::CATEGORIES`]) desta ferramenta.
+    /// Categorias que não estão em nenhuma (pincéis importados) ficam em Texturas e especiais.
+    pub fn groups(self) -> &'static [&'static str] {
+        match self {
+            BrushKit::Pencil => &["Esboço"],
+            BrushKit::Pen => &["Arte-final", "Marcadores", "Caligrafia"],
+            BrushKit::Spray => &["Aerógrafo"],
+            BrushKit::Paint => &["Pintura", "Aquarela", "Mistura"],
+            BrushKit::Special => &[
+                "Texturas",
+                "Decoração",
+                "Quadrinhos",
+                "Borrachas",
+                artapp_core::brushes::CUSTOM_GROUP,
+            ],
+        }
+    }
+
+    /// A ferramenta pronta de um pincel, pela categoria dele.
+    pub fn of(group: &str) -> BrushKit {
+        BrushKit::ALL
+            .into_iter()
+            .find(|k| k.groups().contains(&group))
+            .unwrap_or(BrushKit::Special)
+    }
+
+    /// Nome para guardar nas preferências.
+    fn key(self) -> &'static str {
+        match self {
+            BrushKit::Pencil => "lapis",
+            BrushKit::Pen => "caneta",
+            BrushKit::Spray => "spray",
+            BrushKit::Paint => "pincel",
+            BrushKit::Special => "especiais",
+        }
+    }
+}
+
 impl Tool {
     /// Ferramentas raster, sempre visíveis na barra.
     pub const RASTER: [Tool; 8] = [
@@ -187,7 +275,7 @@ impl Tool {
             Tool::Lasso => icon::LASSO,
             Tool::Select => icon::POINTER,
             Tool::VectorPen => icon::PEN_LINE,
-            Tool::Bezier => icon::PEN_TOOL,
+            Tool::Bezier => icon::BEZIER,
             Tool::Line => icon::MINUS,
             Tool::Rectangle => icon::SQUARE,
             Tool::Ellipse => icon::CIRCLE,
@@ -273,6 +361,9 @@ pub struct ArtApp {
     pub previous_tool: Tool,
     pub brushes: Vec<BrushEntry>,
     pub brush_index: usize,
+    /// Ferramenta pronta em uso (Lápis, Caneta…) e o último pincel de cada uma ([`brush_key`]).
+    pub brush_kit: BrushKit,
+    pub kit_brushes: std::collections::HashMap<String, String>,
     /// Pincéis usados por último (chave de [`brush_key`]), o mais recente primeiro.
     pub brush_recent: Vec<String>,
     /// Mostra no canto o tempo de cada quadro (diagnóstico de lentidão).
@@ -555,6 +646,8 @@ impl ArtApp {
             previous_tool: Tool::Brush,
             brushes,
             brush_index: 0,
+            brush_kit: BrushKit::Pencil,
+            kit_brushes: std::collections::HashMap::new(),
             brush,
             taper: artapp_core::Taper::default(),
             new_brush_name: String::new(),
@@ -799,6 +892,12 @@ impl ArtApp {
             v.get(k)
                 .and_then(|m| serde_json::from_value::<Vec<String>>(m.clone()).ok())
         };
+        if let Some(m) = v
+            .get("kit_brushes")
+            .and_then(|m| serde_json::from_value(m.clone()).ok())
+        {
+            self.kit_brushes = m;
+        }
         if let Some(l) = names("brush_recent") {
             self.brush_recent = l.into_iter().take(RECENT_BRUSHES).collect();
         }
@@ -922,6 +1021,7 @@ impl ArtApp {
             "eyedropper_from": self.eyedropper_from,
             "eyedropper_erase": self.eyedropper_erase,
             "brush_recent": self.brush_recent,
+            "kit_brushes": self.kit_brushes,
             "brush_favorites": self.brush_favorites,
             "brush_quick": self.brush_quick,
             "gesture_rotate": self.gesture_rotate,
@@ -1089,12 +1189,49 @@ impl ArtApp {
                 self.tool = Tool::Brush;
             }
             let key = brush_key(entry);
+            self.brush_kit = BrushKit::of(&entry.group);
+            if self.kit_brushes.get(self.brush_kit.key()) != Some(&key) {
+                self.kit_brushes
+                    .insert(self.brush_kit.key().into(), key.clone());
+                self.save_prefs();
+            }
             if self.brush_recent.first() != Some(&key) {
                 self.brush_recent.retain(|k| *k != key);
                 self.brush_recent.insert(0, key);
                 self.brush_recent.truncate(RECENT_BRUSHES);
                 self.save_prefs();
             }
+        }
+    }
+
+    /// A ferramenta pronta do pincel em uso.
+    pub fn current_kit(&self) -> BrushKit {
+        self.brushes
+            .get(self.brush_index)
+            .map_or(self.brush_kit, |b| BrushKit::of(&b.group))
+    }
+
+    /// Passa para a ferramenta pronta `kit` com o último pincel usado nela (ou o primeiro dela).
+    pub fn choose_kit(&mut self, kit: BrushKit) {
+        let remembered = self
+            .kit_brushes
+            .get(kit.key())
+            .and_then(|k| self.brushes.iter().position(|b| brush_key(b) == *k));
+        let current = Some(self.brush_index).filter(|&i| {
+            self.brushes
+                .get(i)
+                .is_some_and(|b| BrushKit::of(&b.group) == kit)
+        });
+        let first = || {
+            self.brushes
+                .iter()
+                .position(|b| BrushKit::of(&b.group) == kit)
+        };
+        self.brush_kit = kit;
+        match remembered.or(current).or_else(first) {
+            Some(i) if i != self.brush_index || self.tool != Tool::Brush => self.select_brush(i),
+            Some(_) => {}
+            None => self.set_tool(Tool::Brush),
         }
     }
 

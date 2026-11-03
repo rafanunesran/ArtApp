@@ -123,6 +123,10 @@ pub mod icon {
     pub const ELLIPSIS: char = '\u{e0b6}';
     pub const FOLDER_PLUS: char = '\u{e0d9}';
     pub const PERSON: char = '\u{e902}';
+    pub const PENCIL: char = '\u{e1f9}';
+    /// Lata de spray (desenhada para o ArtApp, no estilo do Lucide).
+    pub const SPRAY: char = '\u{e903}';
+    pub const BEZIER: char = '\u{e38f}';
 }
 
 const ICON_FONT: &[u8] = include_bytes!("../../../assets/fonts/lucide-artapp.ttf");

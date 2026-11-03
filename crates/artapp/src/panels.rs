@@ -806,6 +806,10 @@ fn tool_buttons(app: &mut ArtApp, ui: &mut egui::Ui, vertical: bool, cols: usize
         }
         let mut buttons = |ui: &mut egui::Ui| {
             for &t in group {
+                if t == Tool::Brush {
+                    kit_buttons(app, ui);
+                    continue;
+                }
                 let r = icon_button(ui, t.icon(), app.tool == t, t.label());
                 // Segurar (ou botão direito): usa a ferramenta num traço só e volta.
                 if r.long_touched() || r.secondary_clicked() {
@@ -833,6 +837,43 @@ fn tool_buttons(app: &mut ArtApp, ui: &mut egui::Ui, vertical: bool, cols: usize
             buttons(ui);
         }
     }
+}
+
+/// Lápis, Caneta, Spray, Pincel e Texturas e especiais no lugar do botão único de pincel: cada
+/// um volta ao último pincel usado nele. Tocar de novo abre os pincéis; segurar usa num traço só.
+fn kit_buttons(app: &mut ArtApp, ui: &mut egui::Ui) {
+    let current = (app.tool == Tool::Brush).then(|| app.current_kit());
+    for kit in crate::app::BrushKit::ALL {
+        let on = current == Some(kit);
+        let r = icon_button(ui, kit.icon(), on, kit.label());
+        if r.long_touched() || r.secondary_clicked() {
+            let back = app.oneshot.unwrap_or(app.tool);
+            app.choose_kit(kit);
+            if back != Tool::Brush {
+                app.oneshot = Some(back);
+            }
+        } else if r.clicked() {
+            app.oneshot = None;
+            if on {
+                app.show_tools_panel = !app.show_tools_panel;
+                if app.show_tools_panel && is_compact(ui.ctx()) {
+                    app.show_layers_panel = false;
+                }
+            } else {
+                app.choose_kit(kit);
+            }
+        }
+    }
+}
+
+/// Quantos botões o grupo mostra (o pincel vira as cinco ferramentas prontas).
+fn group_buttons(group: &[Tool]) -> usize {
+    group.len()
+        + if group.contains(&Tool::Brush) {
+            crate::app::BrushKit::ALL.len() - 1
+        } else {
+            0
+        }
 }
 
 /// As cores principal/secundária/transparente. Fica fora da rolagem das ferramentas para estar
@@ -863,7 +904,7 @@ pub fn tool_rail(app: &mut ArtApp, ctx: &egui::Context, canvas: egui::Rect) {
     let cols = rail_cols(canvas);
     // Fileiras de botões por grupo, mais as cores, os separadores e as margens.
     let groups = Tool::groups(app.simple_mode);
-    let rows: usize = groups.iter().map(|g| g.len().div_ceil(cols)).sum();
+    let rows: usize = groups.iter().map(|g| group_buttons(g).div_ceil(cols)).sum();
     let rail_h = (rows + 1) as f32 * (theme::TOUCH + 2.0) + groups.len() as f32 * 16.0 + 16.0;
     let h = rail_h.min(canvas.height() - 2.0 * GAP);
     // Centralizado na altura, como no protótipo; encosta no topo se a tela for baixa.
@@ -1175,8 +1216,16 @@ pub fn brush_panel(app: &mut ArtApp, place: Place<'_>) {
     let ev = panel_area(
         "brush_panel",
         place,
-        app.tool.icon(),
-        app.tool.label(),
+        if app.tool == Tool::Brush {
+            app.current_kit().icon()
+        } else {
+            app.tool.icon()
+        },
+        if app.tool == Tool::Brush {
+            app.current_kit().title()
+        } else {
+            app.tool.label()
+        },
         |ui, _| {
             if app.tool == Tool::VectorKit {
                 kit_settings(app, ui);
@@ -2544,22 +2593,35 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
     ui.ctx()
         .data_mut(|d| d.insert_temp(search_key, search.clone()));
 
-    // Categorias que existem (as embutidas e as de pincéis importados com outro grupo).
+    // Só as categorias da ferramenta pronta em uso (Lápis, Caneta…); a busca olha todas.
+    let kit = app.current_kit();
+    let in_kit = |g: &str| crate::app::BrushKit::of(g) == kit;
+    let recent: Vec<usize> = app
+        .brushes_by_keys(&app.brush_recent)
+        .into_iter()
+        .filter(|&i| in_kit(&app.brushes[i].group))
+        .collect();
+    let favorites: Vec<usize> = app
+        .brushes_by_keys(&app.brush_favorites)
+        .into_iter()
+        .filter(|&i| in_kit(&app.brushes[i].group))
+        .collect();
     let mut cats: Vec<String> = Vec::new();
-    if !app.brushes_by_keys(&app.brush_recent).is_empty() {
+    if !recent.is_empty() {
         cats.push(RECENT.into());
     }
-    if !app.brushes_by_keys(&app.brush_favorites).is_empty() {
+    if !favorites.is_empty() {
         cats.push(FAVORITES.into());
     }
     cats.extend(
         CATEGORIES
             .iter()
+            .filter(|c| in_kit(c))
             .filter(|c| **c == CUSTOM_GROUP || app.brushes.iter().any(|b| b.group == **c))
             .map(|c| c.to_string()),
     );
     for b in &app.brushes {
-        if !cats.contains(&b.group) {
+        if in_kit(&b.group) && !cats.contains(&b.group) {
             cats.push(b.group.clone());
         }
     }
@@ -2616,9 +2678,9 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
             })
             .collect()
     } else if cat == RECENT {
-        app.brushes_by_keys(&app.brush_recent)
+        recent
     } else if cat == FAVORITES {
-        app.brushes_by_keys(&app.brush_favorites)
+        favorites
     } else {
         let folder = (cat == CUSTOM_GROUP).then_some(app.brush_folder.as_str());
         (0..app.brushes.len())
