@@ -840,3 +840,63 @@ pub fn pen_info(id: u64) -> PenInfo {
     let _ = id;
     PenInfo::default()
 }
+
+/// Compartilhar um arquivo pelo seletor do Android (`Share.java`). No desktop não existe: o
+/// arquivo só fica salvo.
+pub mod share {
+    pub const SUPPORTED: bool = cfg!(target_os = "android");
+
+    #[cfg(target_os = "android")]
+    pub fn file(path: &std::path::Path, mime: &str, title: &str) -> Result<(), String> {
+        use jni::objects::{JClassLoader, JString, JValue};
+        use jni::refs::LoaderContext;
+        use jni::{jni_sig, jni_str};
+
+        let r = super::android_files::with_activity(|env, act| {
+            let loader = env
+                .call_method(
+                    act,
+                    jni_str!("getClassLoader"),
+                    jni_sig!(() -> java.lang.ClassLoader),
+                    &[],
+                )?
+                .l()?;
+            let loader = env.cast_local::<JClassLoader>(loader)?;
+            let cls = LoaderContext::Loader(&loader).load_class(
+                env,
+                jni_str!("io.github.rafanunesran.artapp.Share"),
+                true,
+            )?;
+            let path = env.new_string(path.to_string_lossy())?;
+            let mime = env.new_string(mime)?;
+            let title = env.new_string(title)?;
+            let r = env
+                .call_static_method(
+                    &cls,
+                    jni_str!("share"),
+                    jni_sig!((c: android.content.Context, p: java.lang.String, m: java.lang.String, t: java.lang.String) -> java.lang.String),
+                    &[
+                        JValue::Object(act),
+                        JValue::Object(&path),
+                        JValue::Object(&mime),
+                        JValue::Object(&title),
+                    ],
+                )?
+                .l()?;
+            if r.is_null() {
+                return Ok(None);
+            }
+            let s = JString::cast_local(env, r)?;
+            Ok(Some(s.try_to_string(env)?))
+        })?;
+        match r {
+            None => Ok(()),
+            Some(e) => Err(e),
+        }
+    }
+
+    #[cfg(not(target_os = "android"))]
+    pub fn file(_path: &std::path::Path, _mime: &str, _title: &str) -> Result<(), String> {
+        Err("só no Android".into())
+    }
+}

@@ -1616,6 +1616,23 @@ impl ArtApp {
         };
     }
 
+    /// Abre o "Compartilhar" do Android com o desenho em PNG (WhatsApp, Instagram, Drive…).
+    pub fn share_png(&mut self) {
+        self.commit_transform();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or_default();
+        let path = platform::data_dir().join(format!("artapp-{stamp}.png"));
+        let r = artapp_core::export::png(&self.doc, true)
+            .and_then(|bytes| platform::write_atomic(&path, &bytes))
+            .and_then(|()| platform::share::file(&path, "image/png", "Compartilhar desenho"));
+        let _ = std::fs::remove_file(&path);
+        if let Err(e) = r {
+            self.status = format!("Não foi possível compartilhar: {e}");
+        }
+    }
+
     /// Escolhe uma ferramenta do VectorCraft.
     pub fn set_kit_tool(&mut self, id: &'static str) {
         self.kit_tool = id;

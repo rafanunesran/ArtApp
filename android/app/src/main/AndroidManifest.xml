@@ -56,6 +56,13 @@
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
+        <!-- Menu › Compartilhar: entrega a imagem ao app escolhido, só leitura (Share.java). -->
+        <provider
+            android:name=".Share"
+            android:authorities="io.github.rafanunesran.artapp.share"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <!-- Resultado da instalação da atualização (Updater.java). -->
         <receiver
             android:name=".UpdateReceiver"

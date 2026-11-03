@@ -481,6 +481,11 @@ fn file_group(app: &mut ArtApp, ui: &mut egui::Ui) {
         ui.close();
     }
     ui.separator();
+    if crate::platform::share::SUPPORTED && item(ui, icon::IMAGE, "Compartilhar imagem…").clicked()
+    {
+        app.share_png();
+        ui.close();
+    }
     if item(ui, icon::IMAGE_DOWN, "Exportar PNG").clicked() {
         app.export_png(true);
         ui.close();
