@@ -15,6 +15,9 @@ use crate::sqlite_lite::{Db, Table, Value};
 pub struct SutBrush {
     pub name: String,
     pub settings: BrushSettings,
+    /// Nomes dos outros nós do arquivo (grupo e ferramenta do Clip, como "鉛筆" ou "Pen"), usados
+    /// para classificar o pincel ([`crate::brush_sort`]).
+    pub hint: String,
 }
 
 /// Lê os pincéis (normalmente um só) de um `.sut`. `stem` é o nome do arquivo, usado quando o
@@ -26,6 +29,13 @@ pub fn read_sut(bytes: &[u8], stem: &str) -> Result<Vec<SutBrush>, String> {
         .ok_or("o arquivo .sut não tem a tabela de ajustes (Variant)")?;
     let nodes = db.table("Node").unwrap_or_default();
     let tips = material_tips(&db);
+    let node_names: Vec<String> = nodes
+        .rows
+        .iter()
+        .filter_map(|n| nodes.get(n, "NodeName").and_then(Value::as_text))
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect();
     let mut out = Vec::new();
     for row in &variants.rows {
         let id = variants
@@ -54,9 +64,16 @@ pub fn read_sut(bytes: &[u8], stem: &str) -> Result<Vec<SutBrush>, String> {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map_or_else(|| stem.to_string(), str::to_string);
+        let hint = node_names
+            .iter()
+            .filter(|n| **n != name)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ");
         out.push(SutBrush {
             name,
             settings: map_variant(&variants, row, &tips),
+            hint,
         });
     }
     if out.is_empty() {
@@ -233,5 +250,9 @@ mod tests {
         assert_eq!(list[0].name, "Giz áspero");
         assert_eq!(list[0].folder, "pacote");
         assert_eq!(list[0].group, crate::brushes::CUSTOM_GROUP);
+        // "Giz" → Esboço, ou seja, a ferramenta Lápis.
+        assert_eq!(list[0].sort.category, "Esboço");
+        assert_eq!(list[0].shown_group(), "Esboço");
+        assert!(!list[0].sort.by_hand);
     }
 }

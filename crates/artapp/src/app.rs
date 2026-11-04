@@ -638,6 +638,11 @@ impl ArtApp {
         crate::theme::install(&cc.egui_ctx, platform::TOUCH_FIRST);
         let mut brushes = brushes::all();
         brushes.extend(brushes::load_custom(&brushes_path()));
+        // Pincéis instalados antes da classificação automática: põe cada um na categoria (e
+        // ferramenta pronta) que o nome e o pacote indicam.
+        if artapp_core::brush_sort::sort_unsorted(&mut brushes) > 0 {
+            let _ = brushes::save_custom(&brushes_path(), &brushes);
+        }
         let brush = brushes
             .first()
             .map(|b| b.settings.clone())
@@ -1237,7 +1242,7 @@ impl ArtApp {
                 self.tool = Tool::Brush;
             }
             let key = brush_key(entry);
-            self.brush_kit = BrushKit::of(&entry.group);
+            self.brush_kit = BrushKit::of(entry.shown_group());
             if self.kit_brushes.get(self.brush_kit.key()) != Some(&key) {
                 self.kit_brushes
                     .insert(self.brush_kit.key().into(), key.clone());
@@ -1256,7 +1261,7 @@ impl ArtApp {
     pub fn current_kit(&self) -> BrushKit {
         self.brushes
             .get(self.brush_index)
-            .map_or(self.brush_kit, |b| BrushKit::of(&b.group))
+            .map_or(self.brush_kit, |b| BrushKit::of(b.shown_group()))
     }
 
     /// Passa para a ferramenta pronta `kit` com o último pincel usado nela (ou o primeiro dela).
@@ -1268,12 +1273,12 @@ impl ArtApp {
         let current = Some(self.brush_index).filter(|&i| {
             self.brushes
                 .get(i)
-                .is_some_and(|b| BrushKit::of(&b.group) == kit)
+                .is_some_and(|b| BrushKit::of(b.shown_group()) == kit)
         });
         let first = || {
             self.brushes
                 .iter()
-                .position(|b| BrushKit::of(&b.group) == kit)
+                .position(|b| BrushKit::of(b.shown_group()) == kit)
         };
         self.brush_kit = kit;
         match remembered.or(current).or_else(first) {
@@ -1467,6 +1472,8 @@ impl ArtApp {
             group: brushes::CUSTOM_GROUP.into(),
             mixes: src.mixes_paint(),
             folder: self.brush_folder.clone(),
+            // A cópia fica na mesma categoria (e ferramenta) do original.
+            sort: inherited_sort(&src),
             settings: src.settings,
         });
         self.brush_previews.clear();
@@ -1555,6 +1562,12 @@ impl ArtApp {
                 .get(self.brush_index)
                 .is_some_and(BrushEntry::mixes_paint),
             folder: self.brush_folder.clone(),
+            // Fica na ferramenta pronta em que foi ajustado (Lápis, Caneta…).
+            sort: self
+                .brushes
+                .get(self.brush_index)
+                .map(inherited_sort)
+                .unwrap_or_default(),
         };
         match self
             .brushes
@@ -1577,6 +1590,76 @@ impl ArtApp {
         self.status = match brushes::save_custom(&brushes_path(), &self.brushes) {
             Ok(()) => format!("Pincel \"{name}\" salvo."),
             Err(e) => format!("Pincel criado, mas não foi possível gravar: {e}"),
+        };
+    }
+
+    /// Escolhe à mão a categoria de um pincel de "Meus pincéis" (`None` = volta para a
+    /// automática). A automática nunca troca uma escolhida à mão.
+    pub fn set_brush_category(&mut self, i: usize, category: Option<String>) {
+        let Some(b) = self
+            .brushes
+            .get_mut(i)
+            .filter(|b| b.group == brushes::CUSTOM_GROUP)
+        else {
+            return;
+        };
+        let msg = match category {
+            Some(c) => {
+                b.sort.category = c;
+                b.sort.by_hand = true;
+                format!(
+                    "\"{}\" agora fica em {} ({}).",
+                    b.name,
+                    b.sort.category,
+                    BrushKit::of(&b.sort.category).label()
+                )
+            }
+            None => {
+                b.sort.by_hand = false;
+                artapp_core::brush_sort::auto_sort(b);
+                format!(
+                    "\"{}\" classificado automaticamente: {} ({}).",
+                    b.name,
+                    b.sort.category,
+                    BrushKit::of(&b.sort.category).label()
+                )
+            }
+        };
+        if i == self.brush_index {
+            self.brush_kit = BrushKit::of(self.brushes[i].shown_group());
+        }
+        self.status = match brushes::save_custom(&brushes_path(), &self.brushes) {
+            Ok(()) => msg,
+            Err(e) => format!("Categoria trocada, mas não foi possível gravar: {e}"),
+        };
+    }
+
+    /// "Organizar automaticamente": classifica de novo os pincéis de "Meus pincéis" pelo nome,
+    /// pacote e ajustes, menos os de categoria escolhida à mão.
+    pub fn auto_sort_brushes(&mut self) {
+        let changed = artapp_core::brush_sort::auto_sort_all(&mut self.brushes);
+        let summary = sort_summary(
+            self.brushes
+                .iter()
+                .filter(|b| b.group == brushes::CUSTOM_GROUP),
+        );
+        if let Some(b) = self.brushes.get(self.brush_index) {
+            self.brush_kit = BrushKit::of(b.shown_group());
+        }
+        let by_hand = self
+            .brushes
+            .iter()
+            .filter(|b| b.group == brushes::CUSTOM_GROUP && b.sort.by_hand)
+            .count();
+        let kept = if by_hand > 0 {
+            format!(" {by_hand} escolhido(s) à mão ficaram onde estavam.")
+        } else {
+            String::new()
+        };
+        self.status = match brushes::save_custom(&brushes_path(), &self.brushes) {
+            Ok(()) if summary.is_empty() => "Não há pincéis em Meus pincéis.".into(),
+            Ok(()) => format!("Pincéis organizados ({changed} mudaram): {summary}.{kept}"),
+            Err(e) => format!("Organizados, mas não foi possível gravar: {e}"),
         };
     }
 
@@ -2248,6 +2331,38 @@ pub const SPRING_HOLD_SECS: f64 = 0.4;
 pub const RECENT_BRUSHES: usize = 8;
 
 /// Identifica um pincel entre sessões: categoria e nome.
+/// Categoria de um pincel novo feito a partir de `src` (salvar, duplicar): a mesma em que o
+/// original aparece, marcada como escolhida (não muda ao organizar automaticamente).
+fn inherited_sort(src: &BrushEntry) -> artapp_core::brush_sort::BrushSort {
+    let g = src.shown_group();
+    if g == brushes::CUSTOM_GROUP {
+        return src.sort.clone();
+    }
+    artapp_core::brush_sort::BrushSort {
+        category: g.to_string(),
+        by_hand: true,
+        origin: src.sort.origin.clone(),
+    }
+}
+
+/// "5 em Lápis, 3 em Caneta…": quantos pincéis foram para cada ferramenta pronta.
+pub fn sort_summary<'a>(brushes: impl Iterator<Item = &'a BrushEntry>) -> String {
+    let mut counts = [0usize; BrushKit::ALL.len()];
+    for b in brushes {
+        let k = BrushKit::of(b.shown_group());
+        if let Some(i) = BrushKit::ALL.iter().position(|x| *x == k) {
+            counts[i] += 1;
+        }
+    }
+    BrushKit::ALL
+        .iter()
+        .zip(counts)
+        .filter(|(_, n)| *n > 0)
+        .map(|(k, n)| format!("{n} em {}", k.label()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 pub fn brush_key(e: &BrushEntry) -> String {
     format!("{}/{}", e.group, e.name)
 }

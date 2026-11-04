@@ -5,6 +5,7 @@
 /// Maior tamanho de pincel aceito pelo motor do PhotoCraft.
 pub const MAX_SIZE: f32 = photocraft_paint::MAX_BRUSH_SIZE;
 
+use crate::brush_sort::BrushSort;
 use photocraft_paint::{
     BrushPreset, BrushSettings, Control, Dynamic, GrayTile, MaskMode, MixerSettings, Pattern,
     PatternStyle, ShapeDynamics, Smoothing, Texture, Transfer, presets,
@@ -23,9 +24,23 @@ pub struct BrushEntry {
     /// Procreate e as etiquetas do Krita, para separar "Lineart", "Pintura", "Cliente X"…
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub folder: String,
+    /// Categoria de um pincel instalado (onde ele aparece além de Meus pincéis), ver
+    /// [`crate::brush_sort`].
+    #[serde(default, skip_serializing_if = "BrushSort::is_empty")]
+    pub sort: BrushSort,
 }
 
 impl BrushEntry {
+    /// Categoria em que o pincel aparece: a dele, ou, para os de Meus pincéis já classificados,
+    /// a que a classificação deu (Esboço, Arte-final…). Decide também a ferramenta pronta.
+    pub fn shown_group(&self) -> &str {
+        if self.group == CUSTOM_GROUP && !self.sort.category.is_empty() {
+            &self.sort.category
+        } else {
+            &self.group
+        }
+    }
+
     /// Etiquetas tiradas dos ajustes, para a busca achar por comportamento ("pressão",
     /// "textura"…) além do nome e da categoria, como as etiquetas do Krita.
     pub fn tags(&self) -> Vec<&'static str> {
@@ -70,6 +85,7 @@ impl BrushEntry {
     pub fn matches(&self, query: &str) -> bool {
         self.name.to_lowercase().contains(query)
             || self.group.to_lowercase().contains(query)
+            || self.sort.category.to_lowercase().contains(query)
             || self.tags().iter().any(|t| t.contains(query))
     }
 
@@ -97,6 +113,7 @@ fn ours(name: &str, group: &str, settings: BrushSettings) -> BrushEntry {
         settings,
         mixes: group == MIX_GROUP,
         folder: String::new(),
+        sort: BrushSort::default(),
     }
 }
 
@@ -735,6 +752,7 @@ pub fn all() -> Vec<BrushEntry> {
             settings: p.brush,
             mixes: false,
             folder: String::new(),
+            sort: BrushSort::default(),
         }
     }));
     // Ordenação estável: dentro da categoria, os nossos vêm antes dos do PhotoCraft.
@@ -1022,8 +1040,15 @@ const MAX_TIP_SIDE: u32 = 512;
 
 /// Importa pincéis de um arquivo: `.abr` (Photoshop) ou uma imagem, que vira a ponta de um
 /// pincel (escuro ou opaco = tinta). Os pincéis entram em "Meus pincéis".
+///
+/// Cada pincel instalado já sai classificado numa categoria (e com isso numa ferramenta pronta:
+/// Lápis, Caneta, Spray, Pincel…) pelo nome, pelo nome do arquivo e pastas do pacote e, sem
+/// palavra conhecida, pelos ajustes ([`crate::brush_sort`]). Os de um `.artbrushes` que já
+/// têm categoria (escolhida à mão ou não) ficam com ela.
 pub fn import(file_name: &str, bytes: &[u8]) -> Result<Vec<BrushEntry>, String> {
-    import_in(file_name, bytes, None)
+    let mut list = import_in(file_name, bytes, None)?;
+    crate::brush_sort::sort_unsorted(&mut list);
+    Ok(list)
 }
 
 /// Extensões de pincel que dá para instalar (fora imagens para ponta).
@@ -1041,12 +1066,18 @@ fn import_in(
         .file_stem()
         .map_or_else(|| "Pincel".into(), |s| s.to_string_lossy().into_owned());
     let folder = folder.unwrap_or(&stem).to_string();
-    let entry = |name: String, settings: BrushSettings| BrushEntry {
+    // A origem (caminho do arquivo, até dentro do .zip, e pastas/nós do pacote) ajuda a
+    // classificar: "Pencils/Soft.abr", "鉛筆"…
+    let entry = |name: String, settings: BrushSettings, extra: &str| BrushEntry {
         name,
         group: CUSTOM_GROUP.into(),
         settings,
         mixes: false,
         folder: folder.clone(),
+        sort: BrushSort {
+            origin: format!("{file_name} {extra}").trim().to_string(),
+            ..BrushSort::default()
+        },
     };
     if lower.ends_with(&format!(".{PACK_EXT}")) {
         return import_pack(bytes);
@@ -1074,7 +1105,8 @@ fn import_in(
         let mut errors = Vec::new();
         for (name, data) in files {
             let base = name.rsplit('/').next().unwrap_or(&name).to_string();
-            match import_in(&base, &data, Some(&stem)) {
+            // Com o caminho inteiro: as pastas do .zip ("Lápis/", "Inking/") dizem o tipo.
+            match import_in(&name, &data, Some(&stem)) {
                 Ok(list) => out.extend(list),
                 Err(e) => errors.push(format!("{base}: {e}")),
             }
@@ -1087,7 +1119,7 @@ fn import_in(
     if lower.ends_with(".sut") || bytes.starts_with(b"SQLite format 3\0") {
         return Ok(crate::sut::read_sut(bytes, &stem)?
             .into_iter()
-            .map(|b| entry(b.name, b.settings))
+            .map(|b| entry(b.name, b.settings, &b.hint))
             .collect());
     }
     if lower.ends_with(".abr") {
@@ -1098,7 +1130,10 @@ fn import_in(
         return Ok(imp
             .presets
             .into_iter()
-            .map(|p| entry(p.name, p.brush))
+            .map(|p| {
+                let extra = p.folder.join(" ");
+                entry(p.name, p.brush, &extra)
+            })
             .collect());
     }
     let (w, h, px) = crate::edit::decode_image(bytes)?;
@@ -1109,6 +1144,7 @@ fn import_in(
         group: CUSTOM_GROUP.into(),
         mixes: false,
         folder: String::new(),
+        sort: BrushSort::default(),
         settings: BrushSettings {
             tip: photocraft_paint::TipShape::Sampled(tip),
             size,
