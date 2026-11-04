@@ -200,6 +200,12 @@ mod android_files {
     }
 
     /// Roda `f` com o JNI e a Activity.
+    ///
+    /// A thread se solta da máquina Java assim que `f` volta (se já estava presa, continua). Muitas
+    /// chamadas vêm de threads de trabalho que terminam logo depois; deixar para soltar no fim da
+    /// thread depende do destrutor de thread-local, que na biblioteca carregada pela atualização
+    /// rápida pode não rodar, e o Android derruba o app inteiro quando uma thread presa ao Java
+    /// termina.
     #[allow(unsafe_code)]
     pub(super) fn with_activity<T>(
         f: impl FnOnce(&mut jni::Env, &JObject) -> jni::errors::Result<T>,
@@ -212,7 +218,7 @@ mod android_files {
         // SAFETY: o ponteiro do JavaVM vem da android-activity (via ndk-context) e vale enquanto
         // o processo existir.
         let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) };
-        vm.attach_current_thread(|env| -> jni::errors::Result<T> {
+        let call = |env: &mut jni::Env| -> jni::errors::Result<T> {
             // SAFETY: a Activity é uma referência global válida enquanto o app roda; o JObject
             // não a apaga ao sair de escopo.
             let act = unsafe { JObject::from_raw(env, activity as jni::sys::jobject) };
@@ -223,8 +229,9 @@ mod android_files {
                 env.exception_clear();
             }
             r
-        })
-        .map_err(|e| e.to_string())
+        };
+        vm.attach_current_thread_for_scope(call)
+            .map_err(|e| e.to_string())
     }
 
     fn sdk_int(env: &mut jni::Env) -> jni::errors::Result<i32> {
