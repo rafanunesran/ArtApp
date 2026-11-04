@@ -12,6 +12,7 @@ pub mod abr;
 pub mod animation;
 pub mod balloon;
 pub mod border;
+pub mod brush_sort;
 pub mod brushes;
 pub mod canvas_size;
 pub mod composite;

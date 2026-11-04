@@ -447,6 +447,7 @@ impl ArtApp {
         match res {
             Ok(list) => {
                 let n = list.len();
+                let summary = crate::app::sort_summary(list.iter());
                 let first = self.brushes.len();
                 // Mostra a pasta do pacote em Meus pincéis.
                 if let Some(f) = list.first() {
@@ -459,8 +460,13 @@ impl ArtApp {
                     &crate::app::brushes_path(),
                     &self.brushes,
                 ) {
-                    Ok(()) if n == 1 => "1 pincel importado para Meus pincéis.".into(),
-                    Ok(()) => format!("{n} pincéis importados para Meus pincéis."),
+                    Ok(()) if n == 1 => {
+                        format!("1 pincel instalado em Meus pincéis ({summary}).")
+                    }
+                    Ok(()) => format!(
+                        "{n} pincéis instalados em Meus pincéis e organizados: {summary}. \
+                         Segure um pincel para trocar a categoria."
+                    ),
                     Err(e) => format!("Pincéis importados, mas não foi possível gravar: {e}"),
                 };
             }

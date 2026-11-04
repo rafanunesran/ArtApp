@@ -2605,7 +2605,7 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
     let current_group = app
         .brushes
         .get(app.brush_index)
-        .map(|b| b.group.clone())
+        .map(|b| b.shown_group().to_string())
         .unwrap_or_default();
     let mut cat: String = ui
         .ctx()
@@ -2631,15 +2631,21 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
     // Só as categorias da ferramenta pronta em uso (Lápis, Caneta…); a busca olha todas.
     let kit = app.current_kit();
     let in_kit = |g: &str| crate::app::BrushKit::of(g) == kit;
+    // Os instalados aparecem na categoria que a classificação deu (ou a escolhida à mão) e em
+    // "Meus pincéis": em Texturas e especiais todos, nas outras ferramentas só os dela.
+    let special = kit == crate::app::BrushKit::Special;
+    let mine_here = |b: &artapp_core::brushes::BrushEntry| {
+        b.group == CUSTOM_GROUP && (special || in_kit(b.shown_group()))
+    };
     let recent: Vec<usize> = app
         .brushes_by_keys(&app.brush_recent)
         .into_iter()
-        .filter(|&i| in_kit(&app.brushes[i].group))
+        .filter(|&i| in_kit(app.brushes[i].shown_group()))
         .collect();
     let favorites: Vec<usize> = app
         .brushes_by_keys(&app.brush_favorites)
         .into_iter()
-        .filter(|&i| in_kit(&app.brushes[i].group))
+        .filter(|&i| in_kit(app.brushes[i].shown_group()))
         .collect();
     let mut cats: Vec<String> = Vec::new();
     if !recent.is_empty() {
@@ -2651,13 +2657,19 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
     cats.extend(
         CATEGORIES
             .iter()
-            .filter(|c| in_kit(c))
-            .filter(|c| **c == CUSTOM_GROUP || app.brushes.iter().any(|b| b.group == **c))
+            .filter(|c| {
+                if **c == CUSTOM_GROUP {
+                    special || app.brushes.iter().any(mine_here)
+                } else {
+                    in_kit(c) && app.brushes.iter().any(|b| b.shown_group() == **c)
+                }
+            })
             .map(|c| c.to_string()),
     );
     for b in &app.brushes {
-        if in_kit(&b.group) && !cats.contains(&b.group) {
-            cats.push(b.group.clone());
+        let g = b.shown_group();
+        if in_kit(g) && !cats.iter().any(|c| c == g) {
+            cats.push(g.to_string());
         }
     }
     if !cats.contains(&cat) {
@@ -2721,7 +2733,12 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
         (0..app.brushes.len())
             .filter(|&i| {
                 let b = &app.brushes[i];
-                b.group == cat && folder.is_none_or(|f| f.is_empty() || b.folder == f)
+                let here = if cat == CUSTOM_GROUP {
+                    mine_here(b)
+                } else {
+                    b.shown_group() == cat
+                };
+                here && folder.is_none_or(|f| f.is_empty() || b.folder == f)
             })
             .collect()
     };
@@ -2732,14 +2749,15 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
     let mut dup = None;
     let mut rename = None;
     let mut move_to = None;
+    let mut set_cat: Option<(usize, Option<String>)> = None;
     let previews = app.brush_previews(ui.ctx());
     for &i in &shown {
         let entry = &app.brushes[i];
         let fav = app.is_favorite(entry);
         let label = match (fav, !query.is_empty()) {
-            (true, true) => format!("{STAR}  {}  ·  {}", entry.name, entry.group),
+            (true, true) => format!("{STAR}  {}  ·  {}", entry.name, entry.shown_group()),
             (true, false) => format!("{STAR}  {}", entry.name),
-            (false, true) => format!("{}  ·  {}", entry.name, entry.group),
+            (false, true) => format!("{}  ·  {}", entry.name, entry.shown_group()),
             (false, false) => entry.name.clone(),
         };
         // Em "Meus pincéis" sem pasta escolhida, mostra a pasta de cada um.
@@ -2749,6 +2767,17 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
             && !entry.folder.is_empty()
         {
             format!("{label}  ·  {}", entry.folder)
+        } else if query.is_empty() && cat == CUSTOM_GROUP && !entry.sort.category.is_empty() {
+            // Em Meus pincéis, mostra para onde cada um foi organizado.
+            format!("{label}  ·  {}", entry.sort.category)
+        } else if query.is_empty() && cat != CUSTOM_GROUP && entry.group == CUSTOM_GROUP {
+            // Instalado, no meio dos pincéis da categoria: mostra o pacote de onde veio.
+            let from = if entry.folder.is_empty() {
+                CUSTOM_GROUP
+            } else {
+                entry.folder.as_str()
+            };
+            format!("{label}  ·  {from}")
         } else {
             label
         };
@@ -2811,6 +2840,35 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
                     }
                 });
                 ui.ctx().data_mut(|d| d.insert_temp(id, text));
+                // Categoria (e com ela a ferramenta pronta: Lápis, Caneta…).
+                let now = if entry.sort.category.is_empty() {
+                    "automática".to_string()
+                } else if entry.sort.by_hand {
+                    entry.sort.category.clone()
+                } else {
+                    format!("{} (automática)", entry.sort.category)
+                };
+                ui.menu_button(format!("{}  Categoria: {now}", icon::FOLDER_OPEN), |ui| {
+                    for c in artapp_core::brush_sort::choices() {
+                        let on = entry.sort.by_hand && entry.sort.category == c;
+                        let kit = crate::app::BrushKit::of(c).label();
+                        if ui
+                            .selectable_label(on, format!("{}  {c}  ·  {kit}", category_icon(c)))
+                            .clicked()
+                        {
+                            set_cat = Some((i, Some(c.to_string())));
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    if ui
+                        .selectable_label(!entry.sort.by_hand, "Automática (pelo nome e pacote)")
+                        .clicked()
+                    {
+                        set_cat = Some((i, None));
+                        ui.close();
+                    }
+                });
             }
             if custom
                 && ui
@@ -2856,6 +2914,9 @@ fn brush_library(app: &mut ArtApp, ui: &mut egui::Ui) {
     }
     if let Some((i, folder)) = move_to {
         app.move_brush_to_folder(i, folder);
+    }
+    if let Some((i, c)) = set_cat {
+        app.set_brush_category(i, c);
     }
     if let Some(i) = picked {
         app.select_brush(i);
@@ -2969,6 +3030,14 @@ fn brush_save_row(app: &mut ArtApp, ui: &mut egui::Ui) {
             .clicked()
         {
             app.open_brush_store();
+        }
+        if app.brushes.iter().any(|b| b.group == artapp_core::brushes::CUSTOM_GROUP)
+            && ui
+                .button(format!("{}  Organizar automaticamente", icon::SPARKLES))
+                .on_hover_text("Separa os pincéis de Meus pincéis entre Lápis, Caneta, Spray, Pincel e Texturas e especiais pelo nome, pelo pacote de onde vieram e pelos ajustes. Os que você escolheu a categoria à mão ficam onde estão.")
+                .clicked()
+        {
+            app.auto_sort_brushes();
         }
         if ui
             .button("Exportar meus pincéis")

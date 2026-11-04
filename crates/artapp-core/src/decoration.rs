@@ -187,6 +187,7 @@ fn entry(name: &str, settings: BrushSettings) -> BrushEntry {
         settings,
         mixes: false,
         folder: String::new(),
+        sort: Default::default(),
     }
 }
 
