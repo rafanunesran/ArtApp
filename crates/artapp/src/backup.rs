@@ -2,7 +2,7 @@
 //!
 //! Para cada projeto ficam duas cópias além do arquivo original:
 //! - `<nome> - backup automático.artapp`: o desenho como está, a cada intervalo (1 h por padrão),
-//!   só quando houve mudança;
+//!   só quando houve mudança, e também quando o artista pausa (30 s sem tocar na tela por padrão);
 //! - `<nome> - salvo.artapp`: a última versão salva com "Salvar", conferida antes (se o arquivo
 //!   salvo não abrir, o backup anterior fica).
 //!
@@ -26,6 +26,8 @@ pub const AUTO_SUFFIX: &str = " - backup automático";
 pub const SAVED_SUFFIX: &str = " - salvo";
 /// Intervalos oferecidos, em minutos.
 pub const INTERVALS: [u32; 6] = [15, 30, 60, 120, 240, 480];
+/// Pausas oferecidas para o backup ao pausar, em segundos.
+pub const PAUSES: [u32; 5] = [15, 30, 60, 120, 300];
 
 /// Onde os backups ficam.
 #[derive(Clone, PartialEq, Eq)]
@@ -135,6 +137,13 @@ pub struct Backup {
     pub interval_min: u32,
     /// Também guardar uma cópia a cada "Salvar".
     pub on_save: bool,
+    /// Também fazer o backup automático quando o artista pausa por `idle_secs`.
+    pub on_idle: bool,
+    pub idle_secs: u32,
+    /// Hora (relógio do egui) do último toque, traço, tecla ou rolagem.
+    last_input: Option<f64>,
+    /// A pausa atual já teve seu backup (não repetir até voltar a desenhar).
+    idle_done: bool,
     /// Hora (relógio do egui) em que a contagem do intervalo começou.
     since: Option<f64>,
     /// `edits` do projeto no último backup automático.
@@ -160,6 +169,10 @@ impl Default for Backup {
             dest: Dest::default_folder(),
             interval_min: 60,
             on_save: true,
+            on_idle: true,
+            idle_secs: 30,
+            last_input: None,
+            idle_done: false,
             since: None,
             last_edits: 0,
             job: None,
@@ -189,6 +202,8 @@ impl Backup {
             "enabled": self.enabled,
             "interval_min": self.interval_min,
             "on_save": self.on_save,
+            "on_idle": self.on_idle,
+            "idle_secs": self.idle_secs,
             "folder": folder,
             "uri": uri,
             "label": label,
@@ -207,6 +222,12 @@ impl Backup {
         }
         if let Some(b) = flag("on_save") {
             self.on_save = b;
+        }
+        if let Some(b) = flag("on_idle") {
+            self.on_idle = b;
+        }
+        if let Some(s) = v.get("idle_secs").and_then(serde_json::Value::as_u64) {
+            self.idle_secs = (s as u32).clamp(5, 60 * 60);
         }
         if let Some(m) = v.get("interval_min").and_then(serde_json::Value::as_u64) {
             self.interval_min = (m as u32).clamp(5, 24 * 60);
@@ -238,6 +259,33 @@ fn project_name_of(file: &str) -> String {
     stem
 }
 
+/// O artista mexeu em algo neste quadro? (Só passar a caneta por cima não conta.)
+fn operated(i: &egui::InputState) -> bool {
+    i.pointer.any_down()
+        || i.any_touches()
+        || i.events.iter().any(|e| {
+            matches!(
+                e,
+                egui::Event::PointerButton { .. }
+                    | egui::Event::Touch { .. }
+                    | egui::Event::Key { .. }
+                    | egui::Event::Text(_)
+                    | egui::Event::Paste(_)
+                    | egui::Event::MouseWheel { .. }
+                    | egui::Event::Zoom(_)
+                    | egui::Event::Rotate(_)
+            )
+        })
+}
+
+fn pause_label(secs: u32) -> String {
+    if secs < 60 {
+        format!("{secs} s")
+    } else {
+        interval_label(secs / 60)
+    }
+}
+
 fn interval_label(min: u32) -> String {
     if min < 60 {
         format!("{min} min")
@@ -260,6 +308,10 @@ impl ArtApp {
     /// A cada quadro: termina o backup em andamento e começa o próximo quando chega a hora.
     pub fn backup_tick(&mut self, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
+        if ctx.input(operated) || self.backup.last_input.is_none() {
+            self.backup.last_input = Some(now);
+            self.backup.idle_done = false;
+        }
         self.finish_backup();
         self.poll_folder_pick();
         if self.backup.busy() || self.backup.picking {
@@ -278,6 +330,18 @@ impl ArtApp {
         }
         let since = *self.backup.since.get_or_insert(now);
         let changed = self.projects.edits != self.backup.last_edits;
+        if self.backup.on_idle && changed && !self.backup.idle_done {
+            let idle = now - self.backup.last_input.unwrap_or(now);
+            let pause = f64::from(self.backup.idle_secs);
+            if idle >= pause {
+                // Uma vez por pausa: se falhar, tenta de novo só na próxima pausa.
+                self.backup.idle_done = true;
+                self.backup.since = Some(now);
+                self.start_backup_auto(false);
+                return;
+            }
+            ctx.request_repaint_after(Duration::from_secs_f64((pause - idle).max(0.5)));
+        }
         let wait = f64::from(self.backup.interval_min) * 60.0;
         if now - since >= wait {
             if changed {
@@ -486,7 +550,7 @@ fn settings_ui(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
     let mut changed = false;
     ui.label(muted(
         "Além do arquivo original, cada projeto ganha duas cópias na pasta de backup: \
-         uma automática, atualizada no intervalo escolhido, e uma da última vez que foi salvo.",
+         uma automática, atualizada no intervalo escolhido e quando você pausa o desenho, e uma da última vez que foi salvo.",
     ));
     ui.add_space(6.0);
     changed |= theme::switch(ui, &mut app.backup.enabled, "Backup ligado").changed();
@@ -555,6 +619,20 @@ fn settings_ui(app: &mut ArtApp, ui: &mut egui::Ui) -> bool {
                             .changed();
                     }
                 });
+        });
+        ui.horizontal(|ui| {
+            changed |= theme::switch(ui, &mut app.backup.on_idle, "Também ao pausar por").changed();
+            ui.add_enabled_ui(app.backup.on_idle, |ui| {
+                egui::ComboBox::from_id_salt("backup_pause")
+                    .selected_text(pause_label(app.backup.idle_secs))
+                    .show_ui(ui, |ui| {
+                        for s in PAUSES {
+                            changed |= ui
+                                .selectable_value(&mut app.backup.idle_secs, s, pause_label(s))
+                                .changed();
+                        }
+                    });
+            });
         });
         changed |= theme::switch(ui, &mut app.backup.on_save, "Cópia a cada Salvar").changed();
         ui.add_space(6.0);
