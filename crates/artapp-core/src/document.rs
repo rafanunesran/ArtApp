@@ -493,6 +493,22 @@ impl Document {
         total
     }
 
+    /// Descarta os passos de desfazer mais antigos até a memória dos pixels caber em `budget`
+    /// bytes, guardando pelo menos `keep` passos. Devolve a memória depois e quantos passos saíram.
+    /// Sem isso, muitos passos que trocam a camada inteira (balde, filtros, transformar) numa tela
+    /// grande passam da memória do celular e o Android fecha o app.
+    pub fn trim_history_to(&mut self, budget: usize, keep: usize) -> (usize, usize) {
+        let mut mem = self.memory_bytes();
+        let mut dropped = 0;
+        while mem > budget && self.history.undo_len() > keep {
+            let n = (self.history.undo_len() - keep).div_ceil(4);
+            self.history.drop_oldest(n);
+            dropped += n;
+            mem = self.memory_bytes();
+        }
+        (mem, dropped)
+    }
+
     /// Muda a cada passo guardado, desfeito ou refeito: diz se o desenho mudou desde que foi lido.
     pub fn history_version(&self) -> u64 {
         self.history.version()
@@ -626,5 +642,23 @@ mod memory_tests {
             .surface
             .write_pixel(4, 4, &[0.0, 1.0, 0.0, 1.0]);
         assert!(doc.memory_bytes() > one);
+    }
+
+    #[test]
+    fn trimming_history_frees_memory_but_keeps_recent_steps() {
+        let mut doc = Document::new(512, 512);
+        for i in 0..20 {
+            doc.checkpoint();
+            doc.layers[0]
+                .surface
+                .write_pixel(3, 3, &[i as f32 / 20.0, 0.0, 0.0, 1.0]);
+        }
+        let full = doc.memory_bytes();
+        let (mem, dropped) = doc.trim_history_to(full, 3);
+        assert_eq!((mem, dropped), (full, 0), "dentro do limite não mexe");
+        let (mem, dropped) = doc.trim_history_to(1, 3);
+        assert!(dropped == 17 && mem < full, "{dropped} {mem} {full}");
+        assert_eq!(doc.history.undo_len(), 3);
+        assert!(doc.undo(), "os passos recentes continuam");
     }
 }

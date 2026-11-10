@@ -70,6 +70,20 @@ impl History {
         Some(next)
     }
 
+    /// Descarta os `n` passos de desfazer mais antigos (para caber na memória).
+    pub fn drop_oldest(&mut self, n: usize) {
+        let n = n.min(self.undo.len());
+        if n > 0 {
+            self.version += 1;
+            self.undo.drain(..n);
+        }
+    }
+
+    /// Quantos passos de desfazer estão guardados.
+    pub fn undo_len(&self) -> usize {
+        self.undo.len()
+    }
+
     pub fn drop_last(&mut self) {
         self.version += 1;
         self.undo.pop();

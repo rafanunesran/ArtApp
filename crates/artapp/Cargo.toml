@@ -30,6 +30,8 @@ android_logger = "0.15"
 # Pedir acesso aos arquivos do aparelho (abrir PSDs baixados).
 jni = "0.22"
 ndk-context = "0.1"
+# Relatório de erros: manda a saída de erro (onde aparece a falta de memória) para um arquivo.
+libc = "0.2"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }

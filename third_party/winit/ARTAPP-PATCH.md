@@ -16,3 +16,9 @@ borracha da caneta.
 
 Remover esta pasta e o patch quando o winit publicado expuser o tipo de ferramenta e os botões
 da caneta nos eventos de toque.
+
+Segunda mudança, também só no Android (`src/platform_impl/android/mod.rs`): no `onDestroy` o laço
+de eventos termina (antes só registrava um aviso e continuava rodando preso a uma Activity que não
+existe mais). O ArtApp então grava o que falta e encerra o processo; se o Android criar a Activity
+de novo no mesmo processo, o winit não conseguiria criar outro laço e o app abria em tela preta e
+fechava.

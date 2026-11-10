@@ -384,6 +384,13 @@ pub struct ArtApp {
     mem_version: Option<u64>,
     mem_checked: f64,
     mem_warned: bool,
+    /// Relatório de erro aberto na tela (da sessão anterior ou pedido pelo menu).
+    pub crash_report: Option<String>,
+    /// Hora dos últimos erros contornados (se repetirem muito, o app desiste e fecha).
+    panic_times: Vec<f64>,
+    /// O app estava na frente da tela no último quadro, e quando o marcador foi gravado.
+    crash_focused: bool,
+    crash_marked: f64,
     /// Passo do tour aberto (`None` = fechado).
     pub tour_step: Option<usize>,
     /// O tour da primeira abertura já foi visto ou pulado.
@@ -777,6 +784,10 @@ impl ArtApp {
             mem_version: None,
             mem_checked: 0.0,
             mem_warned: false,
+            crash_report: crate::crash::take_previous(),
+            panic_times: Vec::new(),
+            crash_focused: false,
+            crash_marked: 0.0,
             tour_done: false,
             spring: None,
             oneshot: None,
@@ -2198,14 +2209,31 @@ impl ArtApp {
         }
         self.mem_version = Some(version);
         self.mem_checked = now;
-        self.mem_bytes = self.doc.memory_bytes();
-        if self.mem_bytes > MEMORY_WARN_BYTES && !self.mem_warned {
+        // Mexer no histórico no meio de um traço atrapalharia o desfazer dele: espera acabar.
+        let budget = memory_budget();
+        let (mem, dropped) = if !self.view.stroke_active() {
+            self.doc.trim_history_to(budget, 3)
+        } else {
+            (self.doc.memory_bytes(), 0)
+        };
+        self.mem_bytes = mem;
+        self.mem_version = Some(self.doc.history_version());
+        if dropped > 0 {
+            log::info!("memória: {dropped} passos de desfazer antigos descartados");
+            if !self.mem_warned {
+                self.mem_warned = true;
+                self.status = format!(
+                    "Memória quase cheia: os passos de desfazer mais antigos foram descartados para o app não fechar ({} MB).",
+                    mem >> 20
+                );
+            }
+        } else if mem > budget && !self.mem_warned {
             self.mem_warned = true;
             self.status = format!(
-                "O desenho já usa uns {} MB de memória (camadas e desfazer). Se ficar lento, junte camadas ou diminua os passos de desfazer nas Preferências.",
-                self.mem_bytes >> 20
+                "O desenho já usa uns {} MB de memória e o aparelho tem pouca. Junte camadas ou diminua a tela para o app não fechar.",
+                mem >> 20
             );
-        } else if self.mem_bytes < MEMORY_WARN_BYTES * 3 / 4 {
+        } else if mem < budget * 3 / 4 {
             self.mem_warned = false;
         }
     }
@@ -2325,6 +2353,22 @@ pub fn color_to_f32(c: Color32) -> [f32; 4] {
 /// que passam de 1,5 a 2 GB).
 pub const MEMORY_WARN_BYTES: usize = 1200 << 20;
 
+/// Quanto o desenho (camadas + desfazer) pode ocupar: um quarto da memória do aparelho, entre
+/// 512 MB e 3 GB. Acima disso o app descarta passos de desfazer antigos.
+pub fn memory_budget() -> usize {
+    static BUDGET: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *BUDGET.get_or_init(|| {
+        let total = std::fs::read_to_string("/proc/meminfo")
+            .ok()
+            .and_then(|s| {
+                let line = s.lines().find(|l| l.starts_with("MemTotal:"))?;
+                line.split_whitespace().nth(1)?.parse::<usize>().ok()
+            })
+            .map(|kb| kb << 10);
+        total.map_or(3 << 30, |t| (t / 4).clamp(512 << 20, 3 << 30))
+    })
+}
+
 pub const SPRING_HOLD_SECS: f64 = 0.4;
 
 /// Quantos pincéis o grupo Recentes guarda (como no Procreate).
@@ -2377,6 +2421,97 @@ pub const UI_SCALE: (f32, f32) = (0.75, 1.5);
 
 impl eframe::App for ArtApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        // Um erro (pânico) no meio do quadro fechava o app inteiro. Agora ele fica gravado no
+        // relatório, o traço em andamento é cancelado e o app segue. Se repetir sem parar, desiste.
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.frame(ui)));
+        if let Err(payload) = r {
+            self.after_panic(&ctx, payload);
+        }
+        self.check_memory(&ctx);
+        self.crash_marker(&ctx);
+        crate::crash_view::show(self, &ctx);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // A Activity do Android foi destruída (ou a janela fechou): grava já o que falta, sem
+        // segundo plano, porque o processo acaba logo depois.
+        self.save_before_exit();
+        crate::crash::mark_stopped();
+    }
+}
+
+impl ArtApp {
+    fn after_panic(&mut self, ctx: &egui::Context, payload: Box<dyn std::any::Any + Send>) {
+        let now = ctx.input(|i| i.time);
+        self.panic_times.retain(|t| now - t < 10.0);
+        self.panic_times.push(now);
+        if self.panic_times.len() >= 4 {
+            // O mesmo erro em todo quadro: não adianta seguir. O relatório já está gravado e
+            // aparece na próxima abertura.
+            std::panic::resume_unwind(payload);
+        }
+        crate::crash::mark_seen();
+        crate::canvas::cancel_stroke(self);
+        self.view.display.clear();
+        // Redesenha a tela toda (sem marcar o desenho como alterado).
+        self.thumbs_stale = true;
+        self.pending = self.doc.bounds();
+        self.status = "Deu um erro e o app contornou. Se algo ficou estranho, salve e reabra. \
+                       (Detalhes em Arquivo › Relatório de erros)"
+            .into();
+        ctx.request_repaint();
+    }
+
+    /// Mantém o marcador "rodando" (ver `crash`) enquanto o app está na frente da tela, com o
+    /// estado atual; tira quando vai para o segundo plano.
+    fn crash_marker(&mut self, ctx: &egui::Context) {
+        let (focused, now) = ctx.input(|i| (i.viewport().focused.unwrap_or(true), i.time));
+        if focused != self.crash_focused || (focused && now - self.crash_marked > 15.0) {
+            self.crash_focused = focused;
+            self.crash_marked = now;
+            if focused {
+                let (w, h) = (self.doc.width, self.doc.height);
+                crate::crash::mark_running(&format!(
+                    "tela {w}×{h}, {} camadas, memória {} MB de {} MB, ferramenta {:?}, {:.0} s aberto",
+                    self.doc.layers.len(),
+                    self.mem_bytes >> 20,
+                    memory_budget() >> 20,
+                    self.tool,
+                    now
+                ));
+            } else {
+                crate::crash::mark_stopped();
+            }
+        }
+    }
+
+    /// Grava o desenho na hora (no fechamento): no projeto, se o salvamento automático estiver
+    /// ligado, senão no arquivo de recuperação.
+    fn save_before_exit(&mut self) {
+        if !self.projects.dirty() {
+            return;
+        }
+        self.commit_transform();
+        let path = match &self.projects.path {
+            Some(p)
+                if self.projects.autosave
+                    && crate::projects::kind_of(p) == Some(crate::projects::Kind::Project) =>
+            {
+                p.clone()
+            }
+            _ => crate::projects::recovery_path(),
+        };
+        let snap = self.doc.snapshot();
+        match artapp_core::project::save(&snap)
+            .and_then(|b| crate::platform::write_atomic(&path, &b))
+        {
+            Ok(()) => log::info!("desenho gravado ao fechar em {}", path.display()),
+            Err(e) => log::error!("não deu para gravar ao fechar: {e}"),
+        }
+    }
+
+    fn frame(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         if (ctx.zoom_factor() - self.ui_scale).abs() > 1e-3 {
             ctx.set_zoom_factor(self.ui_scale);
@@ -2497,7 +2632,6 @@ impl eframe::App for ArtApp {
         crate::backup::show(self, &ctx);
         crate::updater::show(self, &ctx);
         crate::tour::show(self, &ctx);
-        self.check_memory(&ctx);
         if self.show_perf {
             panels::perf_overlay(self, &ctx, canvas);
         }

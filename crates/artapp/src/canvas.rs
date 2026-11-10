@@ -209,6 +209,11 @@ struct FingerHold {
 const FINGER_HOLD_MOVE: f32 = 10.0;
 
 impl CanvasView {
+    /// Um traço (ou arraste de ferramenta) está em andamento.
+    pub fn stroke_active(&self) -> bool {
+        self.stroke.is_some()
+    }
+
     pub fn fit(&mut self, panel: egui::Rect, w: u32, h: u32) {
         let (w, h) = (w.max(1) as f32, h.max(1) as f32);
         self.zoom = (panel.width() / w).min(panel.height() / h) * 0.94;
@@ -1765,7 +1770,7 @@ fn end_stroke(app: &mut ArtApp) {
     app.invalidate(dirty);
 }
 
-fn cancel_stroke(app: &mut ArtApp) {
+pub(crate) fn cancel_stroke(app: &mut ArtApp) {
     let Some(s) = app.view.stroke.take() else {
         return;
     };

@@ -24,12 +24,12 @@ const AUTOSAVE_IDLE: f64 = 2.0;
 
 /// O que é aberto/salvo.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Kind {
+pub(crate) enum Kind {
     Project,
     Psd,
 }
 
-fn kind_of(path: &Path) -> Option<Kind> {
+pub(crate) fn kind_of(path: &Path) -> Option<Kind> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
         project::EXT => Some(Kind::Project),

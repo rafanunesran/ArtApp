@@ -9,6 +9,8 @@ mod brush_editor;
 mod brush_store;
 mod canvas;
 mod color_panel;
+mod crash;
+mod crash_view;
 mod dialogs;
 mod gallery;
 mod history_panel;
@@ -45,6 +47,7 @@ fn native_options() -> eframe::NativeOptions {
 #[cfg(not(target_os = "android"))]
 pub fn run_desktop() -> eframe::Result {
     env_logger::init();
+    crash::install();
     eframe::run_native(
         "ArtApp",
         native_options(),
@@ -70,6 +73,19 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
             .with_tag("ArtApp"),
     );
     platform::init_android(&app);
+    // O winit só cria um laço de eventos por processo. Se o Android criar a Activity de novo sem
+    // matar o processo (a anterior foi destruída), não dá para rodar aqui: reabre o app num
+    // processo novo em vez de ficar em tela preta até o Android fechá-lo.
+    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        log::warn!("Activity recriada no mesmo processo: reabrindo o app");
+        crash::mark_stopped();
+        if let Err(e) = platform::update::restart() {
+            log::error!("não deu para reabrir: {e}");
+        }
+        std::process::exit(0);
+    }
+    crash::install();
     let mut options = native_options();
     options.android_app = Some(app);
     if let Err(e) = eframe::run_native(
@@ -79,4 +95,8 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
     ) {
         log::error!("ArtApp terminou com erro: {e}");
     }
+    // A Activity foi destruída (o app já gravou o que faltava ao sair do laço). Encerra o processo
+    // para a próxima abertura começar do zero: o laço de eventos não pode ser criado de novo.
+    crash::mark_stopped();
+    std::process::exit(0);
 }

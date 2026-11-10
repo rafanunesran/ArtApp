@@ -476,6 +476,10 @@ fn file_group(app: &mut ArtApp, ui: &mut egui::Ui) {
         app.backup.window = true;
         ui.close();
     }
+    if item(ui, icon::TRIANGLE, "Relatório de erros…").clicked() {
+        crate::crash_view::open_latest(app);
+        ui.close();
+    }
     ui.separator();
     if item(ui, icon::IMAGE, "Importar imagem como camada…").clicked() {
         app.import_image_dialog();

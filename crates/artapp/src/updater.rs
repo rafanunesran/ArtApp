@@ -380,11 +380,16 @@ impl ArtApp {
                     u.step = Step::Saving { apk, flushed: true };
                     self.flush_autosave();
                 } else if let Some(apk) = apk {
+                    // Fechar para instalar não é um erro (ver `crash`).
+                    crate::crash::mark_stopped();
                     match update::install(&apk) {
                         Ok(()) => u.step = Step::Installing,
                         Err(e) => u.step = Step::Failed(format!("A instalação falhou: {e}")),
                     }
-                } else if let Err(e) = update::restart() {
+                } else if let Err(e) = {
+                    crate::crash::mark_stopped();
+                    update::restart()
+                } {
                     u.step = Step::Failed(format!(
                         "Não deu para reabrir sozinho ({e}). Feche e abra o ArtApp para usar a \
                          versão nova."
