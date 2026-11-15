@@ -238,24 +238,24 @@ fn detect_closed(ring: &[P], diag: f64) -> Option<QuickShape> {
     let hull = convex_hull(ring);
     push(
         min_area_rect(&hull)
-            .and_then(|q| refine_polygon(ring, &q).map(tidy_quad))
+            .and_then(|q| refine_polygon(ring, &q).map(tidy_polygon))
             .map(closed_poly),
         1.0,
     );
     push(
         max_triangle(&hull)
-            .and_then(|t| refine_polygon(ring, &t).map(tidy_triangle))
+            .and_then(|t| refine_polygon(ring, &t).map(tidy_polygon))
             .map(closed_poly),
         1.0,
     );
     for corners in corner_polygons(ring) {
         let w = if corners.len() <= 4 { 1.05 } else { 1.25 };
-        let tidy = |q: Vec<P>| match q.len() {
-            3 => tidy_triangle(q),
-            4 => tidy_quad(q),
-            _ => q,
-        };
-        push(refine_polygon(ring, &corners).map(tidy).map(closed_poly), w);
+        push(
+            refine_polygon(ring, &corners)
+                .map(tidy_polygon)
+                .map(closed_poly),
+            w,
+        );
     }
     cands.sort_by(|a, b| a.score.total_cmp(&b.score));
     let best = cands.into_iter().next()?;
@@ -763,6 +763,15 @@ fn refine_polygon(ring: &[P], poly: &[P]) -> Option<Vec<P>> {
     }
     let v = drop_flat(v, true);
     (v.len() >= 3).then_some(v)
+}
+
+/// Arruma o polígono conforme o número de cantos (o reajuste pode ter tirado algum).
+fn tidy_polygon(q: Vec<P>) -> Vec<P> {
+    match q.len() {
+        3 => tidy_triangle(q),
+        4 => tidy_quad(q),
+        _ => q,
+    }
 }
 
 /// Quadrilátero quase reto vira retângulo (e quase 1:1, quadrado); giro quase reto endireita.
