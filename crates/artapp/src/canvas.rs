@@ -131,6 +131,8 @@ struct ActiveStroke {
     travel: f32,
     /// A forma rápida em que o traço virou.
     quick: Option<artapp_core::quickshape::QuickShape>,
+    /// Já tentou reconhecer a forma nesta parada (não repete a conta a cada quadro).
+    quick_tried: bool,
     /// Pressão pela velocidade (dedo ou caneta sem pressão): último ponto de tela, hora e pressão.
     speed: Option<(Pos2, f64, f32)>,
 }
@@ -145,6 +147,7 @@ impl ActiveStroke {
             still: (at, time),
             travel: 0.0,
             quick: None,
+            quick_tried: false,
             speed: None,
         }
     }
@@ -973,6 +976,23 @@ fn redraw_quick(app: &mut ArtApp, shape: artapp_core::quickshape::QuickShape) {
     let Some(mut s) = app.view.stroke.take() else {
         return;
     };
+    if let ActiveKind::Freehand(points, pressures) = &mut s.kind {
+        // Caneta vetorial: a prévia mostra a forma; ao soltar vira o caminho exato.
+        let pressure = if pressures.is_empty() {
+            1.0
+        } else {
+            pressures.iter().sum::<f32>() / pressures.len() as f32
+        };
+        *points = shape
+            .sample(1.0)
+            .into_iter()
+            .map(|[x, y]| VPoint::new(x, y))
+            .collect();
+        *pressures = vec![pressure; points.len()];
+        s.quick = Some(shape);
+        app.view.stroke = Some(s);
+        return;
+    }
     let ActiveKind::Paint(session) = s.kind else {
         app.view.stroke = Some(s);
         return;
@@ -1034,7 +1054,10 @@ fn check_holds(app: &mut ArtApp, ctx: &egui::Context, panel: egui::Rect) {
     let Some(s) = &app.view.stroke else {
         return;
     };
-    if !matches!(s.kind, ActiveKind::Paint(_)) || s.quick.is_some() {
+    if !matches!(s.kind, ActiveKind::Paint(_) | ActiveKind::Freehand(..))
+        || s.quick.is_some()
+        || s.quick_tried
+    {
         return;
     }
     ctx.request_repaint_after(std::time::Duration::from_millis(80));
@@ -1042,6 +1065,9 @@ fn check_holds(app: &mut ArtApp, ctx: &egui::Context, panel: egui::Rect) {
         return;
     }
     let (at, travel) = (s.still.0, s.travel);
+    if travel < HOLD_MOVE * 2.0 && matches!(s.kind, ActiveKind::Freehand(..)) {
+        return;
+    }
     if travel < HOLD_MOVE * 2.0 {
         if app.hold_quickmenu {
             cancel_stroke(app);
@@ -1059,19 +1085,21 @@ fn check_holds(app: &mut ArtApp, ctx: &egui::Context, panel: egui::Rect) {
         }
         return;
     }
-    if !app.quick_shape || !matches!(app.tool, Tool::Brush | Tool::Eraser) {
+    if !app.quick_shape || !matches!(app.tool, Tool::Brush | Tool::Eraser | Tool::VectorPen) {
         return;
     }
     let pts: Vec<[f64; 2]> = s.path.iter().map(|p| [p.x, p.y]).collect();
-    if let Some(shape) = artapp_core::quickshape::detect(&pts) {
-        app.status = match &shape {
-            artapp_core::quickshape::QuickShape::Line(..) => "Forma rápida: reta",
-            artapp_core::quickshape::QuickShape::Arc { .. } => "Forma rápida: arco",
-            artapp_core::quickshape::QuickShape::Ellipse { .. } => "Forma rápida: elipse",
-            artapp_core::quickshape::QuickShape::Polygon { .. } => "Forma rápida: polígono",
+    match artapp_core::quickshape::detect(&pts) {
+        Some(shape) => {
+            app.status = format!("Forma rápida: {}", shape.name());
+            redraw_quick(app, shape);
         }
-        .into();
-        redraw_quick(app, shape);
+        None => {
+            if let Some(s) = &mut app.view.stroke {
+                s.quick_tried = true;
+            }
+            app.status = "Forma rápida: não reconheci a forma (o traço fica como está).".into();
+        }
     }
 }
 
@@ -1525,7 +1553,7 @@ fn tool_down(
     };
     app.view.stroke = kind.map(|kind| {
         let mut s = ActiveStroke::new(kind, touch, time, p);
-        if matches!(s.kind, ActiveKind::Paint(_)) {
+        if matches!(s.kind, ActiveKind::Paint(_) | ActiveKind::Freehand(..)) {
             s.path.push(pt);
         }
         s
@@ -1561,12 +1589,14 @@ fn add_point(app: &mut ArtApp, panel: egui::Rect, p: Pos2, force: Option<f32>, t
         app.close_panels();
     }
     if let Some(s) = &mut app.view.stroke
-        && matches!(s.kind, ActiveKind::Paint(_))
+        && matches!(s.kind, ActiveKind::Paint(_) | ActiveKind::Freehand(..))
     {
         let moved = p.distance(s.still.0);
         if moved > HOLD_MOVE {
             s.travel += moved;
             s.still = (p, time);
+            // Voltou a andar: a próxima parada pode tentar de novo.
+            s.quick_tried = false;
         }
         match &s.quick {
             // Depois da forma rápida, a reta segue a caneta; as outras formas ficam.
@@ -1654,6 +1684,7 @@ fn end_stroke(app: &mut ArtApp) {
     app.view.display.clear();
     app.close_panels();
     let style = app.vector_style();
+    let quick = s.quick.clone();
     let dirty = match s.kind {
         ActiveKind::Paint(session) => session.end(&mut app.doc),
         ActiveKind::Mix(session) => session.end(),
@@ -1709,8 +1740,12 @@ fn end_stroke(app: &mut ArtApp) {
                 return;
             }
             app.remember_color();
-            let pen = app.vector_pen;
-            app.doc.vector_add_pen(&points, &pressures, &style, &pen)
+            if let Some(shape) = &quick {
+                app.doc.vector_add_paths(vec![shape.to_subpath()], &style)
+            } else {
+                let pen = app.vector_pen;
+                app.doc.vector_add_pen(&points, &pressures, &style, &pen)
+            }
         }
         ActiveKind::Move { id, from, to } => {
             let d = to - from;
