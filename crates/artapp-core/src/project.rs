@@ -419,6 +419,13 @@ pub fn read_preview(path: &Path) -> Option<Vec<u8>> {
 
 /// PNG pequeno da imagem final (com o papel), para a lista de projetos.
 fn preview_png(doc: &Document) -> Result<Vec<u8>, String> {
+    let (tw, th, out) = preview_rgba(doc);
+    encode_rgba(tw, th, &out)
+}
+
+/// A imagem final (com o papel) reduzida a [`PREVIEW_MAX`], em RGBA 8 bits: (largura, altura,
+/// bytes).
+pub fn preview_rgba(doc: &Document) -> (u32, u32, Vec<u8>) {
     let (w, h) = (doc.width.max(1), doc.height.max(1));
     let s = (PREVIEW_MAX as f32 / w.max(h) as f32).min(1.0);
     let (tw, th) = (
@@ -435,7 +442,7 @@ fn preview_png(doc: &Document) -> Result<Vec<u8>, String> {
             out.extend_from_slice(&px.get(sx).copied().unwrap_or_default());
         }
     }
-    encode_rgba(tw, th, &out)
+    (tw, th, out)
 }
 
 pub fn encode_rgba(width: u32, height: u32, bytes: &[u8]) -> Result<Vec<u8>, String> {

@@ -13,6 +13,7 @@ mod crash;
 mod crash_upload;
 mod crash_view;
 mod dialogs;
+mod file_thumbs;
 mod gallery;
 mod history_panel;
 mod hotswap;
