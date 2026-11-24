@@ -21,6 +21,8 @@ serde_json = { workspace = true }
 # Atualização rápida: descompactar a libartapp.so baixada e conferir o hash.
 flate2 = "1"
 sha2 = "0.10"
+# Relatório de erros: envia ao site (HTTPS em Rust puro, funciona no Android e no desktop).
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts"] }
 
 [target.'cfg(target_os = "android")'.dependencies]

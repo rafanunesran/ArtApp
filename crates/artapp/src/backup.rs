@@ -259,6 +259,31 @@ fn project_name_of(file: &str) -> String {
     stem
 }
 
+/// O backup mais recente do projeto `name` que abre sem erro (copiado do Drive, se preciso), e
+/// quando foi feito. Usado para voltar ao projeto quando o arquivo dele sumiu ou estragou.
+pub(crate) fn latest_working_backup(
+    dest: &Dest,
+    name: &str,
+) -> Result<Option<(PathBuf, Option<SystemTime>)>, String> {
+    let want = clean_name(name);
+    for e in dest.list()? {
+        if project_name_of(&e.name) != want {
+            continue;
+        }
+        let Ok(path) = dest.fetch(&e.name) else {
+            continue;
+        };
+        let ok = std::fs::read(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|b| project::load(&b))
+            .is_ok();
+        if ok {
+            return Ok(Some((path, e.modified)));
+        }
+    }
+    Ok(None)
+}
+
 /// O artista mexeu em algo neste quadro? (Só passar a caneta por cima não conta.)
 fn operated(i: &egui::InputState) -> bool {
     i.pointer.any_down()

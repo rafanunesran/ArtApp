@@ -638,6 +638,10 @@ pub struct ArtApp {
     /// Conferir, baixar e instalar versões novas (Android).
     pub updater: crate::updater::Updater,
     pub backup: crate::backup::Backup,
+    /// Envio dos relatórios de erro ao site (se a pessoa deixar).
+    pub crash_upload: crate::crash_upload::Upload,
+    /// Reabrir o último projeto (também depois de um erro).
+    pub resume: crate::resume::Resume,
 }
 
 impl ArtApp {
@@ -844,6 +848,8 @@ impl ArtApp {
             projects: crate::projects::Projects::default(),
             updater: crate::updater::Updater::default(),
             backup: crate::backup::Backup::default(),
+            crash_upload: Default::default(),
+            resume: Default::default(),
         };
         app.load_prefs();
         if !app.tour_done {
@@ -1015,6 +1021,7 @@ impl ArtApp {
         if let Some(b) = v.get("backup") {
             self.backup.load_json(b);
         }
+        self.crash_upload.load_json(v.get("crash_upload"));
         if let Some(f) = num("fill_tolerance") {
             self.fill_tolerance = f.clamp(0.0, 1.0);
         }
@@ -1093,6 +1100,7 @@ impl ArtApp {
         });
         // Fora do json!: a macro tem limite de recursão.
         if let Some(m) = v.as_object_mut() {
+            m.insert("crash_upload".into(), self.crash_upload.to_json());
             m.insert("fill_tolerance".into(), self.fill_tolerance.into());
             m.insert("fill_close_gap".into(), self.fill_close_gap.into());
             m.insert("fill_expand".into(), self.fill_expand.into());
@@ -2522,6 +2530,8 @@ impl ArtApp {
         self.backup_tick(&ctx);
         self.updater_tick(&ctx);
         self.brush_store_tick(&ctx);
+        self.crash_upload_tick(&ctx);
+        self.resume_tick(&ctx);
         if self.status != self.last_status {
             self.last_status.clone_from(&self.status);
             self.status_since = ctx.input(|i| i.time);
@@ -2588,6 +2598,7 @@ impl ArtApp {
             crate::dialogs::show(self, &ctx);
             crate::projects::show(self, &ctx);
             crate::backup::show(self, &ctx);
+            crate::resume::show(self, &ctx);
             return;
         }
         if !portrait {
@@ -2630,6 +2641,7 @@ impl ArtApp {
         crate::dialogs::show(self, &ctx);
         crate::projects::show(self, &ctx);
         crate::backup::show(self, &ctx);
+        crate::resume::show(self, &ctx);
         crate::updater::show(self, &ctx);
         crate::tour::show(self, &ctx);
         if self.show_perf {

@@ -726,7 +726,8 @@ impl ArtApp {
 
     /// A cada quadro: termina trabalhos em segundo plano e roda o salvamento automático.
     pub fn projects_tick(&mut self, ctx: &egui::Context) {
-        self.finish_job();
+        let now = ctx.input(|i| i.time);
+        self.finish_job(now);
         if std::mem::take(&mut self.projects.just_saved) {
             self.projects.saved_at = Some(ctx.input(|i| i.time));
         }
@@ -780,7 +781,7 @@ impl ArtApp {
         }
     }
 
-    fn finish_job(&mut self) {
+    fn finish_job(&mut self, now: f64) {
         let Some(job) = self.projects.job.take() else {
             return;
         };
@@ -845,9 +846,11 @@ impl ArtApp {
                 }
                 Err(TryRecvError::Disconnected) => {
                     self.status = "Não foi possível abrir (erro interno).".into();
+                    self.resume_opened(now, Some("erro interno"));
                 }
                 Ok(Err(e)) => {
                     self.status = format!("Não foi possível abrir: {e}");
+                    self.resume_opened(now, Some(&e));
                 }
                 Ok(Ok(doc)) => {
                     let layers = doc.layers.len();
@@ -881,6 +884,7 @@ impl ArtApp {
                         self.projects.name = stem;
                         self.status = format!("Projeto aberto ({layers} camada(s)).");
                     }
+                    self.resume_opened(now, None);
                 }
             },
         }

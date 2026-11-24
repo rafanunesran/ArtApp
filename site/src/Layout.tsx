@@ -52,6 +52,7 @@ export function Footer() {
       <a href="https://github.com/storytold/photocraft" className="text-foreground hover:text-primary">PhotoCraft</a> e do{" "}
       <a href="https://github.com/storytold/vectorcraft" className="text-foreground hover:text-primary">VectorCraft</a>
       {" · "}<a href={REPO} className="text-foreground hover:text-primary">código</a>
+      {" · "}<a href={`${base}erros/`} className="text-foreground hover:text-primary">relatórios de erro</a>
     </footer>
   );
 }

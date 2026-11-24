@@ -11,6 +11,7 @@ export default defineConfig({
       input: {
         main: "index.html",
         pinceis: "pinceis/index.html",
+        erros: "erros/index.html",
       },
     },
   },

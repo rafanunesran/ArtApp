@@ -54,9 +54,12 @@ pub fn install() {
     std::panic::set_hook(Box::new(move |info| {
         let report = panic_report(info);
         log::error!("{report}");
-        let path = dir().join(format!("panico-{}.txt", now()));
+        let t = now();
+        let path = dir().join(format!("panico-{t}.txt"));
         let _ = std::fs::write(path, &report);
         prune();
+        // Também entra na fila de envio ao site (se a pessoa deixar, ver `crash_upload`).
+        enqueue(t, &report);
         default(info);
     }));
 }
@@ -142,6 +145,7 @@ fn previous_session() -> Option<String> {
     let _ = std::fs::remove_file(marker());
     let newest = panic_files().into_iter().next();
     let mut r = String::new();
+    let mut sudden = false;
     match newest {
         Some((t, path)) if t > seen => {
             let _ = std::fs::write(seen_path(), t.to_string());
@@ -149,6 +153,7 @@ fn previous_session() -> Option<String> {
         }
         _ => {
             let state = state?;
+            sudden = true;
             let _ = writeln!(
                 r,
                 "O app fechou de repente, sem erro do Rust (costuma ser falta de memória ou uma \
@@ -163,7 +168,74 @@ fn previous_session() -> Option<String> {
         let tail = &err[floor_char(err, err.len().saturating_sub(4000))..];
         let _ = writeln!(r, "\nSaída de erro:\n{tail}");
     }
+    // O pânico já entrou na fila quando aconteceu; o fechamento de repente só agora.
+    if sudden {
+        enqueue(now(), &r);
+    }
+    CRASHED.store(true, std::sync::atomic::Ordering::Relaxed);
     Some(r)
+}
+
+/// A sessão anterior terminou com erro (pânico ou fechamento de repente).
+static CRASHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// A sessão anterior terminou com erro? (Vale depois de `install`.)
+pub fn crashed_last_time() -> bool {
+    CRASHED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Relatórios esperando para ir ao site.
+pub fn queue_dir() -> PathBuf {
+    dir().join("fila")
+}
+
+/// Quantos relatórios a fila guarda no máximo (os mais velhos saem).
+const QUEUE_MAX: usize = 30;
+
+/// Põe um relatório na fila de envio. Não envia nada: quem decide é `crash_upload`.
+fn enqueue(t: u64, report: &str) {
+    let q = queue_dir();
+    if std::fs::create_dir_all(&q).is_err() {
+        return;
+    }
+    let mut path = q.join(format!("{t}.txt"));
+    let mut n = 1;
+    while path.exists() {
+        path = q.join(format!("{t}-{n}.txt"));
+        n += 1;
+    }
+    let _ = std::fs::write(path, report);
+    let mut files = queued();
+    if files.len() > QUEUE_MAX {
+        let extra = files.len() - QUEUE_MAX;
+        for p in files.drain(..extra) {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
+/// A fila de envio, do mais velho ao mais novo.
+pub fn queued() -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = std::fs::read_dir(queue_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "txt"))
+        .collect();
+    v.sort_by_key(|p| {
+        let stem = p
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let t: u64 = stem
+            .split('-')
+            .next()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        (t, stem)
+    });
+    v
 }
 
 fn floor_char(s: &str, mut i: usize) -> usize {
