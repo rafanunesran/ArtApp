@@ -23,6 +23,7 @@ pub mod effects;
 #[cfg(test)]
 mod engine_tests;
 pub mod export;
+pub mod file_thumb;
 pub mod fill;
 pub mod folders;
 pub mod frames;

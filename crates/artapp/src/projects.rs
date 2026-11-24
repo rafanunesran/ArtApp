@@ -136,7 +136,8 @@ pub struct Browser {
     /// O app pode ler arquivos de outros apps (conferido ao abrir a pasta).
     shared_access: bool,
     entries: Vec<Entry>,
-    thumbs: HashMap<PathBuf, Option<TextureHandle>>,
+    /// Miniaturas já carregadas (feitas em segundo plano por [`crate::file_thumbs`]).
+    thumbs: HashMap<PathBuf, Option<RowThumb>>,
     /// Escolhendo uma imagem para importar como camada (em vez de abrir um projeto).
     import: bool,
     /// Para que serve a imagem escolhida (com `import`).
@@ -194,6 +195,16 @@ pub enum ImageUse {
     Material,
     /// Imagem que vira mais uma ponta do pincel atual (pontas múltiplas).
     ExtraTip,
+}
+
+/// Miniatura de uma linha da lista, já na GPU.
+#[derive(Clone)]
+struct RowThumb {
+    tex: TextureHandle,
+    /// "1920 × 1080", "12 pincéis"…
+    note: String,
+    /// Traços brancos (pincéis): precisa de fundo escuro.
+    on_dark: bool,
 }
 
 struct Entry {
@@ -279,20 +290,30 @@ impl Browser {
         });
     }
 
-    fn thumb(&mut self, ctx: &egui::Context, path: &Path) -> Option<TextureHandle> {
-        self.thumbs
-            .entry(path.to_path_buf())
-            .or_insert_with(|| {
-                let png = project::read_preview(path)?;
-                let (w, h, px) = project::decode_rgba(&png).ok()?;
-                let img = ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &px);
-                Some(ctx.load_texture(
-                    format!("proj:{}", path.display()),
+    /// A miniatura de `path`, se já estiver pronta (senão pede e a linha mostra o ícone por
+    /// enquanto).
+    fn thumb(&mut self, ctx: &egui::Context, path: &Path) -> Option<RowThumb> {
+        if let Some(t) = self.thumbs.get(path) {
+            return t.clone();
+        }
+        let crate::file_thumbs::Lookup::Ready(t) = crate::file_thumbs::request(ctx, path) else {
+            return None;
+        };
+        let row = t.map(|t| {
+            let img =
+                ColorImage::from_rgba_unmultiplied([t.width as usize, t.height as usize], &t.rgba);
+            RowThumb {
+                tex: ctx.load_texture(
+                    format!("file:{}", path.display()),
                     img,
                     egui::TextureOptions::LINEAR,
-                ))
-            })
-            .clone()
+                ),
+                note: t.note.clone(),
+                on_dark: t.on_dark,
+            }
+        });
+        self.thumbs.insert(path.to_path_buf(), row.clone());
+        row
     }
 }
 
@@ -1114,12 +1135,24 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
             {
                 targets.push(("Fora da pilha".into(), up.to_path_buf()));
             }
+            // Na importação a miniatura é maior (é ela que mostra qual arquivo é qual); pacotes
+            // de pincel mostram traços, que pedem uma caixa larga.
+            let side = if b.import { 72.0 } else { 56.0 };
+            let box_w = if b.import && b.image_use == ImageUse::Brushes {
+                side * 2.0
+            } else {
+                side
+            };
             for (path, name, is_dir, modified, stack) in entries {
                 let cover = match &stack {
                     Some((_, Some(p))) if kind_of(p) == Some(Kind::Project) => Some(p.clone()),
                     _ => None,
                 };
-                let thumb = if !is_dir && kind_of(&path) == Some(Kind::Project) {
+                // Só pede miniatura das linhas que aparecem (a lista pode ter centenas).
+                let probe = egui::Rect::from_min_size(ui.cursor().min, Vec2::new(box_w, side));
+                let thumb = if !ui.is_rect_visible(probe) {
+                    None
+                } else if !is_dir {
                     b.thumb(ctx, &path)
                 } else if let Some(c) = &cover {
                     b.thumb(ctx, c)
@@ -1128,14 +1161,17 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
                 };
                 let mut menu_rect = egui::Rect::NOTHING;
                 let row = ui.horizontal(|ui| {
-                    let side = 56.0;
                     match &thumb {
                         Some(t) => {
-                            let s = t.size_vec2();
-                            let k = side / s.x.max(s.y).max(1.0);
-                            let r = ui
-                                .add_sized([side, side], egui::Image::new((t.id(), s * k)))
-                                .rect;
+                            let s = t.tex.size_vec2();
+                            let k = (box_w / s.x.max(1.0)).min(side / s.y.max(1.0));
+                            let (r, _) = ui
+                                .allocate_exact_size(Vec2::new(box_w, side), egui::Sense::hover());
+                            if t.on_dark {
+                                ui.painter().rect_filled(r, 6.0, color::BACKDROP);
+                            }
+                            let img = egui::Rect::from_center_size(r.center(), s * k);
+                            egui::Image::new((t.tex.id(), s * k)).paint_at(ui, img);
                             if is_dir {
                                 // Pilha: um cantinho de pasta sobre a capa.
                                 ui.painter().text(
@@ -1150,11 +1186,16 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
                         None => {
                             let glyph = if is_dir {
                                 icon::FOLDER_OPEN
+                            } else if b.import
+                                && b.image_use == ImageUse::Brushes
+                                && !is_image(&path)
+                            {
+                                icon::BRUSH
                             } else {
                                 icon::IMAGE
                             };
                             ui.add_sized(
-                                [side, side],
+                                [box_w, side],
                                 egui::Label::new(
                                     RichText::new(glyph.to_string())
                                         .font(crate::theme::icon_font(26.0))
@@ -1174,7 +1215,11 @@ fn open_ui(app: &mut ArtApp, ctx: &egui::Context, b: &mut Browser) -> bool {
                                 }));
                             }
                             None if !is_dir => {
-                                ui.label(muted(time_ago(modified)));
+                                let when = time_ago(modified);
+                                ui.label(muted(match thumb.as_ref().map(|t| &t.note) {
+                                    Some(n) if !n.is_empty() => format!("{when} · {n}"),
+                                    _ => when,
+                                }));
                             }
                             None => {}
                         }
