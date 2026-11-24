@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tela cheia sem barra de título. As variantes values-v28 e values-v35 impedem que o desenho
+         fique por baixo do notch e da barra de navegação (o egui não sabe dessas áreas, e o botão
+         de desfazer e o de camadas ficavam escondidos com o celular deitado). -->
+    <style name="ArtAppTheme" parent="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
+</resources>

@@ -1,0 +1,219 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  NDK_VERSION: 27.2.12479018
+
+jobs:
+  test:
+    name: Testes (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Dependências do sistema (winit/X11)
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  apk:
+    name: APK Android
+    runs-on: ubuntu-latest
+    env:
+      # O build entra na libartapp.so (atualização rápida) e no versionCode do APK.
+      ARTAPP_VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      # Identidade da "casca" do APK (Java, manifesto, recursos e o carregador artapp-boot). A
+      # atualização rápida (só a libartapp.so) só é oferecida a quem tem a mesma casca; se algo
+      # disso mudar, o app atualiza pelo APK.
+      - name: Identidade da casca
+        run: echo "ARTAPP_SHELL_ID=$(git ls-files -s android crates/artapp-boot | sha256sum | cut -c1-16)" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      # O runner ubuntu já traz o Android SDK; só instalamos o NDK e a plataforma que usamos.
+      - name: NDK e plataforma
+        run: |
+          SDKMANAGER=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -1)
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "ndk;${NDK_VERSION}" "platforms;android-35" "build-tools;35.0.0"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+      - name: cargo-ndk
+        run: cargo install cargo-ndk --locked
+      - name: Compilar libartapp.so
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION" ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/$NDK_VERSION"
+          cargo ndk -t arm64-v8a -t x86_64 -P 26 -o android/app/src/main/jniLibs build --release -p artapp -p artapp-boot --lib
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Empacotar APK
+        working-directory: android
+        env:
+          ARTAPP_KEYSTORE_BASE64: ${{ secrets.ARTAPP_KEYSTORE_BASE64 }}
+          ARTAPP_KEYSTORE_PASSWORD: ${{ secrets.ARTAPP_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$ARTAPP_KEYSTORE_BASE64" ] && [ -n "$ARTAPP_KEYSTORE_PASSWORD" ]; then
+            export ARTAPP_KEYSTORE_FILE="$RUNNER_TEMP/artapp-release.p12"
+            echo "$ARTAPP_KEYSTORE_BASE64" | base64 -d > "$ARTAPP_KEYSTORE_FILE"
+          else
+            echo "::warning::Segredos ARTAPP_KEYSTORE_BASE64/ARTAPP_KEYSTORE_PASSWORD não configurados: APK assinado com chave de debug (atualizar exige desinstalar)."
+          fi
+          ./gradlew --no-daemon assembleRelease
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/*.apk | head -3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artapp-apk
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+      # Atualização rápida: a libartapp.so de cada arquitetura (sem símbolos, em .gz) e o
+      # update.json que o app lê (crates/artapp/src/hotswap.rs).
+      - name: Atualização rápida (.so e update.json)
+        run: |
+          STRIP="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          VERSION=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' android/app/build.gradle.kts)
+          mkdir -p hot
+          LIBS=""
+          for ABI in arm64-v8a x86_64; do
+            "$STRIP" --strip-unneeded -o "hot/libartapp-$ABI.so" "android/app/src/main/jniLibs/$ABI/libartapp.so"
+            SHA=$(sha256sum "hot/libartapp-$ABI.so" | cut -d' ' -f1)
+            SIZE=$(stat -c %s "hot/libartapp-$ABI.so")
+            gzip -9 "hot/libartapp-$ABI.so"
+            GZ=$(stat -c %s "hot/libartapp-$ABI.so.gz")
+            LIBS="$LIBS${LIBS:+,}\"$ABI\":{\"file\":\"libartapp-$ABI.so.gz\",\"sha256\":\"$SHA\",\"size\":$SIZE,\"gz_size\":$GZ}"
+          done
+          echo "{\"build\":$ARTAPP_VERSION_CODE,\"version\":\"$VERSION\",\"shell\":\"$ARTAPP_SHELL_ID\",\"libs\":{$LIBS}}" > hot/update.json
+          python3 -m json.tool hot/update.json
+          ls -l hot
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artapp-hot
+          path: hot/*
+          if-no-files-found: error
+
+  # Versões para computador: Windows (.zip com o .exe), Linux (.tar.gz com instalador) e macOS
+  # (.zip com o ArtApp.app, Apple Silicon e Intel).
+  desktop:
+    name: Desktop (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: ArtApp-Windows-x64.zip
+          - name: Linux
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            asset: ArtApp-Linux-x64.tar.gz
+          - name: macOS Apple Silicon
+            os: macos-latest
+            target: aarch64-apple-darwin
+            asset: ArtApp-macOS-AppleSilicon.zip
+          - name: macOS Intel
+            os: macos-latest
+            target: x86_64-apple-darwin
+            asset: ArtApp-macOS-Intel.zip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop-${{ matrix.target }}
+      - name: Dependências do sistema (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev
+      - name: Compilar
+        run: cargo build --release -p artapp --bin artapp --target ${{ matrix.target }}
+      - name: Empacotar (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/ArtApp | Out-Null
+          Copy-Item target/${{ matrix.target }}/release/artapp.exe dist/ArtApp/ArtApp.exe
+          Compress-Archive -Path dist/ArtApp -DestinationPath ${{ matrix.asset }}
+      - name: Empacotar (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist/ArtApp
+          cp target/${{ matrix.target }}/release/artapp packaging/linux/artapp.desktop packaging/linux/install.sh dist/ArtApp/
+          tar -C dist -czf ${{ matrix.asset }} ArtApp
+      - name: Empacotar (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          VERSION=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' android/app/build.gradle.kts)
+          APP=dist/ArtApp.app/Contents
+          mkdir -p "$APP/MacOS"
+          cp target/${{ matrix.target }}/release/artapp "$APP/MacOS/artapp"
+          sed "s/VERSION/${VERSION}/g" packaging/macos/Info.plist > "$APP/Info.plist"
+          # Assinatura ad-hoc: sem ela o macOS em Apple Silicon recusa abrir o app.
+          codesign --force --deep -s - dist/ArtApp.app
+          (cd dist && ditto -c -k --keepParent ArtApp.app ../${{ matrix.asset }})
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.target }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+  # Cada push na main que passa nos testes vira uma release pública com o APK, para que o
+  # site (GitHub Pages) possa apontar para releases/latest/download/ArtApp.apk.
+  release:
+    name: Release (APK e desktop)
+    # Sai mesmo que alguma versão de computador falhe ou não rode (ex.: sem máquina macOS): o
+    # APK e as versões que deram certo são publicados.
+    if: >-
+      always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
+      needs.test.result == 'success' && needs.apk.result == 'success'
+    needs: [test, apk, desktop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: artapp-apk
+          path: apk
+      - uses: actions/download-artifact@v4
+        with:
+          name: artapp-hot
+          path: hot
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: desktop-*
+          path: desktop
+          merge-multiple: true
+      - name: Criar release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' android/app/build.gradle.kts)
+          TAG="v${VERSION}-build.${GITHUB_RUN_NUMBER}"
+          cp apk/*.apk ArtApp.apk
+          shopt -s nullglob
+          gh release create "$TAG" ArtApp.apk hot/* desktop/* \
+            --target "$GITHUB_SHA" \
+            --title "ArtApp ${VERSION} (build ${GITHUB_RUN_NUMBER})" \
+            --notes "APK e versões para Windows, Linux e macOS gerados automaticamente a partir de ${GITHUB_SHA::7}: $(git log -1 --format=%s)" \
+            --latest

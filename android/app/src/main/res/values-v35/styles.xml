@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="ArtAppTheme" parent="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+        <item name="android:windowLayoutInDisplayCutoutMode">never</item>
+        <!-- Android 15 força "ponta a ponta" (o app por baixo das barras do sistema) em quem mira o
+             SDK 35. O app nativo não recebe as margens seguras, então volta ao layout antigo. -->
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+    </style>
+</resources>

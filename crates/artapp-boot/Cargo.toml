@@ -1,0 +1,15 @@
+[package]
+name = "artapp-boot"
+description = "Carregador do ArtApp no Android: escolhe entre a libartapp.so do APK e uma atualização rápida baixada."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+libc = "0.2"
+
+[lints]
+workspace = true

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="ArtAppTheme" parent="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+        <!-- Nunca desenhar na área do notch/câmera, em pé ou deitado. -->
+        <item name="android:windowLayoutInDisplayCutoutMode">never</item>
+    </style>
+</resources>

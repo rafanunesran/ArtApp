@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ícone original do ArtApp (MIT OR Apache-2.0): uma pincelada sobre um quadrado arredondado. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#1F2A44" android:pathData="M20,8h68a12,12 0,0 1,12 12v68a12,12 0,0 1,-12 12h-68a12,12 0,0 1,-12 -12v-68a12,12 0,0 1,12 -12z" />
+    <path android:fillColor="#00000000" android:strokeColor="#F2B134" android:strokeWidth="9" android:strokeLineCap="round"
+        android:pathData="M28,78C40,40 60,82 80,30" />
+    <path android:fillColor="#E85D4A" android:pathData="M74,22l12,6l-6,10l-12,-6z" />
+</vector>

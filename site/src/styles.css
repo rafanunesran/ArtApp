@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/* Tokens do visual criado no Lovable (tema escuro do app, destaque âmbar). */
+@theme inline {
+  --font-display: "Space Grotesk", sans-serif;
+  --font-sans: "DM Sans", sans-serif;
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+}
+
+:root {
+  color-scheme: dark;
+  --radius: 1rem;
+  --background: oklch(0.2 0.008 270);
+  --foreground: oklch(0.95 0.005 270);
+  --card: oklch(0.27 0.01 270);
+  --primary: oklch(0.82 0.15 78);
+  --primary-foreground: oklch(0.2 0.02 70);
+  --secondary: oklch(0.32 0.01 270);
+  --muted-foreground: oklch(0.7 0.01 270);
+  --accent: oklch(0.82 0.15 78 / 15%);
+  --accent-foreground: oklch(0.86 0.13 80);
+  --border: oklch(1 0 0 / 9%);
+  --glow: radial-gradient(60% 50% at 50% 0%, oklch(0.82 0.15 78 / 18%), transparent 70%);
+  --shadow-float: 0 30px 80px -20px oklch(0 0 0 / 70%), 0 0 0 1px oklch(1 0 0 / 8%);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+  }
+}
+
+@utility bg-glow {
+  background-image: var(--glow);
+}
+@utility shadow-float {
+  box-shadow: var(--shadow-float);
+}

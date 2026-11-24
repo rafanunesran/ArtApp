@@ -1,0 +1,20 @@
+# Cópia do motor de pincel do PhotoCraft (storytold/photocraft, crates/paint, rev 6fdd6bb),
+# MIT OR Apache-2.0. Ver ARTAPP-PATCH.md.
+[package]
+name = "photocraft-paint"
+version = "0.17.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+photocraft-geom = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
+photocraft-color = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
+photocraft-raster = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
+serde = { version = "1", features = ["derive", "rc"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon = "1"
+
+[dev-dependencies]
+photocraft-cms = { git = "https://github.com/storytold/photocraft", rev = "6fdd6bb1b7de381c58c15a61aa1352f0a7061745" }
+serde_json = "1"
